@@ -345,6 +345,20 @@ function Set-RuntimeFile([string]$Stage, [string]$Target) {
     else { [IO.File]::Move($Stage, $Target) }
 }
 
+# Backups and staged files use short numbered names (b/N, a/N), recorded in the journal: mirroring the
+# installed path inside the backup folder exceeded Windows' 260-character path limit (live 2026-10-11,
+# C:/Users/<name>/Downloads/GamingOnSteroids). Journals of earlier installers used before/<path>.
+# Windows refuses paths of 260+ characters unless long paths are enabled.
+function Test-RuntimeLongPaths {
+    try { return (Get-ItemProperty -LiteralPath 'HKLM:/SYSTEM/CurrentControlSet/Control/FileSystem' -Name LongPathsEnabled -ErrorAction Stop).LongPathsEnabled -eq 1 }
+    catch { return $false }
+}
+
+function Get-RuntimeBackupPath([string]$Transaction, $Entry) {
+    if ($Entry.slot) { return Get-RuntimePath $Transaction ('b/' + $Entry.slot) }
+    return Get-RuntimePath $Transaction ('before/' + $Entry.path)
+}
+
 function Restore-RuntimeTransaction([string]$Base, [string]$Transaction) {
     $journalPath = Join-Path $Transaction 'journal.json'
     $journal = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json
@@ -356,7 +370,7 @@ function Restore-RuntimeTransaction([string]$Base, [string]$Transaction) {
         if ($current -eq $entry.before) { continue }
         if ($current -ne $entry.after) { throw "Rollback conflict at $target. Backup: $Transaction" }
         if ($null -ne $entry.before) {
-            $backup = Get-RuntimePath $Transaction ('before/' + $entry.path)
+            $backup = Get-RuntimeBackupPath $Transaction $entry
             if ((Get-RuntimeFileHash $backup) -ne $entry.before) { throw "Backup hash mismatch: $backup" }
         }
         $restore += $entry
@@ -368,7 +382,7 @@ function Restore-RuntimeTransaction([string]$Base, [string]$Transaction) {
         if ($null -eq $entry.before) { [IO.File]::Delete($target) }
         else {
             $temp = Join-Path $Transaction ([guid]::NewGuid().ToString('N') + '.restore')
-            [IO.File]::WriteAllBytes($temp, [IO.File]::ReadAllBytes((Get-RuntimePath $Transaction ('before/' + $entry.path))))
+            [IO.File]::WriteAllBytes($temp, [IO.File]::ReadAllBytes((Get-RuntimeBackupPath $Transaction $entry)))
             Set-RuntimeFile $temp $target
         }
         if ((Get-RuntimeFileHash $target) -ne $entry.before) { throw "Rollback verification failed: $target" }
@@ -379,27 +393,28 @@ function Restore-RuntimeTransaction([string]$Base, [string]$Transaction) {
 }
 
 function Invoke-RuntimeTransaction([string]$Base, $Writes, [string]$Revision) {
-    $id = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '-' + [guid]::NewGuid().ToString('N')
+    $id = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $transaction = Get-RuntimePath $Base ('.runtime-files/backups/' + $id)
     [void][IO.Directory]::CreateDirectory($transaction)
     $entries = @()
+    [void][IO.Directory]::CreateDirectory((Join-Path $transaction 'a'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $transaction 'b'))
     foreach ($write in $Writes) {
         $target = Get-RuntimePath $Base $write.path
         $before = Get-RuntimeFileHash $target
         if ($before -ne $write.expected) { throw "File changed while preparing installation: $target" }
         $after = Get-RuntimeHash $write.bytes
         if ($before -eq $after -and !$write.snapshot) { continue }
+        $slot = [string]$entries.Count
         if ($null -ne $before) {
-            $backup = Get-RuntimePath $transaction ('before/' + $write.path)
-            [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($backup))
+            $backup = Get-RuntimePath $transaction ('b/' + $slot)
             [IO.File]::WriteAllBytes($backup, [IO.File]::ReadAllBytes($target))
             if ((Get-RuntimeFileHash $backup) -ne $before) { throw "File changed while backing up: $target" }
         }
-        $stage = Get-RuntimePath $transaction ('after/' + $write.path)
-        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($stage))
+        $stage = Get-RuntimePath $transaction ('a/' + $slot)
         [IO.File]::WriteAllBytes($stage, $write.bytes)
         if ((Get-RuntimeFileHash $stage) -ne $after) { throw "Staging verification failed: $stage" }
-        $entries += [pscustomobject]@{path=$write.path; before=$before; after=$after}
+        $entries += [pscustomobject]@{path=$write.path; slot=$slot; before=$before; after=$after}
     }
     $journal = [pscustomobject]@{schema=1; root=$Base; commit=$Revision; state='installing'; files=$entries}
     $journalPath = Join-Path $transaction 'journal.json'
@@ -409,7 +424,7 @@ function Invoke-RuntimeTransaction([string]$Base, $Writes, [string]$Revision) {
             $target = Get-RuntimePath $Base $entry.path
             if ((Get-RuntimeFileHash $target) -ne $entry.before) { throw "Concurrent file change: $target" }
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
-            Set-RuntimeFile (Get-RuntimePath $transaction ('after/' + $entry.path)) $target
+            Set-RuntimeFile (Get-RuntimePath $transaction ('a/' + $entry.slot)) $target
             if ((Get-RuntimeFileHash $target) -ne $entry.after) { throw "Installed hash mismatch: $target" }
         }
         $journal.state = 'installed'
@@ -496,6 +511,9 @@ function Invoke-RuntimeInstaller {
                 if ($file.destination -notmatch '^LOLEXT/(Scripts|Sprites|Fonts|Sounds)/' -or
                     $file.sha256 -notmatch '^[a-f0-9]{64}$' -or $file.size -le 0) { throw 'Invalid package file metadata.' }
                 $target = Get-RuntimePath $rootPath $file.destination
+                if ($target.Length -ge 260 -and !(Test-RuntimeLongPaths)) {
+                    throw "The GamingOnSteroids folder path is too long for Windows ($($target.Length) characters for $($file.destination)). Move GamingOnSteroids to a shorter path, for example directly on drive C, and run the installer again."
+                }
                 if ($destinations.ContainsKey($file.destination)) { throw "Duplicate package destination: $($file.destination)" }
                 $destinations[$file.destination] = $true
                 $expected = Get-RuntimeFileHash $target
