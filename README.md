@@ -1,6 +1,6 @@
 # AyyyyIO
 
-The AyyyyIO script family for GamingOnSteroids: **Orbama** (orbwalker and SDK), **OrbamaPrediction**,
+The AyyyyIO script family for GoS: **Orbama** (orbwalker and SDK), **OrbamaPrediction**,
 **OrbamaUtils** (activator, Smite, wards, trackers), **EvAYYYYde** (evade) and **AyyyyIO** (champions,
 Normal and Classic profiles).
 
@@ -12,7 +12,7 @@ Run in PowerShell:
 irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1 | iex
 ```
 
-The installer finds your GamingOnSteroids folder (or asks for it), downloads this release, checks every
+The installer finds your GoS folder (or asks for it), downloads this release, checks every
 file against `manifest.json`, backs up whatever it replaces and enables the five family scripts.
 **Every other active script is switched off** so only the family runs; their files and settings are kept.
 Reload the scripts in game afterwards.
