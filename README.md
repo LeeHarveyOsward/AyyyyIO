@@ -17,11 +17,6 @@ file against `manifest.json`, backs up whatever it replaces and enables the five
 **Every other active script is switched off** so only the family runs; their files and settings are kept.
 Reload the scripts in game afterwards.
 
-To keep your other scripts enabled:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1))) -KeepOtherScripts
-```
 
 ## Updates
 
@@ -29,14 +24,6 @@ Once installed, the family updates itself: in game it checks this repository eve
 you are idle, downloads a new release in the background, verifies every file and switches to it the
 next time you reload your scripts. Running the install line again also updates.
 
-## Undo
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1))) -Rollback
-```
-
-restores the files and the script list from before the last install. Backups are kept in the
-`.runtime-files` folder next to `LOLEXT`.
 
 ## Contents
 
