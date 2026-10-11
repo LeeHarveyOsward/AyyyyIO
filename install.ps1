@@ -453,7 +453,11 @@ function Invoke-RuntimeInstaller {
             Restore-RuntimeTransaction $rootPath $latest.path
             return
         }
-        if ($pending.Count) { throw "Interrupted installation found. Run this installer with -Root '$rootPath' -Rollback first." }
+        # Re-running the installer always recovers: an interrupted earlier installation is rolled back first.
+        foreach ($interrupted in $pending) {
+            try { Restore-RuntimeTransaction $rootPath $interrupted.path; Write-Host 'Rolled back an interrupted earlier installation.' }
+            catch { throw "An interrupted earlier installation could not be rolled back: $_" }
+        }
         if (!$SourceRoot) {
             if (!$Commit) {
                 $head = Invoke-RestMethod -Uri "https://api.github.com/repos/$($script:RuntimeRepository)/commits/main" -Headers @{'User-Agent'=$script:RuntimeAgent} -TimeoutSec 30
@@ -470,7 +474,9 @@ function Invoke-RuntimeInstaller {
         if ($receiptHash) {
             $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
             if ($receipt.schema -ne 1) { throw 'Unsupported installation receipt.' }
-            $previous = @($receipt.packages | ForEach-Object { $_.id })
+            # Packages an older release had but this one does not are skipped, never an error.
+            $known = @($manifest.packages.id)
+            $previous = @($receipt.packages | ForEach-Object { $_.id } | Where-Object { $_ -in $known -or ($manifest.packageAliases -and $manifest.packageAliases.PSObject.Properties[$_]) })
         }
         if (!$Packages) {
             $Packages = @($manifest.packages.id)
@@ -495,8 +501,7 @@ function Invoke-RuntimeInstaller {
                 $expected = Get-RuntimeFileHash $target
                 $bytes = Get-RuntimeBytes $file.source $SourceRoot $Commit
                 if ($bytes.Length -ne $file.size -or (Get-RuntimeHash $bytes) -ne $file.sha256) { throw "Download verification failed: $($file.source)" }
-                if ($manifest.family -and $file.destination -match '^LOLEXT/Scripts/Common/OrbamaFamily/[a-f0-9]{64}/' -and
-                    $expected -and $expected -ne $file.sha256) { throw "Immutable family file changed: $target" }
+                # A damaged or edited file of this release is simply replaced (the backup keeps the old bytes).
                 if ($manifest.family -and $file.destination -eq 'LOLEXT/Scripts/Common/OrbamaFamily/current') {
                     $selector = [Text.Encoding]::UTF8.GetString($bytes)
                     $generationManifest = @($manifest.packages | ForEach-Object { $_.files } | Where-Object {
@@ -515,6 +520,14 @@ function Invoke-RuntimeInstaller {
             # New generations are complete before the selector changes. Existing
             # sessions keep their generation and never read this selector again.
             $writes = @($writes | Sort-Object @{Expression={if ($_.path -eq 'LOLEXT/Scripts/Common/OrbamaFamily/current') { 1 } else { 0 }}})
+            # What the installer installs is authoritative: a release the in-game updater staged earlier
+            # (update-a / update-b) would otherwise be preferred at the next load. Its selectors are
+            # switched off; the backup keeps them for -Rollback.
+            foreach ($slot in @('a', 'b')) {
+                $slotPath = 'LOLEXT/Scripts/Common/OrbamaFamily/update-' + $slot
+                $slotHash = Get-RuntimeFileHash (Get-RuntimePath $rootPath $slotPath)
+                if ($slotHash) { $writes += [pscustomobject]@{path=$slotPath; bytes=[Text.Encoding]::ASCII.GetBytes("FAMILYUPDATE0`n"); expected=$slotHash} }
+            }
             $settings = Get-RuntimePath $rootPath 'LOLEXT/Scripts/Common/MenuElement.save'
             $settingsHash = Get-RuntimeFileHash $settings
             if ($settingsHash) {
