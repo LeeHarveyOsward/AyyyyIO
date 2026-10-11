@@ -173,6 +173,32 @@ function Get-RuntimeBytes([string]$Relative, [string]$LocalSource, [string]$Revi
     Assert-RuntimeRelative $Relative
     if ($LocalSource) { return ,([IO.File]::ReadAllBytes((Get-RuntimePath $LocalSource $Relative))) }
     if ($Revision -notmatch '^[a-f0-9]{40}$') { throw 'A full Git commit is required.' }
+    # One archive of the published commit instead of hundreds of single downloads; every file is still
+    # checked against manifest.json by the caller. Per-file download remains the fallback.
+    if ($Relative -ne 'manifest.json' -and !$script:RuntimeArchiveFailed) {
+        if (!$script:RuntimeArchive -or $script:RuntimeArchiveRevision -ne $Revision) {
+            try {
+                Add-Type -AssemblyName System.IO.Compression
+                $archiveClient = New-Object Net.WebClient
+                $archiveClient.Headers['User-Agent'] = $script:RuntimeAgent
+                try { $zip = $archiveClient.DownloadData("https://codeload.github.com/$($script:RuntimeRepository)/zip/$Revision") }
+                finally { $archiveClient.Dispose() }
+                $entries = @{}
+                $reader = New-Object IO.Compression.ZipArchive((New-Object IO.MemoryStream(,$zip)), [IO.Compression.ZipArchiveMode]::Read)
+                try {
+                    foreach ($entry in $reader.Entries) {
+                        $slash = $entry.FullName.IndexOf('/')
+                        if ($slash -lt 0 -or $entry.FullName.EndsWith('/')) { continue }
+                        $stream = $entry.Open(); $buffer = New-Object IO.MemoryStream
+                        try { $stream.CopyTo($buffer) } finally { $stream.Dispose() }
+                        $entries[$entry.FullName.Substring($slash + 1)] = $buffer.ToArray()
+                    }
+                } finally { $reader.Dispose() }
+                $script:RuntimeArchive = $entries; $script:RuntimeArchiveRevision = $Revision
+            } catch { $script:RuntimeArchiveFailed = $true; Write-Verbose "Archive download failed, using single files: $_" }
+        }
+        if ($script:RuntimeArchive -and $script:RuntimeArchive.ContainsKey($Relative)) { return ,([byte[]]$script:RuntimeArchive[$Relative]) }
+    }
     $url = "https://raw.githubusercontent.com/$($script:RuntimeRepository)/$Revision/$Relative"
     $client = New-Object Net.WebClient
     $client.Headers['User-Agent'] = $script:RuntimeAgent
