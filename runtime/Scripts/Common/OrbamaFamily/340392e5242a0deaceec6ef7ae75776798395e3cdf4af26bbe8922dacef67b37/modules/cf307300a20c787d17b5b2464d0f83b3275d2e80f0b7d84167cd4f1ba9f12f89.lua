@@ -1,7 +1,10 @@
 return function()
 return function(g,family,manifest,digest,storage)
     local updater={state='current',enabled=true,nextCheck=0,token=0,index=1}
-    local base='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files/'
+    -- Release repository (tools/publish_release.py): family-channel at the root, the runtime under
+    -- runtime/ at its LOLEXT paths, every download pinned to the channel's commit.
+    local base='https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/'
+    local family_root='runtime/Scripts/Common/OrbamaFamily/'
     local function now()return g.GetTickCount()/1000 end
     local function alive()return family.active and g.OrbamaFamily==family end
     local function fail(reason)
@@ -57,7 +60,7 @@ return function(g,family,manifest,digest,storage)
             updater.state='ready';updater.pending=candidate.generation;updater.job=nil
             return
         end
-        local path='Common/OrbamaFamily/'..candidate.generation..'/'..row.file
+        local path=family_root..candidate.generation..'/'..row.file
         request(base..candidate.commit..'/'..path,row.bytes,function(body)
             if #body~=row.bytes or digest(body,coroutine.yield)~=row.sha256 then fail('module_hash');return end
             if not g.loadstring(body,'@family-update/'..row.file)then fail('module_syntax');return end
@@ -81,7 +84,7 @@ return function(g,family,manifest,digest,storage)
                     or not hash or #hash~=64 or not size or size<1 or size>1000000 then fail('invalid_channel');return end
                 if sequence<=(manifest.sequence or 0) then self.state='current';self.job=nil;return end
                 self.job=nil
-                request(base..commit..'/Common/OrbamaFamily/'..generation..'/manifest.lua',size,
+                request(base..commit..'/'..family_root..generation..'/manifest.lua',size,
                     function(text)stageManifest(text,hash,size,generation,sequence,commit)end)
             end)
         end

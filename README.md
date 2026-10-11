@@ -23,6 +23,12 @@ To keep your other scripts enabled:
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1))) -KeepOtherScripts
 ```
 
+## Updates
+
+Once installed, the family updates itself: in game it checks this repository every 10 minutes while
+you are idle, downloads a new release in the background, verifies every file and switches to it the
+next time you reload your scripts. Running the install line again also updates.
+
 ## Undo
 
 ```powershell
@@ -38,4 +44,4 @@ restores the files and the script list from before the last install. Backups are
 - `manifest.json` - every file with its SHA-256 and size
 - `runtime/` - the files exactly as they are installed under `LOLEXT`
 
-Release `c7b0060f8ed52bce4e055ddc76d677a39a0a67156ad038de7cb2940b0cb94f77`.
+Release `340392e5242a0deaceec6ef7ae75776798395e3cdf4af26bbe8922dacef67b37`.
