@@ -21,12 +21,12 @@ powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubuserc
 or run `irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1 | iex` in PowerShell.
 
 The installer finds your GamingOnSteroids folder (or asks for it), downloads the release, checks every
-file against `manifest.json`, backs up whatever it replaces and enables the five family scripts.
+file against `manifest.json` and enables the five family scripts.
 **Every other active script is switched off** so only the family runs; their files and settings are kept.
-Reload the scripts in game afterwards. Running the same line again repairs or updates an install.
+Reload the scripts in game afterwards. Running the same line again repairs or updates an install; old
+releases are removed, so updates never pile up files.
 
 - Keep your other scripts enabled: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1))) -KeepOtherScripts`
-- Undo the last install: the same command with `-Rollback`. Backups are kept in `.runtime-files` next to `LOLEXT`.
 
 ## Updates
 
@@ -56,4 +56,4 @@ The files are built and stripped for release (no development tooling). In your g
 stored by their SHA-256 under `Scripts/Common/OrbamaFamily/`; the loader checks every file's hash
 before running it. The `updates` branch holds the same release in that layout for the in-game updater.
 
-Release `56a72d0d05f8c9967490eb6f9586f32754060b08e36ddbf87f625d2e157a465e`.
+Release `64faddc7ebd40b0b905fe5d4fdcddda15cdcc368364fbf374ec7dcaf41762598`.

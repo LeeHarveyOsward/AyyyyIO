@@ -4,7 +4,6 @@ param(
     [string]$Root,
     [string[]]$Packages,
     [switch]$NonInteractive,
-    [switch]$Rollback,
     [switch]$DetectOnly,
     [switch]$LibraryOnly,
     [string]$SourceRoot,
@@ -392,6 +391,46 @@ function Restore-RuntimeTransaction([string]$Base, [string]$Transaction) {
     Write-Host "Restored backup: $Transaction"
 }
 
+function Remove-RuntimeFolder([string]$Path) {
+    if ($Path -and (Test-Path -LiteralPath $Path)) { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Releases a game may be running right now: the installed one (current) and any the in-game updater staged.
+# Their files stay until the next install, so a running session can still load modules it has not loaded yet.
+function Get-RuntimeActiveGenerations([string]$Root) {
+    $family = Get-RuntimePath $Root 'LOLEXT/Scripts/Common/OrbamaFamily'
+    $found = @()
+    foreach ($name in @('current', 'update-a', 'update-b')) {
+        $path = Join-Path $family $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $lines = ([IO.File]::ReadAllText($path)).Split("`n")
+            if ($lines.Count -ge 3 -and $lines[0] -in @('FAMILY1', 'FAMILYUPDATE1')) {
+                $generation = if ($lines[0] -eq 'FAMILY1') { $lines[1] } else { $lines[2] }
+                if ($generation -match '^[a-f0-9]{64}$') { $found += $generation }
+            }
+        }
+    }
+    return @($found | Select-Object -Unique)
+}
+
+# Old releases are removed, so updates never pile up: every release folder and every file the in-game updater
+# staged (update-<release>-...) except the kept releases.
+function Remove-RuntimeOldGenerations([string]$Root, [string[]]$Keep) {
+    $family = Get-RuntimePath $Root 'LOLEXT/Scripts/Common/OrbamaFamily'
+    if (!(Test-Path -LiteralPath $family)) { return }
+    $removed = @{}
+    foreach ($item in Get-ChildItem -LiteralPath $family -Force) {
+        $generation = $null
+        if ($item.PSIsContainer -and $item.Name -match '^[a-f0-9]{64}$') { $generation = $item.Name }
+        elseif (!$item.PSIsContainer -and $item.Name -match '^update-([a-f0-9]{64})-') { $generation = $Matches[1] }
+        if ($generation -and $generation -notin $Keep) {
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            $removed[$generation] = $true
+        }
+    }
+    if ($removed.Count) { Write-Host "Removed $($removed.Count) old release(s)." }
+}
+
 function Invoke-RuntimeTransaction([string]$Base, $Writes, [string]$Revision) {
     $id = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $transaction = Get-RuntimePath $Base ('.runtime-files/backups/' + $id)
@@ -432,16 +471,15 @@ function Invoke-RuntimeTransaction([string]$Base, $Writes, [string]$Revision) {
     } catch {
         $failure = $_
         try { Restore-RuntimeTransaction $Base $transaction }
-        catch { throw "Installation failed: $failure. Recovery failed: $_. Backups: $transaction" }
+        catch { throw "Installation failed: $failure. Recovery failed: $_. Staged copies: $transaction" }
         throw "Installation failed and was rolled back: $failure"
     }
-    Write-Host "Backup: $transaction"
     return $transaction
 }
 
 function Invoke-RuntimeInstaller {
     [CmdletBinding()]
-    param([string]$Root, [string[]]$Packages, [switch]$NonInteractive, [switch]$Rollback,
+    param([string]$Root, [string[]]$Packages, [switch]$NonInteractive,
           [string]$SourceRoot, [string]$Commit, [switch]$KeepOtherScripts)
     $ErrorActionPreference = 'Stop'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -462,17 +500,13 @@ function Invoke-RuntimeInstaller {
             })
         }
         $pending = @($journals | Where-Object { $_.data.state -eq 'installing' })
-        if ($Rollback) {
-            $latest = $journals | Where-Object { $_.data.state -in @('installing', 'installed') } | Select-Object -First 1
-            if (!$latest) { throw 'No installation backup to restore.' }
-            Restore-RuntimeTransaction $rootPath $latest.path
-            return
-        }
         # Re-running the installer always recovers: an interrupted earlier installation is rolled back first.
         foreach ($interrupted in $pending) {
             try { Restore-RuntimeTransaction $rootPath $interrupted.path; Write-Host 'Rolled back an interrupted earlier installation.' }
             catch { throw "An interrupted earlier installation could not be rolled back: $_" }
         }
+        # No backups are kept: a finished installation's staging folder (and any left by older installers) goes.
+        foreach ($finished in $journals) { Remove-RuntimeFolder $finished.path }
         if (!$SourceRoot) {
             if (!$Commit) {
                 $head = Invoke-RestMethod -Uri "https://api.github.com/repos/$($script:RuntimeRepository)/commits/main" -Headers @{'User-Agent'=$script:RuntimeAgent} -TimeoutSec 30
@@ -519,7 +553,7 @@ function Invoke-RuntimeInstaller {
                 $expected = Get-RuntimeFileHash $target
                 $bytes = Get-RuntimeBytes $file.source $SourceRoot $Commit
                 if ($bytes.Length -ne $file.size -or (Get-RuntimeHash $bytes) -ne $file.sha256) { throw "Download verification failed: $($file.source)" }
-                # A damaged or edited file of this release is simply replaced (the backup keeps the old bytes).
+                # A damaged or edited file of this release is simply replaced.
                 if ($manifest.family -and $file.destination -eq 'LOLEXT/Scripts/Common/OrbamaFamily/current') {
                     $selector = [Text.Encoding]::UTF8.GetString($bytes)
                     $generationManifest = @($manifest.packages | ForEach-Object { $_.files } | Where-Object {
@@ -540,24 +574,18 @@ function Invoke-RuntimeInstaller {
             $writes = @($writes | Sort-Object @{Expression={if ($_.path -eq 'LOLEXT/Scripts/Common/OrbamaFamily/current') { 1 } else { 0 }}})
             # What the installer installs is authoritative: a release the in-game updater staged earlier
             # (update-a / update-b) would otherwise be preferred at the next load. Its selectors are
-            # switched off; the backup keeps them for -Rollback.
+            # switched off.
             foreach ($slot in @('a', 'b')) {
                 $slotPath = 'LOLEXT/Scripts/Common/OrbamaFamily/update-' + $slot
                 $slotHash = Get-RuntimeFileHash (Get-RuntimePath $rootPath $slotPath)
                 if ($slotHash) { $writes += [pscustomobject]@{path=$slotPath; bytes=[Text.Encoding]::ASCII.GetBytes("FAMILYUPDATE0`n"); expected=$slotHash} }
-            }
-            $settings = Get-RuntimePath $rootPath 'LOLEXT/Scripts/Common/MenuElement.save'
-            $settingsHash = Get-RuntimeFileHash $settings
-            if ($settingsHash) {
-                $writes += [pscustomobject]@{path='LOLEXT/Scripts/Common/MenuElement.save';
-                    bytes=[IO.File]::ReadAllBytes($settings); expected=$settingsHash; snapshot=$true}
             }
         }
         $iniPath = Get-RuntimePath $rootPath 'LOLEXT/LocalScriptDB.ini'
         $iniHash = Get-RuntimeFileHash $iniPath
         $iniBytes = if ($null -ne $iniHash) { [IO.File]::ReadAllBytes($iniPath) } else { [byte[]]@() }
         # Only the family runs: every other active script is switched off (ACTIVE = 0, files untouched;
-        # the backup and -Rollback restore the previous list). -KeepOtherScripts leaves them as they are.
+        # -KeepOtherScripts leaves them as they are.
         if (!$KeepOtherScripts) {
             $others = @(Get-RuntimeActiveScripts (Read-RuntimeIniText $iniBytes) | Where-Object { $_ -notin $enable -and $_ -notin $disable })
             if ($others.Count) { Write-Host ('Disable other active scripts: ' + ($others -join ', ')) }
@@ -569,7 +597,10 @@ function Invoke-RuntimeInstaller {
             files=@($writes | ForEach-Object { [ordered]@{path=$_.path; sha256=(Get-RuntimeHash $_.bytes)} })}
         $receiptBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json $receipt -Depth 15) + "`n")
         $writes += [pscustomobject]@{path='.runtime-files/installed.json'; bytes=$receiptBytes; expected=$receiptHash}
-        $null = Invoke-RuntimeTransaction $rootPath $writes $Commit
+        $running = if ($manifest.family) { @(Get-RuntimeActiveGenerations $rootPath) } else { @() }
+        $transaction = Invoke-RuntimeTransaction $rootPath $writes $Commit
+        Remove-RuntimeFolder $transaction
+        if ($manifest.family) { Remove-RuntimeOldGenerations $rootPath (@($manifest.family.generation) + $running) }
         Write-Host 'Installed and enabled. Reload the complete script runtime when ready.' -ForegroundColor Green
         Write-Host 'No running process was stopped or reloaded.'
     } finally { $lock.Dispose() }
@@ -578,7 +609,7 @@ function Invoke-RuntimeInstaller {
 if (!$LibraryOnly) {
     try {
         if ($DetectOnly) { Get-RuntimeInstallations }
-        else { Invoke-RuntimeInstaller -Root $Root -Packages $Packages -NonInteractive:$NonInteractive -Rollback:$Rollback -SourceRoot $SourceRoot -Commit $Commit -KeepOtherScripts:$KeepOtherScripts }
+        else { Invoke-RuntimeInstaller -Root $Root -Packages $Packages -NonInteractive:$NonInteractive -SourceRoot $SourceRoot -Commit $Commit -KeepOtherScripts:$KeepOtherScripts }
     } catch {
         if ($NonInteractive) { throw }
         Write-Host "Installer stopped: $_" -ForegroundColor Red
