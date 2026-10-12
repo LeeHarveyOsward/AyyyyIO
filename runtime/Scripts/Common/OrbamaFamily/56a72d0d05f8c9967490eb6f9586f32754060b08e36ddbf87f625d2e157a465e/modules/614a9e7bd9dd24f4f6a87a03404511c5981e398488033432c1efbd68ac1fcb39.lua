@@ -1,0 +1,32 @@
+return function(require)
+return function()
+-- Shared Janna mechanics data. Values preserved from the maintained controller.
+return {
+    -- 2026-10-08: E shield, W missile and R area were read from the matching page of each profile (`source`).
+    -- Both pages give Q speed 880-1408 and width 240 by charge; the controller keeps its asset speed and a
+    -- radius of 100 as the prediction inset for the short charges it releases (not corrected: unmeasured).
+    classic={id='classic',qBegin='Jade_JannaHowlingGale',qRelease='Jade_JannaHowlingGaleSpell',
+        rName='Jade_JannaReapTheWhirlwind',qSpeed=900,wBase={60,115,170,225,280},wAP=.6,wEdge=false,
+        wDelay=.25,wSpeed=1600,rRadius=700,eRange=800,eTurrets=true,
+        eShield={80,120,160,200,240},eShieldAP=.9,eDuration=5,eDelay=0,
+        source='research/family-assets/Jade_Janna/spells.json:1754-1817 (BaseShield, ShieldAPRatio .9, ShieldDuration 5) and https://wiki.leagueoflegends.com/en-us/League_Classic/Janna (read 2026-10-08)',
+        -- 2026-10-10, https://wiki.leagueoflegends.com/en-us/League_Classic/Janna: Q range 1100 + 20 % per second of
+        -- charge (1760 at 3 s), constant 1.25 s travel; R heals 70/110/150 (+35 % AP) per second for 4 s.
+        qBaseRange=1100,qChargeRate=220,qMaxCharge=3,qTravel=1.25,
+        rHeal={70,110,150},rHealAP=.35,rTick=1,rChannel=4},
+    normal={id='normal',qBegin='HowlingGale',qRelease='HowlingGaleSpell',
+        rName='ReapTheWhirlwind',qSpeed=667.666992,wBase={55,85,115,145,175},wAP=.5,wEdge=true,
+        wDelay=.245,wSpeed=1600,rRadius=700,eRange=800,eTurrets=true,
+        eShield={80,120,160,200,240},eShieldAP=.55,eDuration=4,eDelay=0,
+        source='https://wiki.leagueoflegends.com/en-us/Janna and Template:Data_Janna/Eye_of_the_Storm (read 2026-10-08)',
+        -- 2026-10-10, https://wiki.leagueoflegends.com/en-us/Janna and the installed HowlingGale record
+        -- (BaseRange 1100, ChargeDistancePercent 20, MissileTravelTime 1.25, MaxDuration 3): range 1100-1760 by charge,
+        -- constant 1.25 s travel. R heals 25/37.5/50 (+12.5 % AP) every 0.25 s for 3 s (asset 100/150/200 +.5 AP per s).
+        -- Tailwind: W deals 30 % of bonus movement speed; base movement speed 315 (wiki; the host has no base field,
+        -- janna_move_speed traces settle it).
+        qBaseRange=1100,qChargeRate=220,qMaxCharge=3,qTravel=1.25,
+        rHeal={25,37.5,50},rHealAP=.125,rTick=.25,rChannel=3,tailwind=.3,baseMoveSpeed=315},
+}
+
+end
+end
