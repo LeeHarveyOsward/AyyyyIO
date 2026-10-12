@@ -26,6 +26,41 @@ return function(g,family,manifest,digest,storage)
         local ok,result=pcall(storage.write,path,body)
         if not ok or not result then error('update_write_failed')end
     end
+    -- Staged releases never pile up: before a new release is downloaded, every staged release in the two
+    -- update slots except the running one and the new one is switched off and its files deleted (emptied
+    -- where the sandbox does not allow deleting). A game folder holds at most the installed release and two
+    -- staged ones.
+    local function remove(path)
+        local root=g.COMMON_PATH
+        if type(root)=='string' and g.os and g.os.remove then
+            if not root:match('[/\\]$') then root=root..'/' end
+            local ok,done=pcall(g.os.remove,root..'OrbamaFamily/'..path)
+            if ok and done then return end
+        end
+        pcall(storage.write,path,'')
+    end
+    local function clearStaged(running,incoming)
+        for _,slot in ipairs({'a','b'})do
+            local ok,pointer=pcall(storage.read,'update-'..slot,256)
+            local generation=ok and type(pointer)=='string' and pointer:match('^FAMILYUPDATE1\n%d+\n([a-f0-9]+)\n')
+            if generation and #generation==64 and generation~=running and generation~=incoming then
+                pcall(storage.write,'update-'..slot,'FAMILYUPDATE0\n')
+                local read,text=pcall(storage.read,'update-'..generation..'-manifest.lua',1000000)
+                local compiled=read and type(text)=='string' and g.loadstring(text,'@family-update/stale')
+                local loaded,stale=false,nil
+                if compiled then loaded,stale=pcall(compiled)end
+                if loaded and type(stale)=='table' and type(stale.modules)=='table' then
+                    local seen={}
+                    for _,row in pairs(stale.modules)do
+                        if type(row)=='table' and type(row.sha256)=='string' and row.sha256:match('^[a-f0-9]+$') and not seen[row.sha256] then
+                            seen[row.sha256]=true;remove('update-'..generation..'-'..row.sha256..'.lua')
+                        end
+                    end
+                end
+                remove('update-'..generation..'-manifest.lua')
+            end
+        end
+    end
     local download
     local function stageManifest(body,expected,size,generation,sequence,commit)
         if #body~=size or digest(body,coroutine.yield)~=expected then fail('manifest_hash');return end
@@ -47,6 +82,7 @@ return function(g,family,manifest,digest,storage)
         end
         if #files==0 or #files>8192 then fail('module_limit');return end
         table.sort(files,function(a,b)return a.file<b.file end)
+        clearStaged(manifest.generation,generation)
         updater.candidate={body=body,hash=expected,files=files,generation=generation,sequence=sequence,commit=commit}
         updater.index=1;updater.state='downloading';updater.job=nil
         download()
