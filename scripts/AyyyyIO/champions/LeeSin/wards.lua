@@ -381,18 +381,16 @@ function W:earlyW(p)
         if self.pending~=p or p.state~='placing' or p.event.cancelled or c:blocked() or c:dash()
             or c:stage(1)~=1 or not c:ready(1) or U.dist(myHero.pos,p.pos)>c.profile.wRange then return false end
         if p.owner=='fight' and c:underTurret(p.pos) then return false end
-        -- Do not knowingly redirect the speculative W to Lee or another ally.
-        -- The exact ward identity is checked again when enumeration catches up.
+        -- The speculative W goes to whatever is under the cursor. Any unit Lee can W to at the
+        -- landing (the new ward, an ally, an allied minion or an existing ward) gives the same jump;
+        -- only Lee himself (a self-shield, no jump) or a unit away from the landing is refused.
         local hover
         if Game.GetUnderMouseObject then
             local ok,value=pcall(Game.GetUnderMouseObject);if not ok then return false end;hover=value
             if not hover then p.emptyHoverAt=c:now() end
         end
         if U.valid(hover) and hover.team==myHero.team then
-            if U.same(hover,myHero) or not Shared.wardJumpable(hover)
-                or p.ids[U.id(hover)] or U.dist(hover.pos,p.pos)>90 then return false end
-            local owner=hover.ownerID or hover.ownerNetworkID
-            if owner and owner~=0 and owner~=myHero.networkID and owner~=myHero.handle then return false end
+            if U.same(hover,myHero) or not self:jumpableUnit(hover) or U.dist(hover.pos,p.pos)>90 then return false end
         end
         return true
     end

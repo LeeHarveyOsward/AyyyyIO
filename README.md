@@ -1,34 +1,59 @@
 # AyyyyIO
 
-The AyyyyIO script family for GoS: **Orbama** (orbwalker and SDK), **OrbamaPrediction**,
-**OrbamaUtils** (activator, Smite, wards, trackers), **EvAYYYYde** (evade) and **AyyyyIO** (champions,
-Normal and Classic profiles).
+The AyyyyIO script family for GamingOnSteroids:
+
+| Script | What it is |
+|---|---|
+| **Orbama** | orbwalker, input pipeline and SDK |
+| **OrbamaPrediction** | prediction |
+| **OrbamaUtils** | activator, Auto-Smite, enemy cooldown tracker, recall and ward trackers, awareness |
+| **EvAYYYYde** | evade |
+| **AyyyyIO** | 59 champions, Normal and Classic profiles |
 
 ## Install or update
 
-Run in PowerShell:
+Press **Win+R** and paste:
 
-```powershell
-irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1 | iex
+```
+powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1 | iex"
 ```
 
-The installer finds your GoS folder (or asks for it), downloads this release, checks every
+or run `irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1 | iex` in PowerShell.
+
+The installer finds your GamingOnSteroids folder (or asks for it), downloads the release, checks every
 file against `manifest.json`, backs up whatever it replaces and enables the five family scripts.
 **Every other active script is switched off** so only the family runs; their files and settings are kept.
-Reload the scripts in game afterwards.
+Reload the scripts in game afterwards. Running the same line again repairs or updates an install.
 
+- Keep your other scripts enabled: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeeHarveyOsward/AyyyyIO/main/install.ps1))) -KeepOtherScripts`
+- Undo the last install: the same command with `-Rollback`. Backups are kept in `.runtime-files` next to `LOLEXT`.
 
 ## Updates
 
 Once installed, the family updates itself: in game it checks this repository every 10 minutes while
 you are idle, downloads a new release in the background, verifies every file and switches to it the
-next time you reload your scripts. Running the install line again also updates.
+next time you reload your scripts.
 
+## What's in this repository
 
-## Contents
+```
+install.ps1          the installer
+manifest.json        every file: where it comes from, where it is installed, SHA-256 and size
+family-channel       the current release for the in-game updater
+scripts/
+  loaders/           the five entries GamingOnSteroids lists (Orbama.lua, AyyyyIO.lua, ...)
+  Orbama/            orbwalker and SDK
+  OrbamaPrediction/  prediction
+  OrbamaUtils/       utilities
+  EvAYYYYde/         evade; threats/ holds each champion's spell data (250 profiles)
+  AyyyyIO/           champion core; champions/ has one file per champion, plus LeeSin/, Katarina/, TwistedFate/
+  shared/            libraries the scripts share (combat data, terrain, input geometry, overlay, guide, updater)
+  release/           this release's module manifest and activation selector
+sprites/             portraits and icons for the overlay
+```
 
-- `install.ps1` - the installer
-- `manifest.json` - every file with its SHA-256 and size
-- `runtime/` - the files exactly as they are installed under `LOLEXT`
+The files are built and stripped for release (no development tooling). In your game folder they are
+stored by their SHA-256 under `Scripts/Common/OrbamaFamily/`; the loader checks every file's hash
+before running it. The `updates` branch holds the same release in that layout for the in-game updater.
 
-Release `340392e5242a0deaceec6ef7ae75776798395e3cdf4af26bbe8922dacef67b37`.
+Release `56a72d0d05f8c9967490eb6f9586f32754060b08e36ddbf87f625d2e157a465e`.
