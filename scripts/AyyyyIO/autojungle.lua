@@ -3,12 +3,11 @@ return function(require)
 -- Adapter hooks (all optional): enabled, available, hold, safe, destination,
 -- rows, sideAllowed, routeDistance, target, engaged, selected, movement, clear
 -- (returns true when it chose this tick's movement), move, attack, recovery,
--- cancel, opening, preferred, walkable(a,b); kite=false. ownsAttacks: the adapter's clear attacks and moves for itself.
--- Route policies (from the ancestor LHO r84) in J:Choose: a living damaged camp
--- within DAMAGED_REACH is finished first; a level-1 opening order (adapter.opening
--- returns the profile's order lists, nil when it does not apply) is followed from
--- the camp the player starts at, skipping killed or unsafe camps, until it runs out
--- or OPENING_UNTIL; a preferred camp (adapter.preferred, default Red/Blue) wins a
+-- cancel, preferred, walkable(a,b); kite=false. ownsAttacks: the adapter's clear attacks and moves for itself.
+-- Route policies in J:Choose: a living damaged camp within DAMAGED_REACH is
+-- finished first; an untouched early jungle starts at the nearer own buff and
+-- follows its profile's full clear, skipping killed or unsafe camps; a preferred
+-- camp (adapter.preferred, default Red/Blue) wins a
 -- cost tie within BUFF_TIE world units of travel.
 -- Shared defaults every core champion gets (generalized from Lee Sin, player request
 -- 2026-10-11); an adapter hook replaces each one (Lee keeps his own):
@@ -26,7 +25,12 @@ local HOLD_MS=10000 -- the provider's longest owned key hold.
 local SPAWN_GRACE=3 -- seconds a due camp may take to show its new monsters.
 local CAMERA_KEY=32 -- Space: the game's default "center camera on champion" hold key.
 local ROUTE_REFINE=3 -- Terrain route costs refine only the cheapest straight candidates.
-local DAMAGED_REACH,BUFF_TIE,OPENING_UNTIL=500,250,300
+local DAMAGED_REACH,BUFF_TIE,OPENING_START_UNTIL=500,250,120
+-- Full-clear policy is independent of team; each side supplies its own positions.
+local OPENING_ROUTES={
+ normal={Blue={'Blue','Gromp','Wolves','Raptors','Red','Krugs'},Red={'Red','Krugs','Raptors','Wolves','Blue','Gromp'}},
+ classic={Blue={'Blue','Wight','Wolves','Wraiths','Red','Golems'},Red={'Red','Golems','Wraiths','Wolves','Blue','Wight'}}
+}
 local MINIMAP_REACH=600 -- Lee's minimap travel distance: shorter walks click the ground.
 -- Kiting (Lee's defaults farmKiteDistance/farmKiteLeash): longest step, camp leash
 -- radius, shortest useful step, melee monster range.
@@ -60,14 +64,14 @@ return function(g,core,adapter)
  function J:Cancel(reason)
   if client then client:CancelOwner('auto-jungle',reason or 'route_ended')end
   if adapter.cancel then adapter.cancel(reason)end
-  self.command=nil;self.target=nil;self.camp=nil;self.emptyAt=nil;self.progressAt=nil
+  self.command=nil;self.target=nil;self.camp=nil;self.emptyAt=nil;self.progressAt=nil;self.waitingSpawn=nil
  end
  function J:Pause(reason)
   self.paused=true;self.state='paused';self.reason=reason;self:Cancel(reason);self:ReleaseCamera()
  end
  function J:Start()
   self.paused=false;self.generation=self.generation+1;self:Cancel('route_restarted');self.state='routing';self.reason=nil
-  self.opening=nil;self.openingPending=adapter.opening~=nil
+  self.opening=nil;self.openingPending=true
   self.cameraYielded=nil
   -- A new route never inherits a previous route's recovery, retreat or kite step.
   self.recovering=nil;self.retreatCamp=nil;self.recallReconcile=nil;self.recallObserved=nil
@@ -84,6 +88,8 @@ return function(g,core,adapter)
  -- player physically holds the key. A physical press hands the camera to the player until
  -- the route restarts.
  function J:CameraKey()local b=self.cameraBind;local k=b and b:Key();return type(k)=='number'and k>0 and k or nil end
+ function J:ObserveCameraHold()end
+ function J:ForgetCameraHold()end
  function J:Camera()
   local setting=self.cameraSetting;local key=self:CameraKey()
   if not client or not key or not setting or setting:Value()~=true or self.cameraYielded then return self:ReleaseCamera()end
@@ -95,7 +101,10 @@ return function(g,core,adapter)
   local id=self.cameraHold
   if id then
    local r=client:Poll(id)
-   if r and(r.state=='waiting'or r.state=='requested'or r.sentAt and not r.releasedAt and not r.abortedAt and r.state~='cancelled')then return end
+   if r and(r.state=='waiting'or r.state=='requested'or r.sentAt and not r.releasedAt and not r.abortedAt and r.state~='cancelled')then
+    if r.sentAt then self:ObserveCameraHold(id,r,key)end
+    return
+   end
    if r then client:Finish(id,true)end;self.cameraHold=nil
    if not(r and r.sentAt)then self.cameraNextAt=now+250;return end
   end
@@ -108,6 +117,7 @@ return function(g,core,adapter)
  -- Lets go of the key at once when the route ends (toggle off, pause, close, context ended):
  -- cancelling a charge hold releases its key.
  function J:ReleaseCamera()
+  self:ForgetCameraHold()
   local id=self.cameraHold;if not id or not client then return end;self.cameraHold=nil;self.cameraNextAt=nil
   client:Cancel(id,'camera_hold_ended');client:Finish(id,true)
  end
@@ -119,8 +129,9 @@ return function(g,core,adapter)
   if self.state=='waiting'then return 'waiting'end
   return text
  end
+ function J:Event()end
  function J:Safe(camp)
-  return not adapter.safe or adapter.safe(camp.pos)==true
+  return not adapter.safe or adapter.safe(self:Destination(camp))==true
  end
  function J:Destination(camp)return adapter.destination and adapter.destination(camp)or camp.walkPos or camp.aimPos or camp.pos end
  local function due(camp)
@@ -207,21 +218,26 @@ return function(g,core,adapter)
   for i=1,n do local row=candidates[i]
    if row.value<cost or row.value==cost and tostring(row.camp.id)<tostring(best and best.id)then best,cost=row.camp,row.value end
   end
-  -- Level-1 opening: the order containing the camp the player starts at (the
-  -- cheapest one), from that camp on; own-side camps only.
+   -- An early first clear starts at the nearer own buff, even when a small
+   -- camp is closer. Select once; levelling and travel never restart the order.
   -- A preview (exclude given) reads the opening without advancing it.
   local preview=exclude~=nil
-  if self.openingPending and best and not preview then
-   self.openingPending=false
-   local orders=G.Timer()<OPENING_UNTIL and adapter.opening and adapter.opening()
-   if type(orders)=='table'and best.team==H.team then
-    for _,order in ipairs(orders)do for index,category in ipairs(order)do
-     if category==best.category and(not self.opening or index<self.opening.index)then self.opening={order=order,index=index}end
+   if self.openingPending and not preview then
+    self.openingPending=false
+    local untouched=now<=OPENING_START_UNTIL
+    local service=self.service or SDK.OrbamaUtils and SDK.OrbamaUtils.Camps
+    local profile=service and service.profile
+    for _,camp in pairs(rows)do
+     profile=profile or camp.profile
+     if camp.team==H.team and(camp.killedAt or camp.awaitingRespawn or(camp.spawnGeneration or 0)>0)then untouched=false end
+    end
+    local routes=OPENING_ROUTES[profile];local start,nearest
+    if untouched and routes then for i=1,n do local row=candidates[i];local camp=row.camp
+     if camp.team==H.team and routes[camp.category]and(not nearest or row.distance<nearest)then start,nearest=camp,row.distance end
     end end
+    if start then self.opening={order=routes[start.category],index=1}end
    end
-  end
   local opening=self.opening
-  if opening and G.Timer()>=OPENING_UNTIL then if not preview then self.opening=nil end;opening=nil end
   if opening then
    for index=opening.index,#opening.order do
     for i=1,n do local row=candidates[i];local camp=row.camp
@@ -259,13 +275,14 @@ return function(g,core,adapter)
   for id in pairs(self.jobs)do
    local r=client:Poll(id)
    if not r then self.jobs[id]=nil
-   elseif r.state=='send_uncertain'then self.uncertain=id
+    elseif r.state=='send_uncertain'then self.uncertain=id
    elseif r.state=='cancelled_before_send'or r.state=='complete'or r.state=='aborted'or r.mechanical
     -- Own attack start seen, but the client called the evidence ambiguous (another input went
     -- out while it settled): it is not unknown to us, so release the attack resource now
     -- instead of after reconcile (live 2026-10-11: one attack per second on Krugs).
     or r.sentAt and self.attackSeen and self.attackSeen[id]and self.attackSeen[id].started then
-    local finished=client:Finish(id,not r.mechanical and r.sentAt~=nil or nil)
+     if self.command and self.command.id==id and not r.sentAt and(r.state=='cancelled_before_send'or r.state=='aborted')then self.command=nil end
+     local finished=client:Finish(id,not r.mechanical and r.sentAt~=nil or nil)
      if finished or not client:HasAction(id)then self.jobs[id]=nil;if self.attackSeen then self.attackSeen[id]=nil end;if self.uncertain==id then self.uncertain=nil end end
    end
   end
@@ -275,10 +292,11 @@ return function(g,core,adapter)
   if adapter.move then return adapter.move(destination)end
   local walker=SDK.Orbwalker
   if not walker:CanMove()or walker:IsAutoAttacking()or walker.MovementEnabled==false then return false end
-  local now=G.Timer();local command=self.command;local path=H.pathing
-  if command and dist(command.goal,destination)<60 then
-   if dist(H.pos,command.progress)>35 then command.progress=copy(H.pos);command.progressAt=now end
-   if now-command.at<.8 or path and path.hasMovePath and path.endPos and dist(path.endPos,command.goal)<250 and now-command.progressAt<1.5 then return true end
+   local now=G.Timer();local command=self.command
+   if self:ContinueMove(command,destination)then
+    -- Input completion does not end the walking order. Keep this destination
+    -- until arrival/combat, refusal, cancellation or the route's stall guard.
+    return true
   end
   local map=SDK.Minimap;local target,kind,world
   if map and map.InputPoint and dist(H.pos,destination)>MINIMAP_REACH then target=map:InputPoint(g.Vector(destination));if target then kind='screen';world=copy(destination)end end
@@ -291,8 +309,15 @@ return function(g,core,adapter)
   local id,why=client:SubmitKeyed('auto-jungle:move',{owner='auto-jungle',type='move',resource='move',kind=kind,target=target,world=world,
    priority='background',expires=client:Now()+300,context=self:Context(),inputCompletion=true,autoAcknowledge=true,
    mechanical=function()return self.camp==camp and self:Active()and walker:CanMove()and not walker:IsAutoAttacking()and self:Safe({pos=goal})end})
-  if id then self.jobs[id]=true;self.nextMove=now+.12;self.command={goal=goal,progress=copy(H.pos),progressAt=now,at=now}end
+   if id then self.jobs[id]=true;self.nextMove=now+.12;self.command={id=id,goal=goal,at=now}end
   return id~=nil,why
+ end
+ -- Used by the generic mover and by adapters with an existing transport.
+ -- Rejected/uncertain sends are reconciled by their input owner, never replayed
+ -- because the path wrapper briefly disappeared or the camera moved.
+ function J:ContinueMove(command,destination)
+  return command and command.goal and dist(command.goal,destination)<60
+   and dist(H.pos,command.sent or command.goal)>160 or false
  end
  function J:Attack(u)
   if adapter.attack then return adapter.attack(u)end
@@ -565,14 +590,17 @@ return function(g,core,adapter)
   local rows=adapter.rows and adapter.rows()or service:Refresh()
   local engaged=self:Engaged(self.camp)
   if not engaged then
-   local best,cost=self:Choose(rows,now)
-   local current=self.camp;local old=current and self:Cost(current,now,true)or math.huge
-   local bestTarget=best and self:Target(best)
-   local localVisible=bestTarget and dist(H.pos,bestTarget.pos)<650
-   if not current or not self:Eligible(current,now)or best and best~=current and (localVisible or cost+.6<old)then
+   local current=self.camp
+   -- Commit the selected camp while travelling. New distance estimates and
+   -- passing another living camp do not withdraw a valid walking order.
+   local retained=false;for _,row in pairs(rows)do if row==current then retained=true;break end end
+   if not current or not retained or not self:Eligible(current,now)or current.awaitingRespawn and not self:Target(current)and not self.waitingSpawn then
+    local best=self:Choose(rows,now)
     self.camp=best;self.target=nil;self.command=nil;self.emptyAt=nil;self.progressAt=nil
+    self.waitingSpawn=best and best.awaitingRespawn or nil
     if client then client:CancelKeyed('auto-jungle:move','route_destination_changed')end
     if adapter.selected then adapter.selected(best)end
+    self:Event('selected',current and 'previous_camp_ended'or 'route_started')
    end
   end
   local camp=self.camp;if not camp then self.state='idle';self.reason='No safe eligible camp';return false end
@@ -598,6 +626,10 @@ return function(g,core,adapter)
     -- A Krug that just died may still split into new members.
     local splitting=now<(camp.splitUntil or 0)
     if splitting then self.state='waiting';self.reason='Waiting for the Krugs to split'
+    elseif self.opening and self.opening.index==1 and not camp.seenAlive and now<=OPENING_START_UNTIL then
+     -- Classic has no verified first-spawn clock. Early staging waits for a
+     -- living buff instead of turning a missing pre-spawn snapshot into theft.
+     self.state='waiting';self.reason='Waiting for the first camp'
     -- A camp waited on until its respawn gets SPAWN_GRACE after the expected time: new
     -- monsters appear and become targetable a moment after the timer (live 2026-10-11:
     -- Wolves were skipped the instant they were due, before they could be seen).
@@ -607,10 +639,13 @@ return function(g,core,adapter)
      if not(service.ObserveEmptyArrival and service:ObserveEmptyArrival(camp.id,self.emptyAt))then self.blocked[camp.id]=now+5 end
      self.camp=nil;self.command=nil;self.reason='No current reachable monster';return false
     else self.state='waiting'end
-   else self.emptyAt=nil;acted=self:Move(u and u.pos or goal)==true end
+   else self.emptyAt=nil;acted=self:Move(goal)==true end
   end
   if not self.progressAt or dist(H.pos,self.progressPos)>60 then self.progressAt=now;self.progressPos=copy(H.pos)
-  elseif not engaged and now-self.progressAt>4 and self.state=='routing'then self.blocked[camp.id]=now+15;self.camp=nil;self.progressAt=nil;self.command=nil end
+  elseif not engaged and now-self.progressAt>4 and self.state=='routing'then
+   self:Event('stalled','no_position_progress');self.blocked[camp.id]=now+15;self.camp=nil;self.progressAt=nil;self.command=nil
+   if client then client:CancelKeyed('auto-jungle:move','route_stalled')end
+  end
   return acted
  end
  if core and core.RegisterService then core:RegisterService('auto-jungle',J)end

@@ -195,13 +195,15 @@ function R:Publish(o,threat,fresh)
     if accepted and fresh and o.onThreat then o.onThreat(threat)end
     return accepted
 end
--- An own-profile return aimed at its caster. Anything else stays with the
--- ordinary observer (an unsupported stage is still rejected there).
+-- An own-profile return aimed at its caster. A reviewed stage may also accept
+-- native target=0 when live evidence shows the host omits its caster target.
+-- Other targets stay with the ordinary observer.
 function R:Return(o,owner,record,m,d,now,key)
     local rt=record.returnTracking;local dead=rt.deadVariantOf~=nil
     local target=d.target
     local toCaster=target~=nil and target~=0 and(target==owner.networkID or target==owner.handle)
-    if not toCaster and not(dead and target==0 and G.point(d.endPos))then return false end
+    local zeroTargetOwner=target==0 and rt.zeroTargetOwner==true and not dead
+    if not toCaster and not zeroTargetOwner and not(dead and target==0 and G.point(d.endPos))then return false end
     if not G.point(m.pos)then return false end
     local id='return:missile:'..tostring(key);local ownerID=owner.networkID or owner.handle
     local t=self.tracks[id]

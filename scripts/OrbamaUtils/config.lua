@@ -22,7 +22,7 @@ local labels={minimapSeconds='Missing-enemy timer on the minimap',recallSelf='Sh
     summonerDefense='Heal / Barrier when threatened',offense='Use damage and speed items while fighting',ignite='Ignite enemies it will kill',
     level='Level up abilities automatically',wards='Wards',cooldowns='Enemy cooldowns',recalls='Recalls and teleports',
     turrets='Turret range and aggro warning',awareness='Last seen position in fog',wardVision='Ward vision radius',
-    waypoints='Enemy movement paths',experience='Experience bars',trinket='Trinket cooldown',draw='Enable drawings',scale='UI scale %'}
+    waypoints='Enemy movement paths',experience='Level and experience',trinket='Trinket cooldown',draw='Enable drawings',scale='UI scale %'}
 function C.new(g)
     local self={values={},entries={},g=g};local saved=g.OrbamaUtilsConfig or {}
     local migration=require('Orbama.menus');local stored=migration.saved or {}
@@ -117,11 +117,13 @@ function C.new(g)
                 return default
             end
             parent:MenuElement({id='Screen',name='On screen',value=true})
-            parent:MenuElement({id='Minimap',name='On minimap',value=name=='wards'or name=='awareness'})
+            if name~='recalls'and name~='cooldowns'then
+                parent:MenuElement({id='Minimap',name='On minimap',value=name=='wards'or name=='awareness'})
+            end
             parent:MenuElement({id='Enemies',name='Enemies',value=preference('Enemies','TEnemies',true)})
-            parent:MenuElement({id='Allies',name='Allies',value=preference('Allies','TAllies',self.values.allies)})
+            if name~='cooldowns'then parent:MenuElement({id='Allies',name='Allies',value=preference('Allies','TAllies',self.values.allies)})end
             if name=='recalls'and self.migrateRecall then parent.Allies:Value(false);parent.Enemies:Value(true)end
-            parent:MenuElement({id='Distance',name='Only within this distance (0 = everywhere)',value=0,min=0,max=15000,step=250})
+            if name~='cooldowns'then parent:MenuElement({id='Distance',name='Only within this distance (0 = everywhere)',value=0,min=0,max=15000,step=250})end
             if name=='waypoints'then
                 parent:MenuElement({id='Name',name='Show name',value=preference('Name','EPName',true)})
                 parent:MenuElement({id='Time',name='Show travel estimate',value=preference('Time','EPTime',true)})
@@ -156,8 +158,9 @@ function C.new(g)
         local options=self.drawOptions and self.drawOptions[name]
         local ally=team==g.myHero.team
         if options then
-            if not options[ally and 'Allies'or 'Enemies']:Value()then return false end
-            local distance=options.Distance:Value()
+            local side=options[ally and 'Allies'or 'Enemies']
+            if not side or not side:Value()then return false end
+            local distance=options.Distance and options.Distance:Value()or 0
             if distance>0 and pos then
                 local dx,dz=pos.x-g.myHero.pos.x,pos.z-g.myHero.pos.z
                 if dx*dx+dz*dz>distance*distance then return false end
@@ -168,7 +171,7 @@ function C.new(g)
     function self:visible(name,where)
         local options=self.drawOptions and self.drawOptions[name]
         if not options then return true end
-        return options[where]:Value()==true
+        return options[where]~=nil and options[where]:Value()==true
     end
     return self
 end

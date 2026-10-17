@@ -201,17 +201,26 @@ function O:Tick()
                 local id=U.id(ward)
                 if ward.dead or ward.valid==false then self.wardHistory[id]=nil
                 elseif ward.visible~=false then
-                    local duration=ward.duration;local expires=U.finite(duration)and duration>0 and now+duration or nil
-                    if not expires and ward.GetBuff then for index=0,U.count(ward.buffCount or 0,64)do
+                    local row=self.wardHistory[id];local name=ward.charName
+                    if row and(row.name~=name or row.handle~=ward.handle or row.team~=ward.team
+                        or not ward.pos or row.pos.x~=ward.pos.x or row.pos.z~=ward.pos.z)then row=nil end
+                    local expires
+                    if ward.GetBuff then for index=0,U.count(ward.buffCount or 0,64)do
                         local buff=ward:GetBuff(index);local finish=buff and U.buffEnd(buff)
                         if buff and(buff.count or 0)>0 and finish and finish>now and finish-now<=180 then expires=finish;break end
                     end end
+                    -- Native duration alone cannot establish a new placement every refresh.
+                    -- Keep the earliest bound until an absolute buff expiry supplies better evidence.
+                    if not expires then
+                        local duration=ward.duration;local relative=U.finite(duration)and duration>0 and now+duration or nil
+                        expires=row and row.expires or relative
+                        if expires and relative then expires=math.min(expires,relative)end
+                    end
                     -- A ward does not move or change owner: a known identity refreshes
                     -- only its time fields instead of re-reading name, position, owner.
-                    local row=self.wardHistory[id];local name=ward.charName
                     if row and row.name==name then row.at=now;row.expires=expires;row.visible=true
                     else
-                        self.wardHistory[id]={id=id,name=name,kind=wardKind(ward),pos=U.copy(ward.pos),team=ward.team,
+                        self.wardHistory[id]={id=id,handle=ward.handle,name=name,kind=wardKind(ward),pos=U.copy(ward.pos),team=ward.team,
                             ownerID=ward.ownerID,owner=ward.owner and ward.owner.charName,at=now,expires=expires,
                             sightRange=ward.sightRange,visible=true}
                     end

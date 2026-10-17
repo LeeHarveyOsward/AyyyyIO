@@ -1,7 +1,7 @@
 return function()
 -- GENERATED: tools/build_ayyyyio_controllers.py; Classic data; release payload.
 local modules={}
-modules.overlayClient=(function(require) return _G.OrbamaFamily:Factory("75920ecdc95c04d25d20998cca2c80e56f39aff902517072680d64c48fd1cb52")(require) end)(require)
+modules.overlayClient=(function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end)(require)
 modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("105d25b3d528397643ce147540e7b847313529612ff58156df19d70a7c09ae91")(require) end)(require)
 modules.abilityProfiles=_G.OrbamaFamily:Require("04b3201d7674a3b04c12a7732b3345f73bbccf0f40cfb72203e846891e06f379")
 modules.championProfiles=(function()
@@ -28,12 +28,12 @@ modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("a8b0dae6f
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
-modules["autojungle"]=_G.OrbamaFamily:Require("7db0b9586a77097bb64895183d25ea6bd8618bd61f03adb899ada4e460e84c92")
+modules["autojungle"]=_G.OrbamaFamily:Require("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")
 modules["combatMechanics"]=_G.OrbamaFamily:Require("9e32908504b1e01599ffc8a55f7d52a3a92a974d794c085ee29160c628b85e38")
 modules["gameplay"]=_G.OrbamaFamily:Require("038c846d2b126f3f80142b2c55b4ace9ee78a9347b22cb2f242dcb5ed5185f2f")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("8b530b74e721ee3a7364f1f753e7578ef7c7843a7dcc77812a526d9dc96147b1")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("454102f4f573681afa019a39b08ec2a6adca91fb526d8515918046a8d866415c")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -814,7 +814,7 @@ function LeonaChampion:PlanValid(p)
  local selected=_G.SDK.TargetSelector.Selected
  if selected and IsValid(selected)and selected.networkID~=p.id then return false end
  return self.engage==p and Game.Timer()<=p.expires and IsValid(p.target)and p.target.networkID==p.id
-  and p.requestIntent.continue()and self:ModePermission(p.mode,'Q')
+  and Core:ContinuationState(p.requestIntent,p.expires)~=nil and self:ModePermission(p.mode,'Q')
   and not p.requestIntent.ambiguous and not p.requestIntent.cancelled
 end
 function LeonaChampion:CompletedAttack(q,t)
@@ -945,6 +945,10 @@ function LeonaChampion:Combo()
  local t=GetTarget(self.RSpell.Range);if not IsValid(t)or not t.pos2D.onScreen then return end
  if self:AreaR()then return end
  if self:SingleR(t)then return end
+ -- R can consider farther enemies; the remaining combo needs a target E reaches.
+ if GetDistance(t.pos,myHero.pos)>self.ESpell.Range then
+  t=GetTarget(self.ESpell.Range);if not IsValid(t)or not t.pos2D.onScreen then return end
+ end
  if self:CombatW(t,'Combo')then return end
  if Menu.Combo.E:Value()and not self:InAttackRange(t)and not self.engage and self:Allowed(t)and not self:EOverlaps(t)
   and self:CastE(t,2,function()return self:Allowed(t)and not self:EOverlaps(t)end)then return end

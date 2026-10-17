@@ -3,7 +3,7 @@ return function()
 if not myHero or (myHero.charName~='Katarina' and myHero.charName~='Jade_Katarina') then return end
 local function boot()
 if _G.AyyyyIO and _G.AyyyyIO.active and not _G.AyyyyIO.loading then return _G.AyyyyIO.controller end
-local generation='88b61ec592379c274a9b960ac1f7c55bae238af32c42838aef32fab3e6294315'
+local generation='84327b3af4e97581dc0ddfd43267f7ede02837f5c49098d0011ee8f003dc8efc'
 if not SDK or not SDK.OrbamaVersion or not SDK.Actions or not SDK.Actions.GetCapabilities or not SDK.Actions:GetCapabilities().createClient
  or not SDK.Damage or not SDK.TargetSelector or not SDK.SharedData or type(SDK.OnTick)~='table'or type(SDK.OnDraw)~='table'or type(SDK.OnWndMsg)~='table' then
  print('[Kata Hari] Enable Orbama and reload the script runtime.');return
@@ -16,16 +16,16 @@ if previous and previous.active then
 end
 local modules,cache={},{}
 local externalRequire=require
-modules["AyyyyIO.autojungle"]=function(require) return _G.OrbamaFamily:Factory("7db0b9586a77097bb64895183d25ea6bd8618bd61f03adb899ada4e460e84c92")(require) end
-modules["ChampionMobility.navdata"]=function(require) return _G.OrbamaFamily:Factory("d117c4100c3c8df2d88c9a90b84eb53e3054de39eb72ce7dcb87bb56d5d9d83b")(require) end
-modules["ChampionMobility.navigation"]=function(require) return _G.OrbamaFamily:Factory("8eb91961bfb6786fa7b783c8c385fa92eb69dd188332a3ed05d1b593588c77cb")(require) end
-modules["ChampionMobility.terrain"]=function(require) return _G.OrbamaFamily:Factory("be68982db0405bd6f5b3cf238a254b1e4834a13a718b64da69d8dd43cd9f0bdc")(require) end
+modules["AyyyyIO.autojungle"]=function(require) return _G.OrbamaFamily:Factory("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")(require) end
+modules["ChampionMobility.navdata"]=function(require) return _G.OrbamaFamily:Factory("14b69c92b499a610eb5726f185aa129ece83cadbad0b26ea1c39aaaee140b81c")(require) end
+modules["ChampionMobility.navigation"]=function(require) return _G.OrbamaFamily:Factory("bb74dd0a64b2a04960a0ac0c320d11227d47cc1b05209aad6efacf56d2570916")(require) end
+modules["ChampionMobility.terrain"]=function(require) return _G.OrbamaFamily:Factory("ffe05a363cdd2c2f53b0c0bf685fb3ed63fe87602f0f6e20bd3d4b1296994960")(require) end
 modules["ChampionMobility.wards"]=function(require) return _G.OrbamaFamily:Factory("9768e601e79b31befc238366ddb7f056cd4f9dc0720c8c999f918b1829091bf1")(require) end
 modules["CombatProfiles.camp_timing"]=function(require) return _G.OrbamaFamily:Factory("2d57ee1752e69959f1f19f9d0db112f6fc4e368636ad800025f6c307183102ee")(require) end
 modules["CombatProfiles.katarina"]=function(require) return _G.OrbamaFamily:Factory("d058cd49d693a4f48c641b6c7794e5771094c074c90ab8609e7cdac2fe9353f2")(require) end
 modules["CombatProfiles.world"]=function(require) return _G.OrbamaFamily:Factory("283debfb90308f50cc23be05b6bd05b74ddfd75687ca20b0064f3c6c75a0d06e")(require) end
 modules["Orbama.menus"]=function(require) return _G.OrbamaFamily:Factory("d77e24d9e67e4afce47aec143cde65f28183d8a9d3505511d35fc782fae476fe")(require) end
-modules["Overlay.client"]=function(require) return _G.OrbamaFamily:Factory("75920ecdc95c04d25d20998cca2c80e56f39aff902517072680d64c48fd1cb52")(require) end
+modules["Overlay.client"]=function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end
 modules["kata.actions"]=function(require) return _G.OrbamaFamily:Factory("dd2e1ff18da7df09f3f2f33e618e643c800f9e02bccbbb61d96696e109ddad2a")(require) end
 modules["kata.app"]=function(require) return _G.OrbamaFamily:Factory("98395256094bcca38ac8a4c5479a5803b2da547c1be72ea31c5d6acbd0428472")(require) end
 modules["kata.config"]=function(require) return _G.OrbamaFamily:Factory("8b6dd39ef9511703f4271ff46bca2ab90bdeeaf5f4e23d24ee9d27aef2be4341")(require) end

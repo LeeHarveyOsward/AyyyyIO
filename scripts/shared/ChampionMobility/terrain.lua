@@ -141,7 +141,7 @@ end
 -- walkWall with its per-query facts (trusted provider, profile and map match,
 -- the player's team) read once, for the many samples of one line or ring.
 -- Same answer as walkWall for every point; never kept beyond the calling query.
-function T:walkQuery()
+function T:walkQuery(yieldWork)
     -- An instance that replaces walkWall or wall keeps being asked through it.
     if rawget(self,'walkWall')or rawget(self,'wall')or rawget(self,'trusted')then return function(p)return self:walkWall(p)end end
     local provider=self.provider
@@ -150,8 +150,14 @@ function T:walkQuery()
     local isWall=provider and type(provider.isWall)=='function'
         and not(provider.mode and provider.mode~=self.ctx.profile.id)
         and not(provider.mapID and provider.mapID~=Game.mapID) and provider.isWall
+    local probes=0
     return function(p)
         if not U.position(p) then return nil end
+        -- Optional coroutine preparation yields before native work, never
+        -- through a protected host call or while an input owner is committing.
+        if yieldWork and provider and provider.nativeCollision then
+            probes=probes+1;if probes>128 then probes=1;yieldWork()end
+        end
         if walk then local ok,value=pcall(walk,p,team);if ok and type(value)=='boolean' then return value end end
         if not isWall then return nil end
         local ok,value=pcall(isWall,p)

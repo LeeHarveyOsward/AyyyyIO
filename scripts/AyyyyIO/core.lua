@@ -3401,12 +3401,17 @@ return function(g, modules, champion)
     function C:RegisterComboDamage(fn)if type(fn)=='function'then self.comboDamage=fn end end
     local function comboRows()
         local rows={};local enemies=C:DecisionUnits('GetEnemyHeroes')
+        local estimate=C.comboDamage or function(unit)
+            if not sdk.Data:IsInAutoAttackRange(hero,unit)then return 0,true end
+            return sdk.Damage:GetAutoAttackDamage(hero,unit,true),true
+        end
         for i=1,math.min(#enemies,5)do local u=enemies[i]
             local distance=env.IsValid(u)and u.team~=hero.team and flatDistance(u.pos,hero.pos)
             if distance and distance<=MAP_KILL_RANGE then
-                local ok,damage,partial=pcall(C.comboDamage,u)
+                local ok,damage,partial=pcall(estimate,u)
                 if ok and finiteNumber(damage)and damage>0 then
                     local shields=(finiteNumber(u.shieldAD)and u.shieldAD or 0)+(finiteNumber(u.shieldAP)and u.shieldAP or 0)
+                        +(finiteNumber(u.allShield)and u.allShield or 0)
                     local killable=damage>=u.health+shields and not C:CannotDie(u,0)
                     if distance<=2500 or killable then rows[#rows+1]={unit=u,damage=damage,partial=partial,killable=killable,far=distance>2500 or nil}end
                 end
@@ -3416,13 +3421,7 @@ return function(g, modules, champion)
     end
     if C.overlayScope and modules.overlayClient then
         C.display=modules.overlayClient.new(g,'AyyyyIO.display',function()return C:Current()end,nil,nil,function()
-            if C.comboDamage then return comboRows()end
-            local ts=sdk.TargetSelector;local unit=ts.GetSelectedTarget and ts:GetSelectedTarget()
-            local modes=sdk.Orbwalker.Modes
-            if not unit and (modes[sdk.ORBWALKER_MODE_COMBO]or modes[sdk.ORBWALKER_MODE_HARASS])then unit=ts:GetTarget(1200,sdk.DAMAGE_TYPE_PHYSICAL)end
-            if not unit or unit.dead or unit.visible~=true or unit.valid==false or unit.team==hero.team or unit.team==300 then return end
-            if not sdk.Data:IsInAutoAttackRange(hero,unit)then return end
-            return unit,sdk.Damage:GetAutoAttackDamage(hero,unit,true),true
+            return comboRows()
         end,C.overlayScope)
         if C.display then C.core:RegisterService('display',C.display)end
     end

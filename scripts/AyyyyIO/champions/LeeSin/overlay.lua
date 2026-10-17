@@ -1,5 +1,7 @@
 return function(require)
 local U=require('leesin.util')
+local DamageDisplay=require('Overlay.client')
+local DrawDamage=require('Overlay.damage')
 local O={};O.__index=O
 local currentDraw
 local function api()return currentDraw or Draw end
@@ -164,7 +166,8 @@ function O:prepareTarget()
     local safe,max=c.damageModel:both(target)
     if U.id(target)==id and U.valid(target)
         and (not(c.config:get('damageSelected')or c.sharedUtilities and c.config:get('damageCurrent'))or U.same(target,self.currentTarget))then
-        self.damagePreview[id]={safe=safe,max=max,target=target,at=now}
+        self.damagePreview[id]={safe=safe,max=max,target=target,handle=target.handle,at=now,
+            health=target.health,shield=target.allShield or 0,physicalShield=target.shieldAD or 0,magicalShield=target.shieldAP or 0}
         self.preparedAt=now
     end
     return true
@@ -228,7 +231,8 @@ function O:prepare()
                 local point=U.vector(target.pos):To2D()
                 if point.onScreen and c:enemyValid(target)then
                     local safe,max=c.damageModel:both(target)
-                    self.damagePreview[U.id(target)]={safe=safe,max=max,target=target,at=now}
+                    self.damagePreview[U.id(target)]={safe=safe,max=max,target=target,handle=target.handle,at=now,
+                        health=target.health,shield=target.allShield or 0,physicalShield=target.shieldAD or 0,magicalShield=target.shieldAP or 0}
                 end
             end
         end
@@ -241,49 +245,42 @@ function O:close()
 end
 function O:damageBars()
     local c=self.ctx;local cfg=c.config
-    if not cfg:visible('damageBars',c.sdk,c.mode) or not c.damageModel or not api().Rect then return end
+    if self.scope and not self.publishDamage then self.publishDamage=DamageDisplay.publisher(_G,self.scope)end
+    local rows={}
+    local function publish()
+        if self.publishDamage then self.publishDamage(rows,nil,nil,#rows==0)
+        else for _,row in ipairs(rows)do DrawDamage(_G,api(),row,1)end end
+    end
+    if not cfg:visible('damageBars',c.sdk,c.mode) or not c.damageModel then publish();return end
     local now=self:preparationNow()
-    if not self.preparedAt or now-self.preparedAt>1 then return end
+    if not self.preparedAt or now-self.preparedAt>1 then publish();return end
     local width,height=cfg:get('damageWidth'),cfg:get('damageHeight')
     local selected=(cfg:get('damageSelected')or c.sharedUtilities and cfg:get('damageCurrent'))and self.currentTarget
     for _,target in ipairs(c.enemies or {}) do
         -- Prepared display eligibility is refreshed by prepare, not by api().
         -- This row authorizes rendering only; gameplay validators remain fresh.
         local result=self.damagePreview and self.damagePreview[U.id(target)]
-        local prepared=result and result.target==target
+        local prepared=result and result.target==target and result.handle==target.handle
             and now-(result.at or self.preparedAt or 0)<=1
-        local screen=prepared and target.team~=myHero.team and target.team~=300
-            and U.valid(target) and U.vector(target.pos):To2D()
-        local bar=screen and screen.onScreen and target.hpBar
-        local native=bar and U.finite(bar.x) and U.finite(bar.y) and bar.onScreen~=false and (bar.x~=0 or bar.y~=0)
-        if not native and screen and screen.onScreen and U.finite(screen.x) and U.finite(screen.y) then
-            bar={x=screen.x-width*.5-cfg:get('damageX'),y=screen.y-70-cfg:get('damageY')}
-        end
-        if bar and U.finite(bar.x) and U.finite(bar.y) and bar.onScreen~=false
-            and bar.x>=-width and bar.y>=-100
+        if prepared and target.team~=myHero.team and target.team~=300 and U.valid(target)
             and U.finite(target.maxHealth) and target.maxHealth>0
             and (not(cfg:get('damageSelected')or c.sharedUtilities and cfg:get('damageCurrent'))or U.same(target,selected)) and (c.sharedUtilities or c:enemyValid(target)) then
-            local safe,max
-            safe=result and result.safe or {};max=result and result.max or {}
-            local cap=math.max(1,target.maxHealth or target.health or 1)
-            local x,y=bar.x+cfg:get('damageX'),bar.y+cfg:get('damageY')
-            local hp=U.clamp(target.health/cap,0,1)*width
-            local function strip(result,offset,col)
-                if not U.finite(result.damage)or result.damage<1 then return end
-                local loss=U.clamp(result.damage/cap,0,target.health/cap)*width
-                api().Rect(x,y+offset,hp,height,color(25,30,35))
-                if loss>0 then api().Rect(x+hp-loss,y+offset,loss,height,col) end
+            local safe,max=result.safe or {},result.max or {}
+            local function add(estimate,offset,col,label,killable)
+                if #rows>=10 or not U.finite(estimate.damage)or estimate.damage<1 then return end
+                local id,handle=U.id(target),target.handle
+                rows[#rows+1]={unit=target,damage=estimate.damage,partial=estimate.partial==true,killable=killable,snapshot=result,
+                    killValid=function()return DamageDisplay.KillCurrent(target,result)end,
+                    key='damage:'..tostring(id)..':'..offset,
+                    appearance={width=width,height=height,offsetX=cfg:get('damageX'),offsetY=cfg:get('damageY'),
+                        stripOffset=offset,color=col,partialMarker=false,text=cfg:get('damageText'),label=label},
+                    valid=function()return U.id(target)==id and target.handle==handle and self:preparationNow()-(result.at or 0)<=1 end}
             end
-            if cfg:get('damageSafe') then strip(safe,0,color(65,225,165)) end
-            if cfg:get('damageMax') then strip(max,height+1,color(255,175,75)) end
-            if cfg:get('damageText') then
-                local labels={}
-                if cfg:get('damageSafe') and U.finite(safe.damage)and safe.damage>=1 then labels[#labels+1]='CON ~'..math.floor(safe.damage) end
-                if cfg:get('damageMax') and U.finite(max.damage)and max.damage>=1 then labels[#labels+1]=(max.estimated and 'MAX EST ~' or 'MAX ~')..math.floor(max.damage) end
-                if #labels>0 then api().Text(table.concat(labels,' / ')..((safe.partial or max.partial) and ' *partial' or ''),12,x,y+height*2+3,color(230,230,240)) end
-            end
+            if cfg:get('damageSafe')then add(safe,0,{220,65,225,165},'Cautious ~',safe.lethal==true)end
+            if cfg:get('damageMax')then add(max,height+1,{220,255,175,75},'All-in ~',false)end
         end
     end
+    publish()
 end
 function O:ranges()
     local c=self.ctx;local cfg=c.config

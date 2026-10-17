@@ -14255,7 +14255,7 @@ return M
 end)()
 SDK.Overlay=(function()
 -- Provider-owned display scopes. Rendering cannot authorize input or gameplay.
-return function(g,sdk,menu,migration,display,calibration,minimapFactory)
+return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDrawing)
  local O={version=1,scopes={},serial=0,assets={},reservations={},commands={},commandPool={},samples={},metrics={projections=0,primitives=0,failures=0},limits={scopes=24,records=256,commands=8192}}
  local function finite(v)return type(v)=='number'and v==v and math.abs(v)<math.huge end
  local function clamp(v,a,b)return math.max(a,math.min(b,v))end
@@ -14756,14 +14756,13 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory)
    if r.anchor~='minimap'and r.text and r.text~=''then self:Label(r,x,y-size-10*scale,r.text,size,d)end
    if r.radius and r.anchor~='minimap'then d.Circle(g.Vector(r.pos),r.radius,1,d.Color(100,100,225,205))end
   elseif r.kind=='damage'then
-   local u=r.unit;if not u or u.dead or not u.visible or not finite(u.maxHealth)or u.maxHealth<=0 or not finite(r.damage)or r.damage<1 then return end
-   local hp=u.hpBar;local native=hp and finite(hp.x)and finite(hp.y)and hp.onScreen~=false and(hp.x~=0 or hp.y~=0)
-   local p=not native and self:Project(u.pos);if not native and not p then return end
-   x,y=native and hp.x or p.x-50*scale,native and hp.y+12*scale or p.y-65*scale
-   local w=100*scale;local health=clamp((u.health or 0)/u.maxHealth,0,1)*w;local loss=math.min(health,r.damage/u.maxHealth*w)
-   d.Rect(x,y,health,3*scale,d.Color(180,22,30,35));d.Rect(x+health-loss,y,loss,3*scale,d.Color(220,65,225,165))
-   if r.partial then d.Text('~',size,x-10*scale,y-5*scale,d.Color(220,200,210,215))end
-   if r.killable then d.Text('KILL',size,x+w+4*scale,y-5*scale,d.Color(240,255,70,70))end
+    local drawn,x,y,anchor=damageDrawing(g,d,r,scale,function(pos)return self:Project(pos)end)
+    local metrics=self.metrics
+    if drawn then
+     metrics.damageRowsQueued=(metrics.damageRowsQueued or 0)+1
+     metrics.damageLastTarget=r.unit and r.unit.charName;metrics.damageLastX=x;metrics.damageLastY=y;metrics.damageLastAnchor=anchor
+    else metrics.damageRowsSkipped=(metrics.damageRowsSkipped or 0)+1 end
+    return
   else
    if r.radius and r.anchor=='world'and r.pos then d.Circle(g.Vector(r.pos),r.radius,1,d.Color(100,255,110,90))end
    local text=r.text or ''
@@ -15125,7 +15124,9 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory)
    collectUs=math.floor(t.collect*1e6/frames+.5);dispatchUs=math.floor(t.dispatch*1e6/frames+.5);batchUs=math.floor(t.batch*1e6/frames+.5)
    t.frames=0;t.collect=0;t.dispatch=0;t.batch=0
   end
-  return {collectUs=collectUs,dispatchUs=dispatchUs,batchUs=batchUs,timedFrames=frames>0 and frames or nil,drawWidth=dw,drawHeight=dh,renderWidth=rw,renderHeight=rh,samples=#v,p95=v[math.max(1,math.ceil(#v*.95))],p99=v[math.max(1,math.ceil(#v*.99))],clock='GetTickCount milliseconds; sub-ms claims unavailable',displaySource=display and display.source or 'API',displayProbes=display and display.probes or 0,minimapSource=self.minimapSource or 'unused',minimapAnchors=self.minimapAnchors or 0,minimapMisses=self.metrics.minimapMisses or 0,projections=self.metrics.projections,projectionCacheHits=self.metrics.projectionCacheHits or 0,primitives=self.metrics.primitives,breakdown=self.metrics.breakdown,failures=self.metrics.failures}
+   return {damageRowsQueued=self.metrics.damageRowsQueued or 0,damageRowsSkipped=self.metrics.damageRowsSkipped or 0,
+    damageLastTarget=self.metrics.damageLastTarget,damageLastX=self.metrics.damageLastX,damageLastY=self.metrics.damageLastY,damageLastAnchor=self.metrics.damageLastAnchor,
+    collectUs=collectUs,dispatchUs=dispatchUs,batchUs=batchUs,timedFrames=frames>0 and frames or nil,drawWidth=dw,drawHeight=dh,renderWidth=rw,renderHeight=rh,samples=#v,p95=v[math.max(1,math.ceil(#v*.95))],p99=v[math.max(1,math.ceil(#v*.99))],clock='GetTickCount milliseconds; sub-ms claims unavailable',displaySource=display and display.source or 'API',displayProbes=display and display.probes or 0,minimapSource=self.minimapSource or 'unused',minimapAnchors=self.minimapAnchors or 0,minimapMisses=self.metrics.minimapMisses or 0,projections=self.metrics.projections,projectionCacheHits=self.metrics.projectionCacheHits or 0,primitives=self.metrics.primitives,breakdown=self.metrics.breakdown,failures=self.metrics.failures}
  end
  function O:InstallMenu()
   if not menu or not menu.MenuElement then return end
@@ -15292,6 +15293,11 @@ return function(g,overlay,calibration,settings)
  settings=settings or function()return {}end
  local function finite(v)return type(v)=='number'and v==v and math.abs(v)<math.huge end
  local function mapPoint(p)return (type(p)=='table'or type(p)=='userdata')and finite(p.x)and finite(p.y)and p.x>=0 and p.y>=0 and p.x<32768 and p.y<32768 and(p.x~=0 or p.y~=0)end
+ local function calibratedPoint(p,w,h)
+  if not calibration then return end
+  local api=g.Game.Resolution()
+  return calibration:Project(p,api.x,api.y,w,h,overlay.menu,settings())
+ end
  -- Viewport and input-exclusion rects are read once per clock value and API
  -- resolution; every move check in that callback shares them.
  local frame={}
@@ -15349,6 +15355,7 @@ return function(g,overlay,calibration,settings)
  function M:Project(p,reference)
   if not p or not finite(p.x)or not finite(p.z)then return end
   self.metrics.projections=self.metrics.projections+1
+  local w,h=self:Viewport();local fallback,fallbackChecked
   if reference then
    -- posMM is a separate native API. Only use it for this exact retained world
    -- observation; an updated hidden position must not move a last-seen marker.
@@ -15360,25 +15367,28 @@ return function(g,overlay,calibration,settings)
     local mm=u.posMM;if mapPoint(mm)then return {x=mm.x,y=mm.y}end
    end)
    if matched and point then
-    local fit=self.minimapFit;local w,h=self:Viewport()
-    if not fit or fit.width~=w or fit.height~=h or fit.expires<=self:Now()
-     or (point.x-fit.ox-fit.xx*p.x-fit.xz*p.z)^2+(point.y-fit.oy-fit.yx*p.x-fit.yz*p.z)^2<=4 then
+    if point.x>=w or point.y>=h then fallback=calibratedPoint(p,w,h);fallbackChecked=true end
+    local fit=self.minimapFit
+    if not fallback and(not fit or fit.width~=w or fit.height~=h or fit.expires<=self:Now()
+     or (point.x-fit.ox-fit.xx*p.x-fit.xz*p.z)^2+(point.y-fit.oy-fit.yx*p.x-fit.yz*p.z)^2<=4)then
      self.minimapSource='native_object';return point
     end
    end
   end
   local ok,q=pcall(function()local v=g.Vector(p.x,p.y or 0,p.z);return v.ToMM and v:ToMM()end)
-   local source='native_vector';local fit=self.minimapFit;local w,h=self:Viewport()
+   local source='native_vector';local fit=self.minimapFit
    if fit and fit.width==w and fit.height==h and fit.expires>self:Now()then
     local x,y=fit.ox+fit.xx*p.x+fit.xz*p.z,fit.oy+fit.yx*p.x+fit.yz*p.z
     -- Prefer a checked native projection; fall back when it is absent, zero or inconsistent.
     if not ok or not mapPoint(q)or (q.x-x)^2+(q.y-y)^2>4 then q={x=x,y=y};ok=true;source='checked_fit'end
    end
-   if ok and mapPoint(q)then self.minimapSource=source;return {x=q.x,y=q.y}end
-   if calibration then
-    local api=g.Game.Resolution();local point=calibration:Project(p,api.x,api.y,w,h,overlay.menu,settings())
-    if point then self.minimapSource=calibration.source;return point end
-   end
+   local native=ok and mapPoint(q)
+   -- Only a matched calibration proves these render bounds. Unmatched hosts may
+   -- expose valid native render pixels beyond their reported API resolution.
+   if native and(q.x>=w or q.y>=h)and not fallbackChecked then fallback=calibratedPoint(p,w,h);fallbackChecked=true end
+   if native and(not fallback or q.x<w and q.y<h)then self.minimapSource=source;return {x=q.x,y=q.y}end
+   if not fallbackChecked then fallback=calibratedPoint(p,w,h)end
+   if fallback then self.minimapSource=calibration.source;return fallback end
    self.minimapSource='unavailable';self.metrics.minimapMisses=(self.metrics.minimapMisses or 0)+1
  end
  -- Projection, native Draw and input each have an explicit coordinate boundary.
@@ -15412,6 +15422,31 @@ return function(g,overlay,calibration,settings)
   return true
  end
  return M
+end
+
+end)(),(function()
+-- Shared health-bar rendering. Controllers supply prepared estimates and appearance only.
+return function(g,d,r,scale,project)
+ local function finite(v)return type(v)=='number'and v==v and math.abs(v)<math.huge end
+ local u=r.unit
+ if not u or u.dead or u.visible~=true or not finite(u.health)or u.health<=0 or not finite(u.maxHealth)or u.maxHealth<=0
+  or not finite(r.damage)or r.damage<1 then return end
+ scale=scale or 1;local a=r.appearance or {};local width=(a.width or 100)*scale;local height=(a.height or 3)*scale
+ local hp=u.hpBar;local native=hp and finite(hp.x)and finite(hp.y)and hp.onScreen~=false and(hp.x~=0 or hp.y~=0)
+ local p
+ if not native then
+  if project then p=project(u.pos)else local point=g.Vector(u.pos);p=point and point:To2D();if p and p.onScreen==false then p=nil end end
+  if not p or not finite(p.x)or not finite(p.y)then return end
+ end
+ local x=native and hp.x+(a.offsetX or 0)*scale or p.x-width/2
+ local y=(native and hp.y+(a.offsetY or 12)*scale or p.y-65*scale)+(a.stripOffset or 0)*scale
+ local health=math.max(0,math.min(1,u.health/u.maxHealth))*width;local loss=math.min(health,r.damage/u.maxHealth*width)
+ local col=a.color or {220,65,225,165};local size=math.floor(14*scale)
+ d.Rect(x,y,health,height,d.Color(180,22,30,35));d.Rect(x+health-loss,y,loss,height,d.Color(unpack(col)))
+ if r.partial and a.partialMarker~=false then d.Text('~',size,x-10*scale,y-5*scale,d.Color(220,200,210,215))end
+ if a.text then d.Text((a.label or '~')..math.floor(r.damage)..(r.partial and ' *partial'or ''),math.floor(12*scale),x,y+height+3*scale,d.Color(230,230,230,240))end
+ if r.killable and(not r.killValid or r.killValid())then d.Text('KILL',size,x+width+4*scale,y-5*scale,d.Color(240,255,70,70))end
+ return true,x,y,native and 'healthbar'or 'world'
 end
 
 end)())

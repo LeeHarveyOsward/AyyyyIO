@@ -35,12 +35,12 @@ function T:Cell(x,z)
     local row=g.rows and g.rows[z+1]
     local flag=row and tonumber(row:sub(x*4+1,x*4+4),16) or g.flags and g.flags[z*g.nx+x+1]
     if not flag then return nil end
-    if flag>=4096 then return nil end -- Upper navigation flags are retained but not interpreted yet.
-    local solid=bit(flag,2) or bit(flag,4) or bit(flag,8) or bit(flag,64) or bit(flag,512)
-    if solid then return true end
+    if flag>=8192 then return nil end -- 4096 affects visibility, not collision.
+    if bit(flag,2)or bit(flag,512)then return true end
     if bit(flag,1024)and bit(flag,2048)then return true end
     if bit(flag,1024) then return self.team~=100 end
     if bit(flag,2048) then return self.team~=200 end
+    if bit(flag,4)or bit(flag,8)or bit(flag,64)then return true end
     -- Existing extracted profiles treat 2048 as a team gate. It must be
     -- interpreted before other obstacle flags, never globally cleared.
     return false

@@ -9,23 +9,43 @@ function N.provider(profile)
         rows[z]={}
         for x=1,#row do rows[z][x]=tonumber(row:sub(x,x),16) end
     end
-    local function isWall(p)
+    local function staticWall(p)
             if not p or not p.x or not p.z or p.x~=p.x or p.z~=p.z then return nil end
             if p.x<g.x or p.z<g.z or p.x>g.maxX or p.z>g.maxZ then return true end
             local x,z=math.floor((p.x-g.x)/g.cell),math.floor((p.z-g.z)/g.cell)
             local row=rows[z+1];local packed=row and row[math.floor(x/4)+1]
             if not packed then return nil end
+             local unknown=g.unknown and g.unknown[z+1]
+             if unknown and math.floor(tonumber(unknown:sub(math.floor(x/4)+1,math.floor(x/4)+1),16)/2^(x%4))%2==1 then return nil end
             return math.floor(packed/2^(x%4))%2==1
     end
-    return {mode=profile.id,mapID=g.mapID,validated=true,static=true,cell=g.cell,
-        kind='Bundled '..profile.id..' navigation (50-unit static cells)',isWall=isWall,
-        isWalkWall=function(p,team)
-            if p and p.x and p.z and g.gates and g.gates[team] then
+    local native=type(Game.isWall)=='function'and Game.isWall
+    local provider={mode=profile.id,mapID=g.mapID,validated=true,static=not native,cell=g.cell,
+        kind=native and 'Game.isWall; extracted team gates' or 'Bundled '..profile.id..' navigation (50-unit static cells)',
+        sourceHash=g.sha256,staticWall=staticWall,nativeCollision=not not native}
+    function provider.isWall(p)
+        if Game.mapID~=g.mapID then return nil end
+        if not native then return staticWall(p)end
+        if not U.position(p)then return nil end
+        if p.x<g.x or p.z<g.z or p.x>g.maxX or p.z>g.maxZ then return true end
+        -- Runtime collision sees the current elemental variant and temporary
+        -- terrain. A missing/failed answer never falls back to clear static land.
+        local ok,value=pcall(Game.isWall,U.vector(p))
+        if ok and type(value)=='boolean'then return value end
+    end
+    provider.isWalkWall=function(p,team)
+            if p and p.x and p.z and g.gates then
                 local x,z=math.floor((p.x-g.x)/g.cell),math.floor((p.z-g.z)/g.cell)
-                if x>=0 and x<g.nx and z>=0 and z<g.nz and g.gates[team][z*g.nx+x] then return false end
+                if x>=0 and x<g.nx and z>=0 and z<g.nz then
+                    local index=z*g.nx+x
+                    for _,owner in ipairs({100,200})do
+                        if g.gates[owner]and g.gates[owner][index]then return team~=owner end
+                    end
+                end
             end
-            return isWall(p)
-        end}
+            return provider.isWall(p)
+        end
+    return provider
 end
 
 local function push(heap,node)
@@ -51,16 +71,17 @@ local function pop(heap)
     return root
 end
 -- Local A*: fixed node budget and travel bound, eight neighbours, no corner
--- cutting. GG remains responsible for dispatching every movement order.
+-- cutting. Orbama remains responsible for dispatching every movement order.
 function N.approach(terrain,origin,landing,range,maxWalk,yieldWork,accept,sliceNodes)
     sliceNodes=math.max(1,math.min(64,type(sliceNodes)=='number' and sliceNodes or 64))
     local step=50;local radius=math.min(45,myHero.boundingRadius or 35)
     local heap,seen,free={}, {}, {};local expanded=0
+    local query=terrain.walkQuery and terrain:walkQuery(yieldWork)
     local function point(x,z) return {x=origin.x+x*step,y=origin.y,z=origin.z+z*step} end
     local function key(x,z) return x..':'..z end
     local function walkable(x,z)
         local k=key(x,z)
-        if free[k]==nil then free[k]=terrain:clearance(point(x,z),radius,true) end
+        if free[k]==nil then free[k]=terrain:clearance(point(x,z),radius,true,query) end
         return free[k]
     end
     local start={x=0,z=0,g=0,f=math.max(0,U.dist(origin,landing)-range)}
@@ -84,7 +105,7 @@ function N.approach(terrain,origin,landing,range,maxWalk,yieldWork,accept,sliceN
                         local last=i
                         for j=i+1,#path do
                             if yieldWork and (j-i)%sliceNodes==0 then yieldWork() end
-                            if not terrain:walkLine(from,path[j],radius) then break end
+                            if not terrain:walkLine(from,path[j],radius,query) then break end
                             last=j
                         end
                         smooth[#smooth+1]=path[last];from=path[last];i=last+1
@@ -99,7 +120,7 @@ function N.approach(terrain,origin,landing,range,maxWalk,yieldWork,accept,sliceN
                     local k=key(x,z)
                     if cost<=maxWalk and (not seen[k] or cost<seen[k]) and walkable(x,z)
                         and (dx==0 or dz==0 or (walkable(node.x+dx,node.z) and walkable(node.x,node.z+dz)))
-                        and terrain:walkLine(p,point(x,z),radius) then
+                        and terrain:walkLine(p,point(x,z),radius,query) then
                         seen[k]=cost
                         push(heap,{x=x,z=z,g=cost,f=cost+math.max(0,U.dist(point(x,z),landing)-(range-20)),parent=node})
                     end

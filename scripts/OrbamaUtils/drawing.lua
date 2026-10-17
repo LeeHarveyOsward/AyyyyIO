@@ -16,7 +16,7 @@ function D:Build(observations,preparedConfig,kind)
             if w.owner and cfg:wardVisible(w.kind,'OwnerDisplay')then parts[#parts+1]=w.owner end
 
 
-            add(w.pos,table.concat(parts,' / '),'ward',cfg:wardVisible(w.kind,'VisionDisplay')and U.finite(w.sightRange)and w.sightRange or nil,'wards',w.team,w.kind or 'Unknown',{id=w.id,key=key,name=w.name,expiresAt=w.expires,timer=cfg:wardVisible(w.kind,'TimerDisplay')})
+            add(w.pos,table.concat(parts,' / '),'ward',cfg:wardVisible(w.kind,'VisionDisplay')and U.finite(w.sightRange)and w.sightRange or nil,'wards',w.team,w.kind or 'Unknown',{id=w.id,key=key,handle=w.handle,name=w.name,expiresAt=w.expires,timer=cfg:wardVisible(w.kind,'TimerDisplay')})
         end
     end end
     if (not kind or kind=='turrets')and cfg:get('turrets')then for _,t in ipairs(observations.turrets)do
@@ -191,7 +191,7 @@ function D:StableCurrent(row,now)
             and(source.map==nil or source.map==self.contextMap)and(source.profile==nil or source.profile==self.contextProfile)
             and(retention<=0 or now-data.at<=retention)
     elseif row.kind=='wards'then
-        return source.name==data.name and source.team==row.team and(source.kind or 'Unknown')==row.wardKind
+        return source.name==data.name and source.handle==data.handle and source.team==row.team and(source.kind or 'Unknown')==row.wardKind
             and(not source.expires or source.expires>now)
     end
     return false
@@ -338,6 +338,7 @@ function D:Draw(draw)
    if stable then fresh=fresh and c.config:includes(row.kind,row.team,row.pos)end
   if unit then fresh=fresh and U.id(unit)==data.id and unit.handle==data.handle and(not data.name or unit.charName==data.name)and not unit.dead and(row.kind=='awareness'or unit.valid~=false)
    and(row.kind=='awareness'and not unit.visible or row.kind~='awareness'and unit.visible)end
+   if data.anchor=='pathend'then fresh=fresh and unit.pathing and unit.pathing.hasMovePath and unit.pathing.endPos~=nil end
   -- With an overlay, strips are published every frame by PublishStrips.
   if scope and row.kind=='cooldowns'then fresh=false end
   if fresh then
@@ -362,7 +363,8 @@ function D:Draw(draw)
      end
     end
    else
-    local p=g.Vector((unit and row.kind~='awareness'and unit.pos or row.pos));local s=p:To2D();local text=self:DisplayText(row,now)
+     local point=data.anchor=='pathend'and unit.pathing.endPos or unit and row.kind~='awareness'and unit.pos or row.pos
+     local p=g.Vector(point);local s=p:To2D();local text=self:DisplayText(row,now)
     if s and s.onScreen~=false and c.config:visible(row.kind,'Screen')then
      local x,y=s.x,s.y-35*scale
      if row.radius then d.Circle(p,row.radius,1,d.Color(100,100,225,205))end

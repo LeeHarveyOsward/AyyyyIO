@@ -56,4 +56,4 @@ The files are built and stripped for release (no development tooling). In your g
 stored by their SHA-256 under `Scripts/Common/OrbamaFamily/`; the loader checks every file's hash
 before running it. The `updates` branch holds the same release in that layout for the in-game updater.
 
-Release `3e7cee7e0e6c6eb2b591fde05b7283548153e23bce6e9b4c24905c9c3762f1db`.
+Release `d29566c89fb702327b47a685e37fe2f23d3c0643bea94b2157c864ddd40fd928`.

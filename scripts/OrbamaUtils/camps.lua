@@ -16,6 +16,7 @@ function C:Reset()
  self.rows={};self.bindings={};self.nativeDownUnreliable=nil;self.generation=self.generation+1;self.revision=self.revision+1;self.reconciledAt=nil
  self.map=self.app.g.Game.mapID;self.profile=self.app.profile.id
  local data=require(self.profile=='classic'and 'CombatProfiles.classic_camps'or 'CombatProfiles.normal_camps')
+ local formations=require(self.profile=='classic'and 'CombatProfiles.classic_camp_formations'or 'CombatProfiles.normal_camp_formations')
  if data.mapID~=self.map or data.mode~=self.profile then return end
  for _,anchor in ipairs(data.camps)do
   local id=tostring(self.map)..':'..self.profile..':'..tostring(anchor.team)..':'..anchor.name..':'..self.generation
@@ -23,7 +24,19 @@ function C:Reset()
   self.rows[id]={id=id,layoutKey='map:'..anchor.name,name=anchor.name,category=anchor.category,team=anchor.team,pos=U.copy(anchor.pos),mapPos=U.copy(anchor.pos),
    map=self.map,profile=self.profile,instance=self.generation,spawnGeneration=0,state='unknown',availability='unknown',
    timing=timing,timerSource=timing and timing.source,estimated=not(timing and timing.verified),members={},knownMembers={},blockedUntil=0,fromMap=true}
-  if self.profile=='classic'and anchor.name=='Camp_Order_Wraiths'then self.rows[id].walkPos={x=7443.1166992188,y=0,z=5663.0053710938}end
+   self.rows[id].walkPos=U.copy(anchor.walkPos)
+   self.rows[id].positionSource=anchor.positionSource
+   self.rows[id].spawnName=anchor.spawnName
+   local layout=formations.mapID==self.map and formations.mode==self.profile and formations.camps['map:'..anchor.name]
+   local main
+   for _,row in ipairs(layout and layout.rows or{})do
+    if not main or(row.maxHealth or 0)>(main.maxHealth or 0)then main=row end
+   end
+   if main then
+    self.rows[id].walkPos=U.copy(main.pos)
+    self.rows[id].spawnName=main.name
+    self.rows[id].positionSource='recorded stationary formation: '..tostring(layout.source)
+   end
  end
  self.app.observations.camps=self.rows
  if self.app.farm then self.app.farm.known=self.rows end
@@ -56,7 +69,7 @@ function C:Nearest(pos,category,radius)
  local best,distance=nil,radius or 900
  for _,r in pairs(self:Current())do
   if category==nil or category==r.category or category=='Camp'and not World.epics[r.category]then
-   local d=math.min(U.dist(pos,r.mapPos),U.dist(pos,r.pos))
+   local d=math.min(U.dist(pos,r.mapPos),U.dist(pos,r.pos),U.dist(pos,r.walkPos))
    if d<distance then best,distance=r,d end
   end
  end
@@ -257,7 +270,8 @@ function C:Refresh(force)
    r.availability=r.awaitingRespawn and 'clearing_remnants'or 'observed_alive'
    local main
    for _,m in ipairs(r.members)do
-    if m.visible~=false and(not m.pathing or not m.pathing.hasMovePath)and m.health>=(m.maxHealth or m.health)
+     if m.visible~=false and(not r.spawnName or U.name(m.charName)==U.name(r.spawnName))
+      and(not m.pathing or not m.pathing.hasMovePath)and m.health>=(m.maxHealth or m.health)
      and(m.maxHealth or 0)>=(r.aimHealth or 0)and(not main or (m.maxHealth or 0)>(main.maxHealth or 0)
       or m.maxHealth==main.maxHealth and tostring(U.id(m))<tostring(U.id(main)))then main=m end
    end

@@ -610,26 +610,8 @@ function A:move(pos,owner)
     end
     local routing=owner=='farm' and not combat and U.dist(myHero.pos,p)>300
     local command=self.routeCommand
-    if routing and command and U.dist(command.goal,p)<80 and U.dist(myHero.pos,command.sent)>160 then
-        if U.dist(myHero.pos,command.progressPos)>35 then
-            command.progressPos=U.copy(myHero.pos);command.progressAt=now
-        end
-        local path=myHero.pathing
-        local endPos=path and path.hasMovePath and path.endPos
-        local following=endPos and U.dist(endPos,command.sent)<150
-        -- A known path that ends somewhere else is a lost route; an unknown or
-        -- matching one is kept. A minimap pixel is coarser than a ground click.
-        local astray=endPos and U.dist(endPos,command.sent)>(command.minimap and 400 or 250)
-        -- One command per destination. After a short acknowledgement window it
-        -- is kept for as long as Lee keeps moving on a path that is not known
-        -- to lead elsewhere; it is issued again only when he stopped (rejected
-        -- or interrupted input, a manual order, stuck) or walks somewhere else.
-        -- "Uncertain" input (the player's pointer moved during the click) used
-        -- to force a new click every 0.8 s although Lee was already walking.
-        if now-command.at<.8 or following and now-command.progressAt<1.5
-            or not astray and now-command.progressAt<(command.uncertain and .8 or .6) then
-            return true,command.uncertain and 'Observing current route' or 'route already active'
-        end
+    if routing and c.farm:ensureRouter():ContinueMove(command,p) then
+        return true,'route already active'
     elseif not routing then self.routeCommand=nil end
     local sent=U.copy(p)
     c.synthetic=true; c.syntheticMouseUntil=now+.08

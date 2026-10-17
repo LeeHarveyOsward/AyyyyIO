@@ -182,9 +182,11 @@ function F:routeDistance(camp,destination)
         or U.dist(row.origin,myHero.pos)>150 or U.dist(row.destination,destination)>100 then
         row={origin=U.copy(myHero.pos),destination=U.copy(destination),provider=terrain.provider,wall=terrain.provider.isWall}
         row.work=coroutine.create(function()
-            if terrain:walkLine(row.origin,row.destination,myHero.boundingRadius or 35) then return straight end
+            local yieldWork=function()coroutine.yield()end
+            local query=terrain:walkQuery(yieldWork)
+            if terrain:walkLine(row.origin,row.destination,myHero.boundingRadius or 35,query) then return straight end
             local path,length=require('leesin.navigation').approach(terrain,row.origin,row.destination,220,straight*2+1500,
-                function()coroutine.yield()end,function(p)return terrain:walkLine(p,row.destination,myHero.boundingRadius or 35)end,8)
+                yieldWork,function(p)return terrain:walkLine(p,row.destination,myHero.boundingRadius or 35,query)end,8)
             return path and length+U.dist(path[#path] or row.origin,row.destination)
         end)
         self.routeCosts[camp.id]=row
@@ -723,15 +725,9 @@ function F:ensureRouter()
    -- Skill allocation briefly owns input; the route waits instead of ending.
    hold=function()return c.leveling.pending~=nil and c.leveling.pending~=false end,
    safe=function(pos)return c:threats(pos,1000)==0 and not c:underTurret(pos)end,
-   destination=function(camp)return self:walkDestination(camp)end,
    rows=function()return self.known end,
    sideAllowed=function(camp)return self:sideAllowed(camp)end,
    routeDistance=function(camp,destination)return self:routeDistance(camp,destination)end,
-   -- Level-1 opening orders of this profile, followed from the camp the player starts at.
-   opening=function()
-    local level=myHero.levelData and myHero.levelData.lvl or 1
-    if level==1 and P.openings then return P.openings[c.profile.id]end
-   end,
    target=function(camp)return self:selectTarget(camp)end,
    engaged=function(camp)
     for _,m in ipairs(camp.members or{})do if self:ordinaryTarget(m)and U.dist(myHero.pos,m.pos)<900
@@ -942,13 +938,9 @@ function F:entryShot(camp,origin,fog)
     return best
 end
 function F:walkDestination(camp)
-    -- Camp icon/manager coordinates may sit beside the monsters or have no
-    -- ground height. Prefer a live member's actual world position for walking.
-    local main
-    for _,m in ipairs(camp.members or {}) do
-        if self:ordinaryTarget(m) and (not main or (m.maxHealth or m.health)>(main.maxHealth or main.health)) then main=m end
-    end
-    return main and main.pos or camp.walkPos or camp.pos
+    -- Combat approaches the current target separately. Travel uses the shared
+    -- stationary spawn destination, so a moving monster cannot redirect it.
+    return camp.walkPos or camp.aimPos or camp.pos
 end
 function F:travel(camp,target)
     local c=self.ctx;local now=c:now()

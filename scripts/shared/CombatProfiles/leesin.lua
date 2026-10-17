@@ -45,9 +45,6 @@ P.kickBlocked={morganae=true,bansheesveil=true,sivire=true,nocturneshroudofdarkn
 function P.get(hero)
     if hero=='LeeSin' then return P.normal elseif hero=='Jade_LeeSin' then return P.classic end
 end
-P.openings={
-    normal={{'Red','Krugs','Raptors','Wolves','Blue','Gromp'},{'Blue','Gromp','Wolves','Raptors','Red','Krugs'}},
-    classic={{'Red','Golems','Wraiths','Wolves','Blue','Wight'},{'Blue','Wight','Wolves','Wraiths','Red','Golems'}}}
 -- Fallback discovery centers only for regular SR. Classic uses observed Camp objects.
 P.centers={{3735,7890,100,'Blue'},{3781,6444,100,'Wolves'},{2112,8450,100,'Gromp'},
     {6824,5508,100,'Raptors'},{7772,4028,100,'Red'},{8482,2706,100,'Krugs'},
