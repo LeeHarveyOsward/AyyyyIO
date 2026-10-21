@@ -1,5 +1,7 @@
 # AyyyyIO
 
+[Releases](https://github.com/LeeHarveyOsward/AyyyyIO/releases) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/LeeHarveyOsward/AyyyyIO/issues)
+
 The AyyyyIO script family for GoS:
 
 | Script | What it is |
@@ -33,6 +35,12 @@ releases are removed, so updates never pile up files.
 Once installed, the family updates itself: in game it checks this repository every 10 minutes while
 you are idle, downloads a new release in the background, verifies every file and switches to it the
 next time you reload your scripts.
+
+## Release history
+
+GitHub Releases use tags named `v<sequence>`, matching the updater release sequence.
+Each tag points to the published snapshot for that sequence. The [changelog](CHANGELOG.md)
+records the changes and original publication dates. The one-line installer follows `main`.
 
 ## What's in this repository
 
