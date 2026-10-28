@@ -4,7 +4,7 @@ return function(require)
 -- names the own buff and when it pops: `delay` seconds after the buff started,
 -- or at its expiry. The pop becomes a `targeted` row, so walking never "dodges"
 -- it, while stasis, untargetability and other timed defenses are judged against
--- its impact time. Damage stays unknown; the reviewed tier carries its weight.
+-- its impact time. Damage stays unknown; the reviewed tier stands in for it (evade.danger).
 -- The player's buffs are sampled only while an enemy champion with mark rows is
 -- in the game.
 local G=require('evade.geometry')

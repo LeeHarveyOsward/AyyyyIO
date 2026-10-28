@@ -59,7 +59,7 @@ end
 function L.Covered(byID,s)
  local parent=s.channelInstanceID and byID[s.channelInstanceID]
  if not parent or parent.shape~='cone'or not parent.emissionSpeed or s.shape~='missile'
- or s.motion or s.motionUnknown or s.speedUncertain or(s.acceleration or 0)~=0
+ or s.motion or s.motionUnknown or s.speedUncertain or s.speedStep or(s.acceleration or 0)~=0
  or parent.profile~=s.profile or parent.champion~=s.champion
  or parent.casterID~=s.casterID or not G.finite(s.radius)or s.radius>(parent.radius or 0)
  or not G.finite(s.speed)or math.abs(s.speed-parent.emissionSpeed)>1e-6

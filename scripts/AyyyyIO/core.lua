@@ -528,7 +528,7 @@ return function(g, modules, champion)
                         local ttl=math.max(1,math.min(250,until_-now))
                         local savedContext,savedDecision=C.executionContext,C.decision
                         C.executionContext,C.decision=nil,nil;self.lastIntent=nil
-                        local ran,accepted=pcall(place.submit,aim,function()return valid()end,{owner=owner,ttl=ttl})
+                        local ran,accepted=pcall(place.submit,aim,function()return valid()end,{owner=owner,ttl=ttl,evadeCompatible=true})
                         C.executionContext,C.decision=savedContext,savedDecision
                         local q=self.lastIntent
                         if not ran then return nil,'controller_error'end
@@ -562,7 +562,7 @@ return function(g, modules, champion)
                     local savedContext,savedDecision=C.executionContext,C.decision
                     C.executionContext,C.decision=nil,nil
                     local ran,accepted,id=pcall(C.Cast,C,key,target,{owner=owner,priority='critical',ttl=ttl,independent=false,
-                        validate=function()return valid()end})
+                        evadeCompatible=true,validate=function()return valid()end})
                     C.executionContext,C.decision=savedContext,savedDecision
                     if not ran then return nil,'controller_error'end
                     if not accepted then return nil,C.diagnostics.lastReject or 'controller_declined'end
@@ -677,6 +677,18 @@ return function(g, modules, champion)
     function C.finite(v)return type(v)=='number'and v==v and v>-math.huge and v<math.huge end
     function C.id(u)return u and(u.networkID or u.handle)end
     function C.point(p)return p and C.finite(p.x)and C.finite(p.z)and g.Vector(p.x,p.y or 0,p.z)end
+    -- The cursor's world position, or nil when the host has none on the map. On
+    -- 2026-10-27 a game reported Game.mousePos() as (176412032, 176404864) on every
+    -- sample; an aim toward that point is not the player's cursor. The global is
+    -- read first, then Game.mousePos(); a point beyond 20000 units is refused.
+    local function onMap(p)
+        local q=C.point(p);if q and math.abs(q.x)<=20000 and math.abs(q.z)<=20000 then return q end
+    end
+    function C:CursorWorld()
+        local p=onMap(g.mousePos);if p then return p end
+        local game=g.Game
+        if game and type(game.mousePos)=='function'then local ok,q=pcall(game.mousePos);if ok then return onMap(q)end end
+    end
     -- Native buffs report either expireTime or, when that is 0, endTime.
     function C.buffExpiry(b)return b and(b.expireTime and b.expireTime>0 and b.expireTime or b.endTime)end
     -- True when a buff/object source field (unit or id) is the player's champion.
@@ -1123,7 +1135,7 @@ return function(g, modules, champion)
             return
         end
         C.core:Bind(event,function(...)
-            if event=='Tick'then C:GetKnowledge();C:Observe();C:MaintainClaims();if C.autoJungle then C.autoJungle:Tick()end;if C.display then C.display:Prepare(C.overlayAppearance and C.overlayAppearance.Damage:Value())end end
+            if event=='Tick'then C:GetKnowledge();C:Observe();C:DeliverPostAttacks();C:MaintainClaims();if C.autoJungle then C.autoJungle:Tick()end;if C.display then C.display:Prepare(C.overlayAppearance and C.overlayAppearance.Damage:Value())end end
             return fn(...)
         end)
     end}
@@ -1139,12 +1151,46 @@ return function(g, modules, champion)
     end});env.SDK.Orbwalker=orb
     function orb:SetAttack(allowed) C.locks.attack=not allowed;A:SetBlocked("champion","attack",not allowed) end
     function orb:SetMovement(allowed) C.locks.move=not allowed;A:SetBlocked("champion","move",not allowed) end
+    -- The provider runs PostAttack when its attack timer ends: the native cast end
+    -- minus the ping plus 50 ms. Above 50 ms ping that is still inside the windup,
+    -- where every champion's attack witness refuses it, and the callback never
+    -- comes again (live s385: Normal Fiora's E and post-attack Q were never
+    -- requested over a whole game). A PostAttack that arrives during the player's
+    -- own observed windup is held and delivered once, on the first tick after
+    -- that windup's cast end; a newer attack or 350 ms past the cast end drops it.
+    C.postAttackHeld={}
+    function C:DeliverPostAttacks()
+        local held=self.postAttackHeld;if not held[1]then return end
+        local now=g.Game.Timer();local spell=g.myHero.activeSpell
+        local current=spell and spell.valid and self:IsAttackCast(spell)and tonumber(spell.castEndTime)or nil
+        local due={}
+        for i=#held,1,-1 do local row=held[i]
+            if current and current>row.castEnd+.001 or now>row.castEnd+.35 or not self:Active()then table.remove(held,i)
+            elseif now>=row.castEnd then table.remove(held,i);table.insert(due,1,row)end
+        end
+        for _,row in ipairs(due)do
+            local ok,err=pcall(row.fn,unpack(row.args,1,row.args.n))
+            if not ok then self.diagnostics.postAttackError=tostring(err);self:Trace('callback_error',{callback='OnPostAttack',error=tostring(err)})end
+        end
+    end
+    local function holdPostAttack(fn,...)
+        local spell=g.myHero.activeSpell
+        if C:AttackWindupRemaining()<=0 then return false end
+        local castEnd=tonumber(spell.castEndTime)
+        for _,row in ipairs(C.postAttackHeld)do if row.fn==fn and row.castEnd==castEnd then return true end end
+        if #C.postAttackHeld>=16 then return false end
+        C.postAttackHeld[#C.postAttackHeld+1]={fn=fn,castEnd=castEnd,args=pack(...)}
+        -- Development: how early the provider's PostAttack came (seconds before the cast end).
+        C:Trace('post_attack_held',{castEnd=castEnd,early=castEnd-g.Game.Timer()},1000)
+        return true
+    end
     for _,name in ipairs({'OnPreAttack','OnPreMovement','OnPostAttack','OnPostAttackTick','OnAttack'})do
         if sdk.Orbwalker[name] then
             orb[name]=function(_,fn)
                 local lists={OnPreAttack='OnPreAttackCb',OnPreMovement='OnMoveCb',OnPostAttack='OnPostAttackCb',
                     OnPostAttackTick='OnPostAttackTickCb',OnAttack='OnAttackCb'}
                 return C.core:Bind(assert(sdk.Orbwalker[lists[name]],'orbwalker callback list unavailable'),function(...)
+                    if name=='OnPostAttack'and holdPostAttack(fn,...)then return end
                     local args=select(1,...);local mutable=type(args)=="table"
                     local was=mutable and args.Process
                     local result=fn(...)
@@ -2429,7 +2475,7 @@ return function(g, modules, champion)
         jade_katarinar=2.5,jade_fiddlesticksr=5,jade_fiddlesticksw=5,jade_missfortunebullettime=2,jade_caitlynr=1,jade_nunur=3,
         jade_malzaharr=2.5,jade_karthusfallenone=3,jade_pantheonr=2,jade_pantheonechannel=.75,jade_twistedfatedestiny=1.5,
         jade_twistedfatee=3,jade_galior=2,jade_warwickr=1.8,jade_warwickrchannel=1.8,jade_jannareapthewhirlwind=4,
-        jade_jannahowlinggale=3,jade_shenr=3,jade_sionq=2}
+        jade_jannahowlinggale=3,jade_shenr=3,jade_sionq=2,jade_lucianr=3}
     C.ChannelNames=channels
     function C:CanInterrupt(target,impact,margin)
         if not env.IsValid(target)or type(impact)~='number'or impact~=impact or impact<0 or impact==math.huge then return false end
@@ -2535,9 +2581,13 @@ return function(g, modules, champion)
         return self:IsChannelCast(g.myHero.activeSpell,not excludeStopped)
     end
     -- Seconds until the observed own basic-attack windup completes (0 if none).
+    -- The host's isStopped is not read: live 2026-10-28 10 of 11 casts requested during
+    -- an own Classic Lucian windup (and a Master Yi Q) were sent before its cast end,
+    -- and enemy casts show the flag from their first sample and still fire. A truly
+    -- cancelled attack only holds a cast until its cast end.
     function C:AttackWindupRemaining()
         local spell=g.myHero.activeSpell
-        if not spell or not spell.valid or spell.isStopped==true or not self:IsAttackCast(spell) then return 0 end
+        if not spell or not spell.valid or not self:IsAttackCast(spell) then return 0 end
         local finish=tonumber(spell.castEndTime);local now=g.Game.Timer()
         if not finish or finish~=finish or finish<=now then return 0 end
         return math.min(finish-now,1.5)
@@ -2766,7 +2816,7 @@ return function(g, modules, champion)
             local savedContext,savedDecision=C.executionContext,C.decision
             C.executionContext,C.decision=nil,nil
             local ok,accepted,id=pcall(C.Cast,C,spec.key,{x=first.x,y=first.y or target.y or h.pos.y,z=first.z},{owner=owner,priority='critical',ttl=ttl,
-                independent=false,prevalidateWorldCast=true,commitGuard=options.commitGuard,
+                independent=false,evadeCompatible=true,prevalidateWorldCast=true,commitGuard=options.commitGuard,
                 resolve=function()
                     local r,reason
                     if resolveFn then r,reason=resolveFn();if not r then return nil,reason or 'consumer_declined'end end
@@ -2881,7 +2931,7 @@ return function(g, modules, champion)
             local savedContext,savedDecision=C.executionContext,C.decision
             C.executionContext,C.decision=nil,nil
             -- options.ready: the consumer's decide-ahead gate (waits; never sends by itself).
-            local ok,accepted,id=pcall(C.Cast,C,spec.key,unit,{owner=owner,priority='critical',ttl=ttl,independent=false,intentTarget=unit,
+            local ok,accepted,id=pcall(C.Cast,C,spec.key,unit,{owner=owner,priority='critical',ttl=ttl,independent=false,intentTarget=unit,evadeCompatible=true,
                 ready=type(options.ready)=='function'and options.ready or nil,
                 validate=function()
                     if identity(unit)~=id0 or unit.handle~=handle0 then return false,'target_changed'end
@@ -2945,6 +2995,28 @@ return function(g, modules, champion)
         -- These are spell evidence and gameplay continuations, never a second
         -- resource lease. Admission and replacement belong to the shared client.
         for _,q in pairs(self.pending)do if q.id==id then return q end end
+    end
+    -- Own cast time: seconds a cast keeps the hero in place, per native slot (0-3), declared once by the
+    -- champion from its profile (ChampionProfiles). ActionClient asks Evade (CastAllowed) before sending
+    -- such a cast while a threat is modelled. A slot published as mobility for Evade is never gated, and a
+    -- slot without a declared time is not gated (unknown stays unknown).
+    C.castTimes={}
+    function C:DeclareCastTimes(map)
+        if type(map)~='table'then return false,'invalid_cast_times'end
+        for slot,seconds in pairs(map)do
+            if type(slot)~='number'or slot%1~=0 or slot<0 or slot>3 or not finiteNumber(seconds)or seconds<0 or seconds>2.5 then
+                return false,'invalid_cast_times'end
+        end
+        for slot,seconds in pairs(map)do self.castTimes[slot]=seconds end
+        return true
+    end
+    local function castTimeFor(self,slot,options)
+        if options.evadeCompatible==true or options.type=='attack'then return nil end
+        local seconds=options.castTime
+        if seconds==nil and slot~=nil then seconds=self.castTimes[slot]end
+        if not finiteNumber(seconds)or seconds<=0 then return nil end
+        for _,offer in ipairs(mobilityOffers(self.mobility))do if offer.slot==slot then return nil end end
+        return seconds
     end
     function C:Cast(key,target,options)
         options=options or {};local binding=target and prediction.bindings[target]
@@ -3020,6 +3092,9 @@ return function(g, modules, champion)
             replace=options.replace or 'higher_priority',equivalence=options.equivalence,
             group=options.group,reservation=options.reservation,dependency=options.dependency,dependencyState=options.dependencyState,
             survivePointerMotion=options.survivePointerMotion,
+            -- Evade's own answer (dash, shield, wall it chose) passes its intervention and cast-time gates;
+            -- every other cast with a known own cast time asks Evade before it holds the hero in place.
+            evadeCompatible=options.evadeCompatible==true or nil,castTime=castTimeFor(self,slot,options),
             independent=options.independent~=false and combat and kind~='screen',
             priority=options.priority or (context and context.priority or 'normal'),expires=now+(options.ttl or 250),
             callbacks={},stamp=stamp,spellName=spell and spell.name,logicalSlot=logicalSlot,waitingKey=reusable and options.waitingKey or nil,
@@ -3033,7 +3108,10 @@ return function(g, modules, champion)
         if options.deferAttackWindup and q.type~='attack' then
             local remaining=self:AttackWindupRemaining()
             if remaining>0 then q.expires=q.expires+math.floor(remaining*1000+.5) end
-            q.ready=function()return self:AttackWindupRemaining()<=0 end
+            q.ready=function()
+                if self:AttackWindupRemaining()<=0 then return true end
+                return false
+            end
         end
         -- Caller wait gate (e.g. a scheduled defensive send): false waits until expiry.
         if type(options.ready)=='function'then
@@ -3374,7 +3452,7 @@ return function(g, modules, champion)
     end
     C.core:Bind('Tick',function()
         if C:Active()then
-            C:Observe();C:MaintainClaims();C:MaintainDefenses()
+            C:Observe();C:DeliverPostAttacks();C:MaintainClaims();C:MaintainDefenses()
             for _,maintain in ipairs(C.placeMaintainers or {})do local ok,err=pcall(maintain);if not ok then C.diagnostics.placeError=tostring(err)end end
             C:MaintainAttackPreference();C:MaintainMovePreference();A:Tick()
             if champion~='LeeSin'and modules.skillOrders then local ok,err=pcall(C.AutoLevel,C);if not ok then C.diagnostics.levelError=tostring(err)end end

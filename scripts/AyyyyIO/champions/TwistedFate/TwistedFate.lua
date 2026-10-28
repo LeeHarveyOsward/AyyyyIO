@@ -6,7 +6,7 @@ if not SDK.Actions or not SDK.Actions.GetCapabilities or not SDK.Actions:GetCapa
  or not SDK.SharedData or not SDK.OnUrgent or not SDK.Attack or not SDK.Damage or not SDK.Damage.GetTwistedFateAttack then
  print("[CardMarx] Required Orbama capabilities unavailable."); return end
 if _G.AyyyyIO and _G.AyyyyIO.active and not _G.AyyyyIO.loading then return _G.AyyyyIO.controller end
-local fingerprint="aa0c9d2087317e862f5e6014f52785bd904bccb86aa8d798b9930de2863d37ab"
+local fingerprint="7a8a33dc261c6d1d7c602d07f5cb0eca386bf028050569f50f2a180738c561ee"
 local previous=_G.OrbamaTwistedFate
 if previous then
  if previous.active and previous.fingerprint==fingerprint then return previous end
@@ -29,7 +29,7 @@ modules["tf.planner"] = function(require) return _G.OrbamaFamily:Factory("2e7430
 modules["tf.q"] = function(require) return _G.OrbamaFamily:Factory("8c2ae6c679a40b47d2f9938cd09fe672df1ec3a192d42681ed5c7ec3cfda24fb")(require) end
 modules["tf.state"] = function(require) return _G.OrbamaFamily:Factory("12b24d93adf45d928c000e66c4ecb35304efd8700fa8e1d0e258cfa05c97b9cc")(require) end
 modules["tf.util"] = function(require) return _G.OrbamaFamily:Factory("e5817f7248b6be143e8c8fa7eb20f465e63ef84f4b108687b1ac8aef36b846ef")(require) end
-modules["AyyyyIO.autojungle"] = function(require) return _G.OrbamaFamily:Factory("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")(require) end
+modules["AyyyyIO.autojungle"] = function(require) return _G.OrbamaFamily:Factory("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")(require) end
 modules["Orbama.menus"] = function(require) return _G.OrbamaFamily:Factory("d77e24d9e67e4afce47aec143cde65f28183d8a9d3505511d35fc782fae476fe")(require) end
 modules["CombatProfiles.camp_timing"] = function(require) return _G.OrbamaFamily:Factory("2d57ee1752e69959f1f19f9d0db112f6fc4e368636ad800025f6c307183102ee")(require) end
 modules["CombatProfiles.twisted_fate"] = function(require) return _G.OrbamaFamily:Factory("494a68883b68b9d776814783e516284ed46bfab5693646bfc85ddf6cf16b3776")(require) end

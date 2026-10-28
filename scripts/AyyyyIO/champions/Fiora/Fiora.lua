@@ -2,11 +2,11 @@ return function()
 -- GENERATED: tools/build_ayyyyio_controllers.py; Classic data; release payload.
 local modules={}
 modules.overlayClient=(function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end)(require)
-modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("105d25b3d528397643ce147540e7b847313529612ff58156df19d70a7c09ae91")(require) end)(require)
-modules.abilityProfiles=_G.OrbamaFamily:Require("04b3201d7674a3b04c12a7732b3345f73bbccf0f40cfb72203e846891e06f379")
+modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("c573bc09602a9a132c55899af54011b1d90ef4191ab35858361d95c72391fe90")(require) end)(require)
+modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Fiora"]=function()return _G.OrbamaFamily:Require("72ced310d820e8dde5204988f63bddce71134694c79cfe6d09cd47e5a72e594b")()end
+factories["Fiora"]=function()return _G.OrbamaFamily:Require("29ceba682a23cdecacf00af1f7dd4b0530345c82c1e3cb83d15d38e5b0d29669")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -24,16 +24,17 @@ modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c296915
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
 modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
 modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
-modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("a8b0dae6f22e1be48bd91c9c82136f14fa6021bda02b48ebb89e55f2612db730")(require) end)(require)
+modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
-modules["autojungle"]=_G.OrbamaFamily:Require("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("9e32908504b1e01599ffc8a55f7d52a3a92a974d794c085ee29160c628b85e38")
-modules["gameplay"]=_G.OrbamaFamily:Require("038c846d2b126f3f80142b2c55b4ace9ee78a9347b22cb2f242dcb5ed5185f2f")
+modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("9b0f0ca4dc10e89ac5153be241244434028523e5505df6b650ac40f1e6f736d3")
+modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("454102f4f573681afa019a39b08ec2a6adca91fb526d8515918046a8d866415c")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -516,6 +517,7 @@ env.ShouldWait=ShouldWait
 env.SpellFarmDefault=SpellFarmDefault
 env.CastSpellAOE=CastSpellAOE
 local CombatMechanics=modules.combatMechanics
+Core.strike=modules.strike(env,Core)
 Core.gameplay=modules.gameplay(env,Core,CombatMechanics)
 if champion=="Fiora" then
 local entry=(function()
@@ -553,9 +555,9 @@ function FioraChampion:__init()
 	self.profile=profiles[myHero.charName];self.classic=self.profile.classic
  self.QRange,self.RRange=self.profile.q,self.profile.r
  if not self.classic then
-   -- .55 is a conservative planning horizon, not a claimed dash-speed model.
-   -- Moving targets need remaining hard CC; vital-specific pursuit is disabled.
-   self.QSpell={Type=OrbamaPrediction.SPELLTYPE_CIRCLE,Delay=.55,Radius=80,Range=400,Speed=math.huge,Collision=false}
+   -- Lunge has no cast time; the stab lands when the dash arrives. The slowest
+   -- profiled dash speed (qDash) is the planning speed, so the lead is never short.
+   self.QSpell={Type=OrbamaPrediction.SPELLTYPE_CIRCLE,Delay=0,Radius=80,Range=400,Speed=self.profile.qDash.speeds[1],Collision=false}
  end
 	self.lastCast = -math.huge
 	self.lastSpell = {}
@@ -741,9 +743,12 @@ end
 -- minions. Refuse only when a competitor outranks the intended target; a
 -- minion or monster Q does not kill never outranks a champion. `predicted`:
 -- the endpoint comes from a prediction that reaches the target, so a moving
--- target needs no hard crowd control (the manual side bind still does).
+-- target needs no hard crowd control (the manual side bind still does). A
+-- predicted unit position, when given, anchors the endpoint instead of the
+-- current one: a chased target is ahead of where it stands now.
 function FioraChampion:SingleStab(target,point,predicted)
- if not point or GetDistance(target.pos,point)>150 then return false end
+ local anchor=type(predicted)=='table'and predicted.x and predicted.z and predicted or target.pos
+ if not point or GetDistance(anchor,point)>150 then return false end
  local targetPath=target.pathing
  if not predicted and not(targetPath and targetPath.hasMovePath==false and targetPath.isDashing==false)and GetHardCCDuration(target)<.55 then return false end
  local level=myHero:GetSpellData(_Q).level;local raw=(self.profile.qBase[level]or 0)+(self.profile.qAD[level]or 0)*(finite(myHero.bonusDamage)and myHero.bonusDamage or 0)
@@ -786,14 +791,18 @@ function FioraChampion:CastQ(target,safe,validate,extra)
   if target.networkID~=targetID or target.handle~=targetHandle or not self:CanTarget(target,self.QRange,safe)or self:QRecast()~=recast then return false end
   if not self.classic then
    local point=r and r.position
-   if not self:SafePoint(point,safe)or not self:SingleStab(target,point,true)then return false end
+   if not self:SafePoint(point,safe)or not self:SingleStab(target,point,r.data and r.data.unitPosition or true)then return false end
   end
   return not validate or validate(q,r)
  end
  if self.classic then return self:Cast(_Q,HK_Q,target,{range=self.QRange,validate=valid})end
+ -- Ordinary hit chance for every target (live s385: requiring the high chance,
+ -- which only crowd control or a long-still target earns, left Combo Q unsent
+ -- on champions standing or walking just out of attack range). The stab check
+ -- below still refuses an endpoint another unit would take.
  local pred=Core:Prediction(self.QSpell);pred:GetPrediction(target,myHero)
- if not pred:CanHit(target.type==Obj_AI_Hero and 3 or 2)or not self:SafePoint(pred.CastPosition,safe)
-  or not self:SingleStab(target,pred.CastPosition,true)then return false end
+ if not pred:CanHit(2)or not self:SafePoint(pred.CastPosition,safe)
+  or not self:SingleStab(target,pred.CastPosition,pred.UnitPosition or true)then return false end
  local options={intentTarget=target,range=self.QRange,prevalidateWorldCast=true,validate=valid}
  for k,v in pairs(extra or {})do options[k]=v end
  local ok=self:Cast(_Q,HK_Q,pred.CastPosition,options)
@@ -855,10 +864,16 @@ function FioraChampion:ScanVitals()
  local count=Game.ParticleCount and Game.ParticleCount()
  if not finite(count)or count<0 then self.vitals={};return end
  local now=Game.Timer();local seen={};local heroes=Core:DecisionUnits('GetEnemyHeroes')
+ -- Development: live s385 recorded no vital at all over a whole game. These rows show whether the
+ -- particle list outgrows the scan bound and which Fiora particle names the host really reports.
+ if count>(v.scanLimit or 400)then Core:Trace('fiora_vital_scan',{count=count,limit=v.scanLimit or 400},5000)end
  for i=1,math.min(count,v.scanLimit or 400)do local p=Game.Particle(i)
   local name=p and p.valid~=false and type(p.name)=='string'and p.name
-  if name and name:find('Fiora_',1,true)and(name:find('_Passive_',1,true)or name:find('_R_',1,true))then
+  local candidate=name and name:find('Fiora',1,true)
+  if candidate and not(name:find('_Passive_',1,true)or name:find('_R_',1,true))then Core:Trace('fiora_particle',{key=name,name=name},10000)end
+  if candidate and name:find('Fiora_',1,true)and(name:find('_Passive_',1,true)or name:find('_R_',1,true))then
    local side=name:match('_(N[EW])')or name:match('_(S[EW])')
+   if not(side and v.sides[side])then Core:Trace('fiora_particle',{key=name,name=name,unmatchedSide=true},10000)end
    if side and v.sides[side]and p.pos then
     local key=p.handle or(name..':'..math.floor(p.pos.x)..':'..math.floor(p.pos.z))
     local row=self.vitals[key]

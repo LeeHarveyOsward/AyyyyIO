@@ -39,12 +39,39 @@ return function()
 --     for hit counts. Needs a live geometry check.
 --   Normal e2KillRange 1500: the E recast reaches the marked target at any distance (wiki read 2026-10-10); 1500 is the
 --     policy bound for a recast that kills by itself, 1000 for every other recast.
+-- Classic q 575: Jade_AkaliQ castRangeDisplayOverride (castRange 600), 16.21 ability table 2026-10-28; the earlier
+--   550 had no source.
+local D=(function()
 return {
- Jade_Akali={id='classic',q=550,w=475,e=325,r=700,qAP=.4,eAP=.4,qMark={base={45,70,95,120,145},ap=.4},
-  rDash={name='Jade_AkaliR',range=700,speeds={1600,2000},castDelays={0,.25},onTarget=true,through=715,
+ AkaliW={
+  castRange=350,
+ },
+ AkaliQ={
+  APRatio=.6,castRange=550,
+ },
+ AkaliR={
+  CooldownBetweenCasts=2.5,castRange=675,mCastTime=.25,
+ },
+ AkaliE={
+  TotalAPRatio=1.1,castRange=825,
+ },
+ Jade_AkaliR={
+  DashDistance=715,
+ },
+ Jade_AkaliQ={
+  APRatioInitial=.4,APRatioProc=.4,ProcDamageBase={45,70,95,120,145},castRangeDisplayOverride=575,
+ },
+ Jade_AkaliE={
+  ERadius=325,TotalAPRatio=.4,
+ },
+}
+end)()
+return {
+ Jade_Akali={id='classic',q=D.Jade_AkaliQ.castRangeDisplayOverride,w=475,e=D.Jade_AkaliE.ERadius,r=700,qAP=D.Jade_AkaliQ.APRatioInitial,eAP=D.Jade_AkaliE.TotalAPRatio,qMark={base=D.Jade_AkaliQ.ProcDamageBase,ap=D.Jade_AkaliQ.APRatioProc},
+  rDash={name='Jade_AkaliR',range=700,speeds={1600,2000},castDelays={0,.25},onTarget=true,through=D.Jade_AkaliR.DashDistance,
    source='2026-10-10 conservative bracket: wiki League_Classic/Akali (target range 700, speed 1600 before V5.9, 2000 after) and installed Jade_AkaliR (castRange 800, DashDistance 715); both end points checked'}},
- Akali={id='normal',q=500,qHitRange=550,w=350,e=825,r=675,qAP=.6,eAP=1.1,r2Window=10,r2Delay=2.5,qFan={range=500,angle=20},e2Range=1000,e2KillRange=1500,r2Dash={750,800},
-  rDash={name='AkaliR',range=675,speeds={1500},castDelays={.25},through=750,past=150,
+ Akali={id='normal',q=500,qHitRange=D.AkaliQ.castRange,w=D.AkaliW.castRange,e=D.AkaliE.castRange,r=D.AkaliR.castRange,qAP=D.AkaliQ.APRatio,eAP=D.AkaliE.TotalAPRatio,r2Window=10,r2Delay=D.AkaliR.CooldownBetweenCasts,qFan={range=500,angle=20},e2Range=1000,e2KillRange=1500,r2Dash={750,800},
+  rDash={name='AkaliR',range=D.AkaliR.castRange,speeds={1500},castDelays={D.AkaliR.mCastTime},through=750,past=150,
    source='https://wiki.leagueoflegends.com/en-us/Akali 2026-10-08: Perfect Execution first cast range 675, cast 0.25, speed 1500, dash 750 and at least 150 past the target'}},
 }
 

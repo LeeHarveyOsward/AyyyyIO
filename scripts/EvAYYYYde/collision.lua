@@ -1,8 +1,9 @@
 return function(require)
 -- Per-ability unit collision for observed and cast-derived straight flights.
 -- A reviewed catalog policy (`collide`) says which unit classes stop the
--- projectile; evade.blockers finds the first CERTAIN blocker and the threat is
--- shortened there, so standing behind a minion is recognised as safe. Units come
+-- projectile and, with `count`, at which unit it stops; evade.blockers finds that
+-- CERTAIN blocker and the threat is shortened there, so standing behind a minion
+-- (behind two for a count-2 policy) is recognised as safe. Units come
 -- from the shared per-tick minion cache of the provider and the allied roster; the
 -- snapshot is built at most once per scan and only when a colliding threat exists.
 local G=require('evade.geometry')
@@ -15,13 +16,14 @@ local function add(units,count,u,category,hero)
     if not G.point(pos)or G.dist(pos,hero)>C.reach then return count end
     local radius=u.boundingRadius
     if not G.finite(radius)or radius<=0 then return count end
-    -- A unit about to die is not a certain blocker.
+    -- A unit about to die is not a certain blocker; it is still a possible stop (evade.impacts).
     local health,maximum=u.health,u.maxHealth
-    if G.finite(health)and G.finite(maximum)and maximum>0 and health<math.min(150,maximum*.25)then return count end
+    local uncertain=G.finite(health)and G.finite(maximum)and maximum>0 and health<math.min(150,maximum*.25)
     local speed=u.ms;local moving=u.pathing and u.pathing.hasMovePath==true
     count=count+1
     local row=units[count];if not row then row={};units[count]=row end
     row.x,row.z,row.radius,row.category,row.team=pos.x,pos.z,radius,category,u.team
+    row.uncertain=uncertain or nil;row.unit=u -- this scan's wrapper, for an area that sticks to it (evade.anchors)
     row.vx,row.vz,row.aliveUntil=0,0,nil
     -- Direction of travel is not read: a moving unit may leave in any direction.
     row.errorRate=moving and G.finite(speed)and speed>0 and speed or nil
@@ -62,7 +64,7 @@ function C.Clip(observer,threat,now)
     local caster=observer.heroes[threat.casterID];local team=caster and caster.team or nil
     local distance,at,index=B.firstContact(threat,policy,units,count,now,team,C.options,observer.blockWork)
     if not distance or not G.finite(at)then return threat end
-    return B.clip(threat,distance,at,units[index].id)
+    return B.clip(threat,distance,at,units[index].id,policy.count)
 end
 return C
 

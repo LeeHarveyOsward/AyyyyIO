@@ -38,6 +38,37 @@ return function()
 --   ('fiora_vital_disagree'). A particle at the centre uses the mapping while the game has seen no disagreement;
 --   after one it needs learnAfter=3 agreements and agreements >= 4x disagreements. reach 30: a Q endpoint within this of the vital point counts its damage.
 --   Conservative engineering bounds, not measured numbers; 'fiora_vital' traces (dx/dz, basis, agrees) settle them.
+local D=(function()
+return {
+ FioraQ={
+  CDRefundPercent=.5,Damage={70,80,90,100,110},bADRatio={.9,.95,1,1.05,1.1},
+ },
+ FioraR={
+  HealDuration=5,HealPerSecond={80,105,130},HealRingRadius=600,MarkDuration=8,Ratio=.7,castRange=500,
+ },
+ FioraWMissile={
+  castRangeDisplayOverride=900,mMissileWidth=70,mSpeed=3200,
+ },
+ FioraW={
+  BaseDamage={110,150,190,230,270},ParryDuration=.75,
+ },
+ FioraE={
+  AttackTwoPercentTAD={1.6,1.7,1.8,1.9,2},BuffDuration=3,
+ },
+ Jade_FioraE={
+  BuffDuration=3,
+ },
+ Jade_FioraR={
+  AttackRadius=600,Damage={125,255,385},ExtraHitDmgAmount=.4,
+ },
+ Jade_FioraQ={
+  Damage={40,65,90,115,140},DashMovespeedBonus=1200,RecastWindow=4,castRange=600,
+ },
+ Jade_FioraW={
+  ParryDuration=1.5,
+ },
+}
+end)()
 local classicAttacks={
 	["Jade_Leona"] = {"Jade_LeonaShieldOfDaybreakAttack", "Jade_LeonaShieldOfDaybreak"},
 	["Jade_Blitzcrank"] = {"Jade_BlitzcrankPowerFistAttack", "Jade_BlitzcrankPowerFist"},
@@ -72,16 +103,16 @@ local normalAttacks={
 	Blitzcrank={'PowerFistAttack'},Garen={'GarenQAttack'},Leona={'LeonaShieldOfDaybreakAttack'},Nautilus={'NautilusRavageStrikeAttack'},
 	Renekton={'RenektonPreExecute','RenektonExecute','RenektonSuperExecute'},Volibear={'VolibearQAttack'},Vayne={'VayneCondemn'},Sett={'SettR'},
 }
-return {Jade_Fiora={classic=true,wAttacks=classicAttacks,q=600,r=400,qName='Jade_FioraQ',wName='Jade_FioraW',eName='Jade_FioraE',rName='Jade_FioraR',
- qBase={40,65,90,115,140},qAD={.6,.6,.6,.6,.6},qWindow=4,wDuration=1.5,eDuration=3,rBase={125,255,385},rAD=.85,rRepeat=.4,rRepeatFloor=.25,rStrikes=5,rBounce=600,
- qDash={established=false,speeds={1200},castDelays={0,.15},source='Jade_Fiora spells.json Jade_FioraQ castRange 600, DashMovespeedBonus 1200 (2026-10-08); speed semantics open, cast delay bracket 0-.15 unmeasured'}},
- Fiora={classic=false,q=400,r=500,qName='FioraQ',wName='FioraW',eName='FioraE',rName='FioraR',
+return {Jade_Fiora={classic=true,wAttacks=classicAttacks,q=D.Jade_FioraQ.castRange,r=400,qName='Jade_FioraQ',wName='Jade_FioraW',eName='Jade_FioraE',rName='Jade_FioraR',
+ qBase=D.Jade_FioraQ.Damage,qAD={.6,.6,.6,.6,.6},qWindow=D.Jade_FioraQ.RecastWindow,wDuration=D.Jade_FioraW.ParryDuration,eDuration=D.Jade_FioraE.BuffDuration,rBase=D.Jade_FioraR.Damage,rAD=.85,rRepeat=D.Jade_FioraR.ExtraHitDmgAmount,rRepeatFloor=.25,rStrikes=5,rBounce=D.Jade_FioraR.AttackRadius,
+ qDash={established=false,speeds={D.Jade_FioraQ.DashMovespeedBonus},castDelays={0,.15},source='Jade_Fiora spells.json Jade_FioraQ castRange 600, DashMovespeedBonus 1200 (2026-10-08); speed semantics open, cast delay bracket 0-.15 unmeasured'}},
+ Fiora={classic=false,q=400,r=D.FioraR.castRange,qName='FioraQ',wName='FioraW',eName='FioraE',rName='FioraR',
  qDash={speeds={850,1100,1600},castDelays={0},source='https://wiki.leagueoflegends.com/en-us/Template:Data_Fiora/Lunge 2026-10-08: range 50-400, cast none, speed 1100 + 300/350% bonus movement speed within 850-1600'},
  wAttacks=normalAttacks,
- qBase={70,80,90,100,110},qAD={.9,.95,1,1.05,1.1},qRefund=.5,wDuration=.75,wRange=900,wWidth=70,wSpeed=3200,wPoise=.5,wBase={110,150,190,230,270},wAP=1,
- stabRadius=420,stabPriority=252,rHorizon=4,eDuration=3,eTwo={1.6,1.7,1.8,1.9,2},
+ qBase=D.FioraQ.Damage,qAD=D.FioraQ.bADRatio,qRefund=D.FioraQ.CDRefundPercent,wDuration=D.FioraW.ParryDuration,wRange=D.FioraWMissile.castRangeDisplayOverride,wWidth=D.FioraWMissile.mMissileWidth,wSpeed=D.FioraWMissile.mSpeed,wPoise=.5,wBase=D.FioraW.BaseDamage,wAP=1,
+ stabRadius=420,stabPriority=252,rHorizon=4,eDuration=D.FioraE.BuffDuration,eTwo=D.FioraE.AttackTwoPercentTAD,
  vitals={sides={NE={0,1},NW={1,0},SE={-1,0},SW={0,-1}},ownerRadius=100,offset=50,offsetMin=25,agreeCos=.8,learnAfter=3,reach=30,reveal=1.75,rReveal=.5,scanLimit=400},
- markDuration=8,healDuration=5,healRadius=600,healBase={80,105,130},healAD=.7,vitalBase=.03,vitalAD=.0004}}
+ markDuration=D.FioraR.MarkDuration,healDuration=D.FioraR.HealDuration,healRadius=D.FioraR.HealRingRadius,healBase=D.FioraR.HealPerSecond,healAD=D.FioraR.Ratio,vitalBase=.03,vitalAD=.0004}}
 
 end
 end

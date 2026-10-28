@@ -2,11 +2,11 @@ return function()
 -- GENERATED: tools/build_ayyyyio_controllers.py; Classic data; release payload.
 local modules={}
 modules.overlayClient=(function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end)(require)
-modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("105d25b3d528397643ce147540e7b847313529612ff58156df19d70a7c09ae91")(require) end)(require)
-modules.abilityProfiles=_G.OrbamaFamily:Require("04b3201d7674a3b04c12a7732b3345f73bbccf0f40cfb72203e846891e06f379")
+modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("c573bc09602a9a132c55899af54011b1d90ef4191ab35858361d95c72391fe90")(require) end)(require)
+modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Aatrox"]=function()return _G.OrbamaFamily:Require("a0150a0224dd69e6df74d24a2a58796e1834d4d9108a0fc677ab01486d4d9594")()end
+factories["Aatrox"]=function()return _G.OrbamaFamily:Require("57d15d0f8cebe6aa3d875d4919bbac62a934b3237b651f9f0fe67bcb65868a23")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -24,16 +24,17 @@ modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c296915
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
 modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
 modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
-modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("a8b0dae6f22e1be48bd91c9c82136f14fa6021bda02b48ebb89e55f2612db730")(require) end)(require)
+modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
-modules["autojungle"]=_G.OrbamaFamily:Require("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("9e32908504b1e01599ffc8a55f7d52a3a92a974d794c085ee29160c628b85e38")
-modules["gameplay"]=_G.OrbamaFamily:Require("038c846d2b126f3f80142b2c55b4ace9ee78a9347b22cb2f242dcb5ed5185f2f")
+modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("9b0f0ca4dc10e89ac5153be241244434028523e5505df6b650ac40f1e6f736d3")
+modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("454102f4f573681afa019a39b08ec2a6adca91fb526d8515918046a8d866415c")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -516,6 +517,7 @@ env.ShouldWait=ShouldWait
 env.SpellFarmDefault=SpellFarmDefault
 env.CastSpellAOE=CastSpellAOE
 local CombatMechanics=modules.combatMechanics
+Core.strike=modules.strike(env,Core)
 Core.gameplay=modules.gameplay(env,Core,CombatMechanics)
 if champion=="Aatrox" then
 local entry=(function()
@@ -642,14 +644,15 @@ local GameplayHooks=(function(g,C,P)
  -- the stage, rank, champion level, the target's distance from the cast origin and the estimate the planner used.
  -- Settles the Q1/Q2 sweet depths and the minion share by level from play.
  function Hooks.qProbe(f)
-  local seq=f.sequences and f.sequences.q;local probe=f.qProbe
-  if seq and seq.observed and seq.target and(not probe or probe.action~=seq.action)then local u=seq.target
-   if g.IsValid(u)and finite(u.health)then
+  local seq=f.sequences and f.sequences.q
+  -- One probe per Q action: the sequence can outlive its finished probe (live s390 traced one Q twice).
+  if seq and seq.observed and seq.target and f.qProbed~=seq.action then local u=seq.target
+   if g.IsValid(u)and finite(u.health)then f.qProbed=seq.action
     f.qProbe={action=seq.action,unit=u,handle=u.handle,health=u.health,at=G.Timer()+.75,stage=seq.stage,origin=seq.origin,
      level=H:GetSpellData(0).level,minion=u.type~=g.Obj_AI_Hero,estimate=f:Damage(0,u,{stage=seq.stage})}
    end
   end
-  probe=f.qProbe
+  local probe=f.qProbe
   if probe and G.Timer()>=probe.at then f.qProbe=nil;local u=probe.unit
    if u and u.handle==probe.handle and finite(u.health)then
     C:Trace('aatrox_q_hit',{stage=probe.stage,rank=probe.level,minion=probe.minion,healthLost=probe.health-u.health,estimate=probe.estimate,
@@ -705,13 +708,26 @@ local GameplayHooks=(function(g,C,P)
   else options.world=true;options.spec=spec end
   return f:Cast(0,u,context,options)
  end
+ -- The own Q cast in progress: every stage shows the wrapper name (profile qCast) while it casts.
+ function Hooks.qCasting(f,cast,stage)
+  if not cast or not cast.valid then return false end
+  if cast.name==f.profile.qCast then return true end
+  for i,name in ipairs(f.profile.names[1])do if cast.name==name and(stage==nil or stage==i)then return true end end
+  return false
+ end
  function Hooks.continue(f,key,s)
-  if key~='q'or not s.observed or not Hooks.eAllowed(f,s.context)or not f:Ready(2)then return end
+  -- A planned Q went out counting on this E; record once why the E did not follow (development trace).
+  local function decline(reason)
+   if s.plan and not s.declined then s.declined=reason;C:Trace('aatrox_e_follow',{reason=reason,stage=s.stage,cast=H.activeSpell and H.activeSpell.name})end
+  end
+  if key~='q'or not s.observed then return end
+  if not Hooks.eAllowed(f,s.context)then return decline('e_not_allowed')end
+  if not f:Ready(2)then return decline('e_not_ready')end
   local cast=H.activeSpell
-  if not cast or not cast.valid or cast.isStopped or cast.name~=f.profile.names[1][s.stage]or not finite(cast.castEndTime)
-   or cast.castEndTime-G.Timer()<.2 then return end
+  if not Hooks.qCasting(f,cast,s.stage)or cast.isStopped then return decline('no_own_q_cast')end
+  if not finite(cast.castEndTime)or cast.castEndTime-G.Timer()<.2 then return decline('cast_ending')end
   local u=s.target;local aim=f.point(cast.placementPos or cast.endPos)
-  if not aim then return end
+  if not aim then return decline('no_aim')end
   -- One bounded candidate: move the caster so the already-started outgoing shape reaches its sweetspot.
   local lineLength=f.distance(s.origin,aim);if lineLength<1 then return end
   local ux,uz=(aim.x-s.origin.x)/lineLength,(aim.z-s.origin.z)/lineLength
@@ -722,7 +738,8 @@ local GameplayHooks=(function(g,C,P)
    local moved=g.Vector(destination.x+aim.x-s.origin.x,H.pos.y,destination.z+aim.z-s.origin.z)
    if not Hooks.shape(f,s.stage,destination,moved,u.pos,false)then destination=g.Vector(u.pos.x-ux*sweet,H.pos.y,u.pos.z-uz*sweet)end
   end
-  if f.distance(H.pos,destination)<75 or f.distance(H.pos,destination)>300 or not f:Safe(destination,true)then return end
+  if f.distance(H.pos,destination)<75 or f.distance(H.pos,destination)>300 then return decline('dash_length')end
+  if not f:Safe(destination,true)then return decline('unsafe_landing')end
   local ok=f:Cast(2,nil,s.context,{position=destination,range=300,weave=false,resolve=function()return {position=destination}end,
    permission=function()return Hooks.eAllowed(f,s.context)end,
    check=function(_,r)
@@ -946,7 +963,7 @@ Core:RegisterPolicy({methods=modes,channel=function(self,q)
  if not Core:SelfChanneling(true)then return true end
  local s=myHero.activeSpell
  return self.engine and self.profile.champion=='Aatrox'and self.profile.id=='normal'and q.key==HK_E
-  and self.engine.sequences.q~=nil and s and(s.name=='AatroxQ'or s.name=='AatroxQ2'or s.name=='AatroxQ3')
+  and self.engine.sequences.q~=nil and GameplayHooks.qCasting(self.engine,s)
 end,validate=function(self,q,slot)return type(slot)~='number'or slot<0 or slot>3 or self:Ready(slot)end})
 AatroxChampion()
 

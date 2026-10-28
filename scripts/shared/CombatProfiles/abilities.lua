@@ -21,7 +21,7 @@ function M.MissFortuneRWaveRaw(runtime,rank,totalAD,bonusAD,ap)
 end
 M.controllers.Ryze={
   Ryze={id='normal',qRange=1000,qSpeed=1700,eSpeed=1500,eSpeedMax=3500,spread=350,qBounce=350,flux='ryzee',rBuff='ryzerchannel',
-  base={{75,95,115,135,155},{60,90,120,150,180},{60,90,120,150,180}},ap={.55,.6,.5},mana={.02,.03,.02}},
+  base={{75,95,115,135,155},{60,90,120,150,180},{60,90,120,150,180}},ap={.55,.7,.5},mana={.02,.03,.02}},
   Jade_Ryze={id='classic',qRange=600,qSpeed=1700,eSpeed=1000,spread=350,qBounce=0,flux='jade_ryzee',rBuff='jade_ryzer',
   base={{60,85,110,135,160},{60,95,130,165,200},{50,70,90,110,130}},ap={.4,.6,.35},mana={.065,.045,.01}},
 }

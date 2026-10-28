@@ -19,13 +19,14 @@ local Trajectory=require('evade.trajectory')
 local Positioning=require('evade.positioning')
 local Policy=require('evade.policy')
 local Collision=require('evade.collision')
+local Danger=require('evade.danger')
 local ControlWindow=require('CombatProfiles.control_window')
 local ChampionMotion=require('CombatProfiles.champion_motion')
 local createClient=require('ActionClient')
 local A={};A.__index=A
 function A.new(g)
     local self=setmetatable({g=g,sdk=g.SDK,active=true,intervening=false,reason='starting',serial=0,
-        build='OrbamaEvade-89',permissions={items=true,ultimates=false,summoners=false},enabled=true,
+        build='OrbamaEvade-90',permissions={items=true,ultimates=false,summoners=false},enabled=true,
         nextDecision=0,nextMove=0,pending={},inputDirty=true,hooks={},adapters={},defenseSent={},movementObservations={}},A)
     self.hero=g.myHero
     self.controlWindow=self.sdk.ControlWindow or ControlWindow
@@ -37,13 +38,24 @@ function A.new(g)
     self.terrain=Terrain.new(nil,g.myHero.team);self.threats=Threats.new()
     self.planner=Planner.new(self.terrain,self.threats);self.defenses=Defenses.new()
     self.observer=Observer.new(g,self.threats,require('evade.catalog'));self.metrics=Metrics.new(self.clock)
+    -- Live danger: the enemy team for the follow-up during hard control (evade.danger), shared by policy and planner.
+    self.danger=Danger.new({enemies=function()return self.observer.roster end,sets=function(name)return self.observer.loaded[name]end})
+    self.planner.danger=self.danger
     self.drawing=Drawing.new(g)
     self.recorder=Recorder.new(g)
     self.flightlog=FlightLog.new(self)
+    -- A reviewed tier standing in for unknown damage and control is reported once per threat.
+    self.danger.onFallback=function(t,record)
+        if self.recorder.enabled then  do end end
+    end
     self.observer.diagnostics=function()return self.recorder.enabled and not self.recorder.failed end
     -- Reviewed per-ability unit collision: shorten a blockable flight at its first certain blocker.
     self.observer.clip=Collision.Clip
     self.observer.onReject=function(kind,fields) do end end
+    self.observer.onKnownCast=function(owner,spell,definition)
+        local start,placement,finish=spell.startPos,spell.placementPos,spell.endPos
+         do end 
+    end
     -- Development-only allied detection shadow; public builds stub evade.shadow.
     self.observer.shadow=require('evade.shadow').new(require('evade.catalog'),function(kind,fields) do end end)
     self.spellMenus={}
@@ -207,14 +219,14 @@ local NATIVE_BUDGET=200
 local SAFETY_MARGIN=30
 function A:Context(ranking)
     local h=self.g.myHero;local now=self.g.Game.Timer()
-    local aim=self.sdk.Actions:GetPlayerPosition()
+    local cursorAim=self.sdk.Actions:GetPlayerPosition();local aim=cursorAim;local forced=false
     local recent=self.moveIntent and now-self.moveIntent.at<=.15
     local orb=self.sdk.Orbwalker;local mode
     if orb:IsEnabled()and orb.MovementEnabled and orb.Menu.MovementEnabled:Value()then
         for _,id in ipairs(self.moveModes)do if orb:HasMode(id)then mode=id;break end end
     end
     local command=mode~=nil or recent==true
-    if mode~=nil and G.point(orb.ForceMovement)then aim=orb.ForceMovement
+    if mode~=nil and G.point(orb.ForceMovement)then aim=orb.ForceMovement;forced=true
     elseif recent and self.moveIntent.target then aim=self.moveIntent.target end
     local attack=h.attackData;local windup=0
     if self.sdk.Orbwalker:IsAutoAttacking()and attack then
@@ -232,13 +244,31 @@ function A:Context(ranking)
     if not control.motionClassified then motionService.AnnotateControl(control,h,now)end
     local observedMotion,motionReason=motionService.ReadPath(h,now,control)
     if observedMotion then currentPath={G.copy(observedMotion.to)};trajectoryReason=nil end
+    local intentSource=forced and 'forced'or aim~=cursorAim and 'movement'or 'cursor'
+    local intentReason
+    if not forced then
+        local screen;local read=self.sdk.Actions.GetPlayerScreenPosition
+        if type(read)=='function'then local okay,value=pcall(read,self.sdk.Actions);if okay then screen=value end end
+        local matched,why=Trajectory.CursorMatches(self.g,aim,screen)
+        if not matched and G.point(cursorAim)and(not G.point(aim)or aim.x~=cursorAim.x or aim.z~=cursorAim.z or aim.y~=cursorAim.y)then
+            matched,why=Trajectory.CursorMatches(self.g,cursorAim,screen)
+            if matched then aim=cursorAim;intentSource='cursor'end
+        end
+        if not matched then
+            aim=currentPath[#currentPath]or h.pos;command=false;intentReason=why
+            intentSource=#currentPath>0 and G.dist(h.pos,aim)>1 and 'observed_path'or 'position'
+        end
+    end
     local controlHoldUntil=control and control.stationaryKnownDuration>0 and now+control.stationaryKnownDuration or nil
     local speedChanges=self:HasteSchedule(h,now)
+    -- The orbwalker's attack (target, reach, windup, readiness) for route ranking and the weave check.
+    local attackPlan=ranking~=false and Positioning.Attack(self.g,self.sdk,mode,now)or nil
     return {origin=G.copy(h.pos),now=now,speed=h.ms,radius=h.boundingRadius,heroID=h.networkID,
         -- Work budget of one decision: native terrain queries (about 20 us each live, so about 4 ms).
         -- The host clock steps by ~15.6 ms and cannot bound a 4 ms search.
         nativeBudget=NATIVE_BUDGET,margin=SAFETY_MARGIN,refineRoutes=self.refineRoutes,
         profile=h.charName:match('^Jade_')and 'classic'or 'normal',intent=G.copy(aim or h.pos),command=command==true,orbwalkerMode=mode,
+        intentSource=intentSource,intentReason=intentReason,
         currentPath=currentPath,trajectoryReason=trajectoryReason,flee=mode==self.sdk.ORBWALKER_MODE_FLEE,
         observedMotion=observedMotion,motionReason=motionReason,
         motionNow=observedMotion and function()return self.g.Game.Timer()end or nil,
@@ -251,7 +281,7 @@ function A:Context(ranking)
             or control.knockDuration>0 or control.forcedDuration>0)and control.stationaryDuration>0 and control.stationaryKnownDuration==0 or false,
         destinationDanger=ranking~=false and Positioning.Snapshot(self.g,self.sdk,self.observer.roster,h.boundingRadius,
             self.observer.hazards and self.observer.hazards.advisory)or nil,
-        combatCost=ranking~=false and Positioning.Combat(self.g,self.sdk,mode)or nil,
+        attack=attackPlan,combatCost=Positioning.Combat(attackPlan),facing=h.dir,
         moveAllowed=function(point)return self:MovementDestinationAllowed(point,now)end,
         delay=.035+windup,sendLag=math.min(.1,self.tickInterval or 0),waypointDelay=.035,windup=windup,stats={health=h.health,maxHealth=h.maxHealth,armor=h.armor,magicResist=h.magicResist,
             shield=h.allShield or 0,physicalShield=h.shieldAD or 0,magicShield=h.shieldAP or 0}}
@@ -267,11 +297,12 @@ end
 -- the orbwalker's attacks stay blocked for this bounded window (live: a Combo attack
 -- issued right after the dodge click replaced it; the hero then idled into Graves R).
 local MOVE_FLIGHT_MS=250
-function A:MovementInFlight()
+function A:MovementInFlight(route)
     for _,record in pairs(self.pending)do if not record.defense then return true end end
     local now=self.clock()
     for _,event in ipairs(self.movementObservations)do
-        if not event.observed and now<=event.sentAt+MOVE_FLIGHT_MS then return true end
+        if not event.observed and now<=event.sentAt+MOVE_FLIGHT_MS
+            and(not route or route.path and route.path[1]and G.dist(route.path[1],event.destination)<=25)then return true end
     end
     return false
 end
@@ -296,13 +327,17 @@ local ATTACK_HOLD_MS=750
 -- delaying ready attacks by 300-750 ms while the only threats were 2000 units away.
 -- Unknown terrain is not in this set: it still holds the attack.
 local ROUTE_REFUSAL={static_wall=true,live_wall=true,dynamic_wall=true,movement_destination_rejected=true}
-function A:HoldAttack(args,why,detail)
+-- `severe`: the windup turns an escape that works now into a lethal or hard-control hit. That attack is
+-- refused for as long as it stays true; the bounded release is for holds that protect nothing more.
+function A:HoldAttack(args,why,detail,severe)
     local now=self.clock()
     if self.intervening then self.attackHold=nil;args.Process=false;return end
     local hold=self.attackHold
-    if not hold then hold={since=now,reason=why};self.attackHold=hold
+    if not hold or hold.reason~=why then
+        -- A changed reason is logged; the hold keeps its start, so the bound is not renewed.
+        if hold then hold.reason=why else hold={since=now,reason=why};self.attackHold=hold end
          do end end
-    if now-hold.since<ATTACK_HOLD_MS then args.Process=false;return end
+    if severe or now-hold.since<ATTACK_HOLD_MS then args.Process=false;return end
     if not hold.released then hold.released=true
          do end end
 end
@@ -312,24 +347,81 @@ function A:PreAttack(args)
     if not self.terrain:Ready()or #self.threats.list==0 then self.attackHold=nil;return end
     if args.Approach then if self.intervening then args.Process=false end;return end
     -- This hook needs timed safety, not destination/target ranking.
-    local ctx=self:Context(false);local attack=self.g.myHero.attackData
-    if not attack or not G.finite(attack.windUpTime)then self:HoldAttack(args,'attack_data_missing');return end
-    -- This is a proposed attack: its future windup must be stationary even if
-    -- the hero is walking now. The existing observed windup is not sufficient.
-    ctx.windup=math.max(0,attack.windUpTime);ctx.delay=.035+ctx.windup;ctx.sendLag=nil
+    local windup=Positioning.Windup(self.g,self.sdk)
+    if not windup then self:HoldAttack(args,'attack_data_missing');return end
+    -- This is a proposed attack: its future windup (Orbama's, plus the weave margin the planner uses) must
+    -- be stationary even if the hero is walking now. The existing observed windup is not sufficient.
+    local result,severe=self:StandingRisk(windup+self.planner.weaveMargin)
+    if not result.known or not (result.safe or result.walkSafe)then
+        -- Lethal or hard control after the windup, on a route that avoids it without the attack: the
+        -- attack is what makes the dodge impossible. Refused while that holds, never released by time.
+        self:HoldAttack(args,severe and(result.lethal and 'lethal_windup'or 'hard_cc_windup')or result.known and 'unsafe_windup'or 'unknown_windup',
+            result.reason,severe)
+    else self.attackHold=nil end
+end
+-- The route the hero follows now (the dodge being walked, else the commanded or current path), evaluated
+-- with `pause` seconds standing first (an attack windup, an own cast time), and whether that pause alone
+-- turns it into a lethal or hard-control hit (`severe`): the same route walked at once is clear.
+function A:StandingRisk(pause)
+    local ctx=self:Context(false)
+    local free={};for k,v in pairs(ctx)do free[k]=v end
+    ctx.windup=pause;ctx.delay=.035+ctx.windup;ctx.sendLag=nil
     local length=math.max(0,ctx.speed*(self.planner.horizon-ctx.delay)*.8)
     local route=self.route and self.route.path
         or Trajectory.Clip(ctx.command and {ctx.intent}or ctx.currentPath or {ctx.origin},ctx.origin,length)
     local result=self:EvaluatePath(route,ctx)
-    -- Standing through the windup and the rest of the horizon is then the evidence:
+    -- Standing through the pause and the rest of the horizon is then the evidence:
     -- the hero is where it stands, so no terrain query is needed for that route.
     if not result.known and ROUTE_REFUSAL[result.reason]then
         local stay=self.planner:Evaluate({G.copy(ctx.origin)},ctx,nil,true)
         if stay.known then result=stay end
     end
-    if not result.known or not (result.safe or result.walkSafe)then
-        self:HoldAttack(args,result.known and 'unsafe_windup'or 'unknown_windup',result.reason)
-    else self.attackHold=nil end
+    local severe=false
+    if result.known and not(result.safe or result.walkSafe)
+        and(result.lethal==true or result.ccHard==true or G.finite(result.cc)and result.cc>0)then
+        local now=self:EvaluatePath(route,free)
+        severe=now.known and(now.safe or now.walkSafe)==true
+    end
+    return result,severe
+end
+-- Cast-time gate for cooperating ActionClient clients: may a champion cast that keeps the hero in place for
+-- `seconds` (its own cast time) start now? False while standing that long (plus the weave margin) turns the
+-- route the hero follows into a lethal or hard-control hit that walking it avoids (StandingRisk); the client
+-- then waits, never cancels, and asks again. Evade's own answers (dashes, shields it requested) are not
+-- asked. Nothing is evaluated without a modelled threat; one evaluation per clock sample, threat revision
+-- and 50 ms of cast time. `cast_held` / `cast_released` record each held action once.
+function A:CastAllowed(seconds,owner,key,id)
+    local now=self.clock();local verdict=false
+    if G.finite(seconds)and seconds>0 and self:Available()and #self.threats.list>0 and self.terrain:Ready()then
+        local bucket=math.max(1,math.floor(seconds*20+.5))
+        local memo=self.castMemo
+        if not memo or memo.at~=now or memo.revision~=self.threats.revision then
+            memo={at=now,revision=self.threats.revision};self.castMemo=memo
+        end
+        verdict=memo[bucket]
+        if verdict==nil then
+            local result,severe=self:StandingRisk(bucket/20+self.planner.weaveMargin)
+            verdict=severe and(result.lethal==true and 'lethal_cast_time'or 'hard_cc_cast_time')or false
+            memo[bucket]=verdict
+        end
+    end
+    local held=self.castHolds
+    local row=held and id~=nil and held[id]
+    if not verdict then
+        if row then
+            held[id]=nil
+             do end 
+        end
+        return true
+    end
+    if id~=nil and not row then
+        held=held or {};self.castHolds=held
+        local count=0;for _ in pairs(held)do count=count+1 end
+        if count>=32 then for k in pairs(held)do held[k]=nil end end
+        held[id]={since=now,reason=verdict}
+         do end 
+    end
+    return false,verdict
 end
 function A:RefreshTerrain()
     local id=self.g.Game.mapID
@@ -348,7 +440,9 @@ function A:GetCapabilities()return {commandedWaypointTiming=true,timedWalkingSpe
     -- Own effect kinds an offer's `effect.kind` may name besides the shield/protection windows (version 1).
     defenseEffectVersion=1,defenseEffects={reduction=true,resist=true,haste=true,heal=true,directional_block=true,attack_dodge=true,owned_teleport=true},
     -- An owned teleport may offer a reach (`place`) instead of fixed destinations: Evade chooses the landing.
-    ownedTeleportPlace=true}end
+    ownedTeleportPlace=true,
+    -- A cooperating ActionClient client asks CastAllowed(castTime) before a cast that keeps the hero in place.
+    castTimeGate=true}end
 local EFFECT_KINDS={reduction=true,resist=true,haste=true,heal=true,directional_block=true,attack_dodge=true}
 -- Walking speed during an own haste, counted conservatively: a flat or percent bonus is added in full up to
 -- 415 and half above it (the soft caps scale the excess by .8, then .5). Percent applies to the current speed.
@@ -577,7 +671,7 @@ function A:Cancel(reason)
         self.client:SetBlocked('evade','attack',false);self.client:SetBlocked('evade','move',false)
         self.inputDirty=false
     end
-    self.route=nil
+    self.route=nil;self.gaze=nil
 end
 function A:Bypass()
     return self.menu and self.menu.Bypass:Value()or self.bypass==true
@@ -669,7 +763,7 @@ function A:PrepareMove(route,context,impact)
                 end
             end
             if not ok then return nil,'evade_route_changed'end
-            local position=destination
+            local position=destination;resolved.requested=G.copy(destination)
             local alternative,alternativeEvaluation=self:HoverAlternative(path,fresh,baseline)
             if alternative then
                 position,evaluated=alternative,alternativeEvaluation
@@ -677,7 +771,7 @@ function A:PrepareMove(route,context,impact)
             end
             if evaluated.threatRevision~=self.threats.revision or evaluated.terrainRevision~=self.terrain.revision then return nil,'evade_preparation_stale'end
             certificate={threat=evaluated.threatRevision,terrain=evaluated.terrainRevision,expires=math.min(deadline,self.clock()+20)}
-            resolved.point=G.copy(position)
+            resolved.point=G.copy(position);resolved.route=evaluated
             return {position=position,data={threatRevision=certificate.threat,terrainRevision=certificate.terrain}}
         end,
         reconcile=function()return true end}
@@ -696,7 +790,17 @@ function A:Collect()
             record.hasteArmed=true;local s=record.haste
             self.hasteBoost={speed=s.speed,base=s.base,starts=s.starts,ends=s.ends}
         end
-        if record.resolved and record.resolved.point then record.destination=record.resolved.point end
+        if record.resolved and record.resolved.point then
+            local resolved=record.resolved
+            if r and r.sentAt and not record.routeAdjusted and resolved.route then
+                -- A checked hover alternative is the sent route. Do not mistake
+                -- its native endpoint for a deviation from the unrelocated plan.
+                if self.route and self.route.path and resolved.requested
+                    and G.dist(self.route.path[1],resolved.requested)<=25 then self.route=resolved.route end
+                record.routeAdjusted=true
+            end
+            record.destination=resolved.point
+        end
         if r and r.sentAt and not record.measured then
             record.measured=true
              do end 
@@ -809,12 +913,27 @@ function A:Tick()
     self:ReportUnmodeled(now)
     if not self:Available()then self:Cancel(not self.enabled and 'disabled'or self:Bypass()and 'bypass'or 'inactive_context');return end
     if not self:RefreshTerrain()then self:Cancel('map_variant_unknown');return end
+    if self.gaze then
+        local threat=self.threats.byID[self.gaze.id]
+        if not threat or now>threat.ends then self:Cancel('gaze_window_ended')
+        else
+            local context=self:Context()
+            local baseline=self.planner:Evaluate(context.currentPath or {context.origin},context,nil,true)
+            local fresh=not baseline.known
+            for _,id in ipairs(baseline.hits or {})do if id~=threat.id and not self.gaze.hits[id]then fresh=true;break end end
+            if not fresh then
+                baseline.hits={threat.id}
+                if self:TurnFromGaze(context,baseline,start)then return end
+            end
+            self:Cancel('gaze_context_changed')
+        end
+    end
     if now<self.nextDecision then return end;self.nextDecision=now+.025
     if #self.threats.list==0 then self:Cancel('no_modeled_threat');return end
     -- Judgement before planning: cheap poke does not break a recall, channel or trade (evade.policy).
     if Policy.Apply(self,now)>=#self.threats.list then self:Cancel('threats_not_worth_moving');return end
     local ctx=self:Context()
-    for _,record in pairs(self.pending)do if not record.defense then ctx.commitPrevious=true;break end end
+    ctx.commitPrevious=self.route~=nil and self:MovementInFlight(self.route)
     local best,baseline=self.planner:Plan(ctx,self.route)
     -- Held in place (root or stun without a stated end): no walking route can be judged, but standing there
     -- can. Answers that need no movement (shield, spell shield, stasis, wall) are still weighed against it.
@@ -831,11 +950,19 @@ function A:Tick()
     -- buffered (live Jade_VayneQ_Attack, 185.06-185.30: path unchanged 156 ms after
     -- send). Do not plan as if movement cancels the windup there.
     local windupHolds=ctx.profile=='classic'and ctx.windup>0
+    local abandoned=false
     if ctx.windup>0 and not preserveWindup and not windupHolds and not held then
         local immediate={};for k,v in pairs(ctx)do immediate[k]=v end;immediate.delay=.035;immediate.windup=0
         local urgent=self.planner:Plan(immediate,self.route)
-        if self.planner:Better(urgent,best,ctx)then best=urgent end
+        if self.planner:Better(urgent,best,ctx)then best=urgent;abandoned=true end
     end
+    -- What this decision does to the own attack (decision_attack): an observed windup is finished or
+    -- cancelled here; a ready attack is kept or delayed by the planner's weave check (planner:Weave).
+    if best and ctx.windup>0 and not held then
+        best.attack=abandoned and 'cancelled'or 'kept'
+        best.attackReason=abandoned and 'windup_unsafe'or preserveWindup and 'windup_fits'or windupHolds and 'classic_windup_holds'or 'no_faster_escape'
+    end
+    local weaving=not held and best and(best.attackReason=='attack_fits'or best.attackReason=='attack_fits_alternative')
     self.decisionAt=now; do end 
     self.preview={at=now,intent=G.copy(ctx.intent),impact=baseline.firstImpact,
         arrival=best and best.arrival,safe=best and best.safe,walkSafe=best and best.walkSafe}
@@ -875,7 +1002,18 @@ function A:Tick()
     -- harmless attacks eligible while preventing ordinary moves from replacing it.
     self.inputDirty=true
     self.client:SetBlocked('evade','attack',self:MovementInFlight());self.client:SetBlocked('evade','move',true)
-    if best.continuing and (best.safe or best.walkSafe)and not chosen then self.reason='following_safe_route';return end
+    -- The ready attack fits before this dodge: leave the attack open (PreAttack checks the same route with
+    -- the windup) and send the dodge once the attack has started or no longer fits. Movement stays blocked.
+    if weaving and not chosen and not best.continuing and not next(self.pending)and not self:MovementInFlight()then
+        self.reason='weaving_attack';return
+    end
+    if best.continuing and not chosen then
+        self.reason=(best.safe or best.walkSafe)and 'following_safe_route'or 'following_zone_exit';return
+    end
+    -- Input release precedes native path acknowledgement. Keep an equally safe,
+    -- freshly evaluated committed destination during the existing bounded flight
+    -- window instead of sending another click or reversing it on stale waypoints.
+    if best.committed and not chosen and not next(self.pending)and self:MovementInFlight(best)then self.reason='awaiting_dodge_movement';return end
     if preserveWindup and not chosen then self.reason='finishing_safe_attack';return end
     if windupHolds and not chosen then self.reason='awaiting_attack_windup';return end
     if next(self.pending)or start<self.nextMove then return end
@@ -951,11 +1089,30 @@ end
 -- It is a facing change, not an escape: sent only when no route or defense exists.
 function A:TurnFromGaze(ctx,baseline,start)
     local point,threat,sense=Policy.Gaze(self,ctx,baseline)
-    if not point then return false end
-    if next(self.pending)or start<self.nextMove then self.intervening=true;self.reason='turning_from_gaze';return true end
-    if self.terrain:Wall(point,ctx.now,ctx.radius)~=false then return false end
+    if not threat then return false end
+    -- Keep ordinary combat until the final reaction window. The existing native
+    -- cast completion is the impact clock; a turn cannot remove R's damage.
+    if G.finite(threat.starts)and threat.starts-ctx.now>math.max(.12,(ctx.delay or .035)+.08)then return false end
+    if not self.gaze then
+        local hits={};for _,id in ipairs(baseline.hits or {})do hits[id]=true end
+        self.gaze={id=threat.id,hits=hits}
+    end
+    self.intervening=true;self.reason='turning_from_gaze';self.inputDirty=true
+    self.client:SetBlocked('evade','attack',true);self.client:SetBlocked('evade','move',true)
+    if not point then
+        if not self.gaze.aligned then
+            self.gaze.aligned=true
+             do end 
+        end
+        return true
+    end
+    if next(self.pending)or start<self.nextMove then return true end
+    local checked=self.planner:Evaluate({point},ctx)
+    if not checked.known or checked.terrainValidated~=true then return false end
+    for _,id in ipairs(checked.hits or {})do if id~=threat.id and not self.gaze.hits[id]then return false end end
     local generation=self.serial;local deadline=self.clock()+100
-    local function guard()return self:Available()and generation==self.serial and self.clock()<=deadline,'evade_preparation_stale'end
+    local function guard()return self:Available()and generation==self.serial and self.clock()<=deadline
+        and self.threats.byID[threat.id]==threat and self.g.Game.Timer()<=threat.ends,'evade_preparation_stale'end
     self.intervening=true;self.reason='turning_from_gaze';self.inputDirty=true
     self.client:SetBlocked('evade','move',true)
     local id,status=self.client:Submit({type='move',kind='world',target=point,owner='walking',resource='evade:movement',

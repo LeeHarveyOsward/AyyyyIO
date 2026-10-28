@@ -37,18 +37,22 @@ function C.reason(a,b)
     for i=5,7 do if a[i]~=b[i]then return 'endpoint_or_direction'end end
     return 'anchor_position'
 end
+-- Drawing cost before a mesh exists: polyline vertices plus native circles.
 function C.vertexCount(s)
     if s.shape=='targeted'then return 0 end
     if s.shape=='compound'then local n=0;for _,part in ipairs(s.parts)do n=n+C.vertexCount(part)end;return n end
-    if s.shape=='circle'then return 25 end
-    if s.shape=='ring'then return s.innerRadius>0 and 50 or 25 end
+    if s.shape=='circle'then return 1 end
+    if s.shape=='ring'then return s.innerRadius>0 and 2 or 1 end
     if s.shape=='cone'then return s.emissionSpeed and s.radius>0 and 44 or 26 end
     if s.shape=='arc'then return 68 end
     if s.shape=='rectangle'then return 4 end
     return 22
 end
+function C.cost(mesh)return #mesh.vertices+#mesh.circles end
 function C.build(s,now)
-    local mesh={vertices={},edges={}}
+    -- Circles and rings are native host circles (one primitive each, exact
+    -- outline); every other outline is a polyline of prepared world vertices.
+    local mesh={vertices={},edges={},circles={}}
     local function strip(vertices,closed)
         local offset=#mesh.vertices
         for _,v in ipairs(vertices)do append(mesh.vertices,v)end
@@ -68,8 +72,8 @@ function C.build(s,now)
         if not a then return end
         local r=t.radius
         if t.shape=='circle'or t.shape=='ring'then
-            strip(arc(a,r,0,pi,24),false)
-            if t.shape=='ring'and t.innerRadius>0 then strip(arc(a,t.innerRadius,0,pi,24),false)end
+            append(mesh.circles,{x=a.x,y=a.y or 0,z=a.z,radius=r})
+            if t.shape=='ring'and t.innerRadius>0 then append(mesh.circles,{x=a.x,y=a.y or 0,z=a.z,radius=t.innerRadius})end
             return
         end
         local dx,dz=G.direction(a,t.b);local axis=math.atan2(dz,dx)

@@ -3,12 +3,7 @@ local G=require('evade.geometry')
 local Contours=require('evade.contours')
 local ChannelLink=require('evade.channel_link')
 local V={};V.__index=V
-local unitCircles={}
-for _,steps in ipairs({12,32})do
-    local points={};for i=0,steps do local a=i*2*math.pi/steps;points[i+1]={x=math.cos(a),z=math.sin(a)}end
-    unitCircles[steps]=points
-end
-function V.new(g)return setmetatable({g=g,prepared={},cache={},projected={},signature={},builds=0,maxVertices=4096},V)end
+function V.new(g)return setmetatable({g=g,prepared={},cache={},projected={},signature={},currentSignature={},builds=0,maxVertices=4096},V)end
 local function on(app,key)return not app.menu or not app.menu[key]or app.menu[key]:Value()end
 function V:ResetPreparation()
     self.work=nil
@@ -53,8 +48,9 @@ function V:Prepare(app,now,token)
                 entry={signature=signature,mesh=Contours.build(s,now),firstDrawn=entry and entry.firstDrawn}
                 self.cache[id]=entry;self.builds=self.builds+1
             end
-            if work.vertices+#entry.mesh.vertices<=self.maxVertices then
-                work.live[id]=true;work.vertices=work.vertices+#entry.mesh.vertices
+            local cost=Contours.cost(entry.mesh)
+            if work.vertices+cost<=self.maxVertices then
+                work.live[id]=true;work.vertices=work.vertices+cost
                 local row={mesh=entry.mesh,starts=s.starts,ends=s.ends,entry=entry,id=s.id,source=s,
                     preparedAt=now,observedAt=s.observedAt,motionUnknown=s.motionUnknown}
                 if not s.motionUnknown and not s.speedUncertain and timing and #work.rows<6 then
@@ -88,6 +84,18 @@ function V:Current(row,app,now)
     if not current or current.ends<now then return false end
     if (source.motion or source.shape=='compound')and now-row.preparedAt>.1 then return false end
     if source==current then return true end
+    if source.instanceID~=nil and source.instanceID==current.instanceID and source.stageID==current.stageID
+        and source.shape==current.shape and not source.motion and not current.motion
+        and not source.speed and not current.speed and source.shape~='compound'then
+        -- Observation refreshes do not invalidate an unchanged outline. A circle
+        -- or ring can also follow its current observed anchor without a new mesh.
+        if (source.shape=='circle'or source.shape=='ring')and source.radius==current.radius
+            and source.innerRadius==current.innerRadius then
+            local a,b=source.origin or source.a,current.origin or current.a
+            return true,b.x-a.x,(b.y or 0)-(a.y or 0),b.z-a.z
+        end
+        if Contours.same(row.entry.signature,Contours.signature(current,now,self.currentSignature))then return true end
+    end
     -- A progressing fixed missile keeps its prepared cast contour; Draw clips
     -- its passed tail per frame (V:Tail). Redirects, replacements and moving
     -- anchors must wait for fresh admitted preparation.
@@ -143,17 +151,22 @@ function V.Tail(mesh,current,now)
     if d>tail.length then d=tail.length end
     return d
 end
-function V:Mesh(mesh,color,width,height,shift)
+-- Returns whether any part was submitted on screen. `probe` (until the first
+-- visible draw of a contour) also proves circles visible before submitting
+-- them; afterwards the shared overlay culls invisible circles at dispatch.
+function V:Mesh(mesh,color,width,height,shift,offsetX,offsetY,offsetZ,probe)
     local projected=self.projected
+    offsetX,offsetY,offsetZ=offsetX or 0,offsetY or 0,offsetZ or 0
     local tail=shift and shift>0 and mesh.tail
     local first,last=tail and tail.first or 0,tail and tail.last or -1
     local sx,sz=tail and tail.dx*shift or 0,tail and tail.dz*shift or 0
     -- Prepared vertices are finite world points; ScreenXYZ rechecks x/z.
     for i,p in ipairs(mesh.vertices)do
-        if i>=first and i<=last then projected[i]=self:ScreenXYZ(p.x+sx,p.y,p.z+sz)or false
-        else projected[i]=self:ScreenXYZ(p.x,p.y,p.z)or false end
+        if i>=first and i<=last then projected[i]=self:ScreenXYZ(p.x+sx+offsetX,p.y+offsetY,p.z+sz+offsetZ)or false
+        else projected[i]=self:ScreenXYZ(p.x+offsetX,p.y+offsetY,p.z+offsetZ)or false end
     end
-    local line=(self.display or self.g.Draw).Line;if not line then return false end
+    local d=self.display or self.g.Draw
+    local line=d.Line;if not line then return false end
     local drawn=false
     for _,edge in ipairs(mesh.edges)do local a,b=projected[edge[1]],projected[edge[2]]
         if a and b then
@@ -161,6 +174,16 @@ function V:Mesh(mesh,color,width,height,shift)
                 local ax,ay,bx,by=clip(a,b,width,height)
                 if ax then line(ax,ay,bx,by,1,color);drawn=true end
             else line(a.x,a.y,b.x,b.y,1,color);drawn=true end
+        end
+    end
+    local circles,vector=mesh.circles,self.g.Vector
+    if circles and circles[1]and d.Circle and vector then
+        local overlay=probe and not drawn and self.g.SDK and self.g.SDK.Overlay
+        for _,c in ipairs(circles)do
+            local x,y,z=c.x+offsetX,c.y+offsetY,c.z+offsetZ
+            if not overlay or overlay:CircleVisible(x,y,z,c.radius)then
+                d.Circle(vector(x,y,z),c.radius,1,color);drawn=true;overlay=nil
+            end
         end
     end
     return drawn
@@ -185,30 +208,15 @@ function V:Line(a,b,color,width)
         else (self.display or self.g.Draw).Line(x.x,x.y,y.x,y.y,width or 2,color)end
     end
 end
-function V:Circle(p,r,color,steps)
+-- One native circle; the shared overlay culls it when it is off screen.
+function V:Circle(p,r,color,width)
     if not G.point(p)or not G.finite(r)or r<=0 then return end
-    local previous={x=p.x+r,y=p.y,z=p.z}
-    steps=steps or 32
-    local unit=unitCircles[steps]or unitCircles[32]
-    for i=2,#unit do local q={x=p.x+unit[i].x*r,y=p.y,z=p.z+unit[i].z*r}
-        self:Line(previous,q,color);previous=q
-    end
+    local d=self.display or self.g.Draw;local vector=self.g.Vector
+    if d.Circle and vector then d.Circle(vector(p.x,p.y or 0,p.z),r,width or 2,color)end
 end
 function V:Label(pos,text,color)
     local p=self:Screen(pos);local d=(self.display or self.g.Draw)
     if p and d.Text then d.Text(text,14,p.x+8,p.y-18,color)end
-end
-function V:Future(s,now,color)
-    local start=s.launch or s.starts
-    if start>now then self:Label(G.center(s,now),'Cast: '..math.floor((start-now)*1000)..' ms',color)end
-    if s.shape~='missile'then return end
-    for _,dt in ipairs({.25,.5})do
-        local at=now+dt
-        if at>=start and at<=s.ends then
-            local p=G.center(s,at);self:Circle(p,s.radius,color,12)
-            self:Label(p,'+'..math.floor(dt*1000)..' ms',color)
-        end
-    end
 end
 function V:Status(app)
     if not app.active then return end
@@ -246,9 +254,10 @@ function V:Draw(app,display)
             end
         end
         for _,s in ipairs(self.prepared)do
-            if self:Current(s,app,now)then
+            local current,dx,dy,dz=self:Current(s,app,now)
+            if current then
                 local shift=s.mesh.tail and V.Tail(s.mesh,app.threats.byID[s.id],now)or 0
-                local drawn=self:Mesh(s.mesh,(s.motionUnknown or s.starts>now)and amber or red,width,height,shift)
+                local drawn=self:Mesh(s.mesh,(s.motionUnknown or s.starts>now)and amber or red,width,height,shift,dx,dy,dz,not s.entry.firstDrawn)
                 if drawn and not s.entry.firstDrawn then
                     s.entry.firstDrawn=now
                     if s.observedAt then app.metrics:Sample('detection_to_first_draw_ms',(now-s.observedAt)*1000)end
@@ -266,7 +275,7 @@ function V:Draw(app,display)
                 end
                 if on('DrawTiming')and(not s.preparedAt or now-s.preparedAt<=.1)then
                     if s.label then self:Label(s.label.pos,s.label.text,future)end
-                    for _,p in ipairs(s.future or {})do self:Circle(p.pos,p.radius,future,12);self:Label(p.pos,p.text,future)end
+                    for _,p in ipairs(s.future or {})do self:Circle(p.pos,p.radius,future);self:Label(p.pos,p.text,future)end
                 end
             end
         end

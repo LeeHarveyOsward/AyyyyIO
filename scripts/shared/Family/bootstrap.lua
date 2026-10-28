@@ -173,6 +173,7 @@ return function(g, manifest, read, digest,storage)
             local record=self.components[name];local c=record and record.value
             if c and type(c.Shutdown)=='function' then pcall(c.Shutdown,c,reason or 'family_shutdown') end
         end
+        if self.support then pcall(self.support.Close,self.support)end
         if self.diagnostics then pcall(self.diagnostics.Close,self.diagnostics)end
         if self.diagnosticMaintenance and g.SDK and g.SDK.OnMaintenance then
             for i=#g.SDK.OnMaintenance,1,-1 do if g.SDK.OnMaintenance[i]==self.diagnosticMaintenance then table.remove(g.SDK.OnMaintenance,i)end end
@@ -184,6 +185,7 @@ return function(g, manifest, read, digest,storage)
             local ok,reason=pcall(function()
                 self.diagnostics=self:Require('Family.diagnostics')(g,self,manifest)
                 self.development=self:Require('Family.development')(g,self)
+                if manifest.modules['Family.support']then self.support=self:Require('Family.support')(g,self)end
             end)
             if not ok then self.diagnosticError=tostring(reason);if g.print then g.print('[Family diagnostics] '..self.diagnosticError)end end
         end
@@ -257,6 +259,10 @@ return function(g, manifest, read, digest,storage)
                 end
                 local ok,reason=pcall(self.diagnostics.Tick,self.diagnostics)
                 if not ok then self.diagnosticError=tostring(reason)end
+                if self.support then
+                    local worked,why=pcall(self.support.Tick,self.support)
+                    if not worked then self.diagnosticError='support: '..tostring(why)end
+                end
                 if not self.diagnosticMaintenance and g.SDK.OnMaintenance then
                     self.diagnosticMaintenance=function()
                         local worked,why=pcall(self.diagnostics.Maintenance,self.diagnostics)

@@ -35,7 +35,7 @@ local function index(identity)
     L.lower=L.lower or {}
     local cached=L.lower[identity]
     if cached~=nil then return cached end
-    local rows=data[identity];local out=false
+    local rows=data[require('evade.identities').Resolve(identity)];local out=false
     if rows then out={};for name,row in pairs(rows)do out[name:lower()]=row end end
     L.lower[identity]=out;return out
 end

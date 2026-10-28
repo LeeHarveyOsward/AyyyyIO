@@ -1,18 +1,34 @@
 return function(require)
 return function()
 -- Shared MonkeyKing mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ MonkeyKingNimbus={
+  BaseDamage={80,120,160,200,240},DashSpeed=1050,EndPointOffsetDistance=75,ExtraTargetRange=700,castRange=650,
+ },
+ MonkeyKingDecoy={
+  CloneDamageMod={.4,.45,.5,.55,.6},CloneDuration=4,DashSpeed=900,MinRange=100,RangeClamp=300,StealthDuration=1,
+ },
+ MonkeyKingPassive={
+  MaxStacks=5,
+ },
+ MonkeyKingDoubleAttack={
+  ADRatio=.5,AttackRangeBonus={135,145,155,165,175},BaseDamage={20,45,70,95,120},
+ },
+}
+end)()
 return {
  MonkeyKing={id='normal',q='MonkeyKingDoubleAttack',w='MonkeyKingDecoy',e='MonkeyKingNimbus',r='MonkeyKingSpinToWin',leave='MonkeyKingSpinToWinLeave',
-  qAttack='MonkeyKingQAttack',qBase={20,45,70,95,120},qBonusAD=.5,qTotalAD=1,qBonusRange={135,145,155,165,175},
-  eBase={80,120,160,200,240},eAP=1,eAD=0,eKind='magical',eExtra=700,eBuff='MonkeyKingNimbusAS',
-  stealth='MonkeyKingDecoyStealth',cloneDuration=4,stealthDuration=1,wRange=300,wMin=100,wSpeed=900,wDelay=.3,
-  cloneRatio={.4,.45,.5,.55,.6},rRecast='MonkeyKingSpinRecast',spinDuration=2,recastWindow=8,rLockout=1,rRadius=315,
-  passive='MonkeyKingPassiveStack',maxStacks=5,
+  qAttack='MonkeyKingQAttack',qBase=D.MonkeyKingDoubleAttack.BaseDamage,qBonusAD=D.MonkeyKingDoubleAttack.ADRatio,qTotalAD=1,qBonusRange=D.MonkeyKingDoubleAttack.AttackRangeBonus,
+  eBase=D.MonkeyKingNimbus.BaseDamage,eAP=1,eAD=0,eKind='magical',eExtra=D.MonkeyKingNimbus.ExtraTargetRange,eBuff='MonkeyKingNimbusAS',
+  stealth='MonkeyKingDecoyStealth',cloneDuration=D.MonkeyKingDecoy.CloneDuration,stealthDuration=D.MonkeyKingDecoy.StealthDuration,wRange=D.MonkeyKingDecoy.RangeClamp,wMin=D.MonkeyKingDecoy.MinRange,wSpeed=D.MonkeyKingDecoy.DashSpeed,wDelay=.3,
+  cloneRatio=D.MonkeyKingDecoy.CloneDamageMod,rRecast='MonkeyKingSpinRecast',spinDuration=2,recastWindow=8,rLockout=1,rRadius=315,
+  passive='MonkeyKingPassiveStack',maxStacks=D.MonkeyKingPassive.MaxStacks,
   -- The wiki gives no cast time; wDelay=.3 is the kept controller timing. Evade is given both and must be safe under either.
   -- Nimbus Strike: asset MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (read 2026-10-10,
   -- installed asset, not live-verified). Offered to Evade as a unit dash next to W (SDK.ChampionMobility alternatives);
   -- development own_dash records confirm the figures in play.
-  eDash={speed=1050,offset=75,range=650,source='research/family-assets/MonkeyKing/spells.json MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (2026-10-10)'},
+  eDash={speed=D.MonkeyKingNimbus.DashSpeed,offset=D.MonkeyKingNimbus.EndPointOffsetDistance,range=D.MonkeyKingNimbus.castRange,source='research/family-assets/MonkeyKing/spells.json MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (2026-10-10)'},
   -- Cyclone (asset MonkeyKingSpinToWin, wiki Wukong read 2026-10-10): 4/6/8% max health (+137.5% AD) physical per second,
   -- ticks every .25 s for 2 s, knock-up .6 s, radius 315.
   rPctPerSec={.04,.06,.08},rADPerSec=1.375,rTick=.25,rTicks=8,rKnockupSeconds=.6,

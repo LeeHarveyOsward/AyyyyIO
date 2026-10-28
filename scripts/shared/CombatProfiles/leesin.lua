@@ -1,7 +1,7 @@
 return function(require)
--- Runtime identifiers: repository ClassicAIO + Riot Data Dragon 16.17.1.
+-- Current asset and patch evidence: implementation/family/current-patch.json.
 -- Classic combat coefficients are candidates, deliberately gated until measured.
-local P={version='16.17.1',build='2026-10-10-ranking',neutralTeam=300}
+local P={version='16.21.829.8620',build='current-patch-review',neutralTeam=300}
 local World=require('CombatProfiles.world')
 P.classicSmiteTargets=World.classicSmiteTargets
 P.normalSmiteTargets=World.normalSmiteTargets
@@ -18,7 +18,7 @@ P.normal={id='normal',hero='LeeSin',qRange=1100,qSpeed=1800,qRadius=60,wRange=70
     eRange=450,e2Range=550,rRange=375,kickDistance=800,kickRadiusReduction=true,q2Range=1250,smiteRange=500,
     wShield={60,105,150,195,240},wShieldAP=.8,wSpeed=1350,wCastDelay=0,
     qBase={60,90,120,150,180},qRatio=.9,eBase={35,60,85,110,135},eRatio=.9,
-    rBase={175,400,625},rRatio=2,damageVerified=false,
+    rBase={150,350,550},rRatio=2,damageVerified=false,
     yellowWard=World.wards.normal.yellowWard,wards=World.wards.normal.wards,vision=World.wards.normal.vision}
 P.classic={id='classic',hero='Jade_LeeSin',qRange=1100,qSpeed=1800,qRadius=60,wRange=700,
     -- Q1 BaseDamage/ADRatio confirmed in research/leesin/jade_leesin.bin.json.

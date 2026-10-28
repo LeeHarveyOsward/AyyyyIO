@@ -56,7 +56,7 @@ function E.new(c)
         local id=U.id(unit);local landing=landings[id];if not landing then return nil,'landing_not_certified'end
         local now=c.actions.client:Now();local validate=options.validate
         local ok,record=c.actions:submit({slot=2,owner='evade',target=unit,anchor=unit,dagger=c.state.daggers[id],pos=landing,side=U.copy(landing),
-            escape=true,release=request.lethal,priority='critical',ttl=math.max(1,math.min(250,(options.expires or now+100)-now)),
+            escape=true,release=request.lethal,priority='critical',evadeCompatible=true,ttl=math.max(1,math.min(250,(options.expires or now+100)-now)),
             validate=function()
                 local can,blocked=p:CanStrike(unit,request);if not can then return false,blocked end
                 if validate then return validate()end

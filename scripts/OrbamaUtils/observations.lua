@@ -87,6 +87,17 @@ function O:Recall(unit,event)
         self:EndRecall(row,finish and 'finished'or 'cancelled',now)
     end
 end
+-- Native buff clocks can contain unrelated large values. Keep only a bounded
+-- game-time interval, using the same channel limit as ProcessRecall above.
+local function recallTimes(buff,now)
+    local started=buff.startTime
+    if not U.finite(started)or started<0 or started>now or now-started>30 then started=now end
+    for _,field in ipairs({'expireTime','endTime'})do
+        local ends=buff[field]
+        if U.finite(ends)and ends>now and ends<=started+30 then return started,ends end
+    end
+    return started,nil
+end
 function O:ObserveRecall(unit,now)
     local id=U.id(unit);local row=self.recalls[id]
     if unit.dead then if row and row.status=='started'then self:EndRecall(row,'cancelled',now)end;return end
@@ -96,7 +107,7 @@ function O:ObserveRecall(unit,now)
     end
     local ok,buff=pcall(U.buff,unit,RECALL_BUFFS,now);if not ok then return end
     if buff then
-        local ends=U.buffEnd(buff);local started=U.finite(buff.startTime)and buff.startTime>=0 and buff.startTime<=now and buff.startTime or now
+        local started,ends=recallTimes(buff,now)
         if not row or row.status~='started'or row.handle~=unit.handle or row.name~=unit.charName then
             local pos,known,uncertainty=self:RecallPosition(unit,now)
             row={id=id,name=unit.charName,team=unit.team,handle=unit.handle,unit=unit,pos=U.copy(unit.pos),started=started,

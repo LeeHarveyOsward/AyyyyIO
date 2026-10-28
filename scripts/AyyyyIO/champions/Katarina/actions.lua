@@ -74,6 +74,8 @@ function A:submit(a)
     local origin=U.copy(c.hero.pos);local identity=U.id(a.anchor or a.target)
     local q={owner=a.owner,resource=resource,priority=a.priority or 'normal',
         expires=self.client:Now()+(a.ttl or 350),context=self:context(a.owner),targetID=identity,
+        -- Evade's own requested escape passes the client's intervention gate (evade.lua Strike).
+        evadeCompatible=a.evadeCompatible==true or nil,
         exceptions=a.release and {channel='release'}or nil,
         mechanical=function(resolved)
             if a.slot and not c.state:ready(a.slot)then return false,'spell_not_ready'end

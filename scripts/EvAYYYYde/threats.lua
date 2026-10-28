@@ -153,37 +153,49 @@ function H:Query(a,b,t0,t1,radius,out,everything)
         end
         self.indexCount=#self.list;self.indexRevision=self.revision
     end
+    -- The planner queries once per route segment (hundreds per decision): the candidate pass and filter use
+    -- locals only, in the same order as before (global rows, then buckets by x, z and insertion).
     local candidates,seen=self.queryCandidates,self.querySeen
     for i=#candidates,1,-1 do candidates[i]=nil end
     self.querySerial=self.querySerial+1;local serial=self.querySerial
-    for _,s in ipairs(self.global)do addCandidate(self,s,serial,candidates,seen)end
+    local list,count=self.list,0
+    local global=self.global
+    for i=1,#global do local index=global[i]
+        if seen[index]~=serial then seen[index]=serial;local row=list[index];if row then count=count+1;candidates[count]=row end end
+    end
     local left,right=math.min(a.x,b.x),math.max(a.x,b.x)
     local bottom,top=math.min(a.z,b.z),math.max(a.z,b.z)
     local x0,x1=math.floor((left-radius)/512),math.floor((right+radius)/512)
     local z0,z1=math.floor((bottom-radius)/512),math.floor((top+radius)/512)
-    if (x1-x0+1)*(z1-z0+1)>256 then for index=1,#self.list do addCandidate(self,index,serial,candidates,seen)end
+    if (x1-x0+1)*(z1-z0+1)>256 then for index=1,#list do addCandidate(self,index,serial,candidates,seen)end;count=#candidates
     else
+        local buckets=self.buckets
         for x=x0,x1 do
-            local column=self.buckets[x]
+            local column=buckets[x]
             if column then
                 for z=z0,z1 do
                     local bucket=column[z]
-                    if bucket then for _,index in ipairs(bucket)do addCandidate(self,index,serial,candidates,seen)end end
+                    if bucket then for i=1,#bucket do local index=bucket[i]
+                        if seen[index]~=serial then seen[index]=serial;local row=list[index];if row then count=count+1;candidates[count]=row end end
+                    end end
                 end
             end
         end
     end
     -- `everything`: public queries report what is there, not what the player chose to ignore.
     local suppressed=everything and {}or self.suppressed
-    for _,s in ipairs(candidates)do
+    local positions,boundX0,boundX1,boundZ0,boundZ1=self.positions,self.boundX0,self.boundX1,self.boundZ0,self.boundZ1
+    local n=#out
+    for i=1,count do local s=candidates[i]
         if not suppressed[s.id]and(s.motionUnknown or s.shape=='compound'and G.uncertainMotion(s)or s.ends>=t0)and s.starts<=t1 then
-            local include=s.shape=='targeted'or s.shape=='compound'or s.motion~=nil
+            local shape=s.shape
+            local include=shape=='targeted'or shape=='compound'or s.motion~=nil
             if not include then
-                local index=self.positions[s.id]
-                include=left<=self.boundX1[index]+radius and right>=self.boundX0[index]-radius
-                    and bottom<=self.boundZ1[index]+radius and top>=self.boundZ0[index]-radius
+                local index=positions[s.id]
+                include=left<=boundX1[index]+radius and right>=boundX0[index]-radius
+                    and bottom<=boundZ1[index]+radius and top>=boundZ0[index]-radius
             end
-            if include then out[#out+1]=s end
+            if include then n=n+1;out[n]=s end
         end
     end
     return out

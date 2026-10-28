@@ -2,36 +2,40 @@ return function(require)
 -- Judgement rules a competent player always applies (no switches):
 --  * keep an own channel through cheap poke that carries no control (not a recall: the hit ends it anyway);
 --  * keep a committed Combo trade through trivial poke while healthy;
+--  * keep a pending last hit (LaneClear, LastHit) through trivial poke while healthy;
 --  * stay in a fight aura around the enemy being fought when leaving it means not fighting;
 --  * cross a low-damage puddle instead of abandoning an attack over it;
 --  * spend items and ultimates only on hits that matter.
--- "Cheap" needs evidence: a known forecast below a small share of current health,
--- or - only when the damage is unknown - a reviewed severity tier of 1-2. Anything
--- with hard control, a targeted effect or a mark is never cheap. A suppressed threat
+-- "Cheap" is the live danger (evade.danger: damage now after resists and shields, in shares of current
+-- health) at or below a small share. A reviewed tier stands in only when the damage is unknown, and
+-- unknown damage is held to a stricter bar (tierShare 2 passes a channel, only tier 1 a trade). Hard
+-- control, a targeted effect, a mark or a possible-contact threat is never cheap. A suppressed threat
 -- stays observed and drawn; the planner simply does not move for it.
 local G=require('evade.geometry')
-local D=require('evade.damage')
+local Danger=require('evade.danger')
+local Positioning=require('evade.positioning')
 local ControlWindow=require('CombatProfiles.control_window')
--- tradeTier: with unknown damage only a trivial hit (tier 1) is worth a trade. Live 2026-10-08: a tier-2
+-- tradeGuess: with unknown damage only a trivial hit (tier 1) is worth a trade. Live 2026-10-08: a tier-2
 -- Ahri Q kept as "poke" took 19 % of current health on its two passes.
-local P={cheapTier=2,tradeTier=1,cheapShare=.08,tradeHealth=.35,puddleHealth=.4,severeTier=4,defaultShare=20}
-local function amount(t,stats)
-    local d=t.damage
-    if type(d)~='table'or d.components~=nil then return nil end
-    return D.amount(d,stats)
+local P={cheapShare=.08,tradeGuess=.04,tradeHealth=.35,puddleHealth=.4,puddleDanger=.25,defaultShare=20}
+-- The threat's danger record: the app's cached model when given, else the team-free formula.
+local function danger(t,stats,model)
+    if model then return model:Threat(t,stats,stats.origin,stats.now)end
+    return Danger.Of(t,stats)
 end
-function P.Cheap(t,stats,tier)
+function P.Cheap(t,stats,guess,model)
     if t.shape=='targeted'or t.mark or t.ccHard==true or G.finite(t.cc)and t.cc>0 then return false end
     if t.potentialDamage then return false end
-    local value=amount(t,stats)
-    if value~=nil then return G.finite(stats.health)and stats.health>0 and value<=stats.health*P.cheapShare end
-    return G.finite(t.tier)and t.tier<=(tier or P.cheapTier)
+    local record=danger(t,stats,model)
+    if record.value==nil then return false end
+    return record.value<=(record.basis=='tier'and(guess or P.cheapShare)or P.cheapShare)
 end
 -- Own channel/recall from the native active spell (never a buff-name guess);
 -- trade from the provider's Combo mode and its current target in attack reach.
 function P.Context(app,now)
     local g,sdk=app.g,app.sdk;local h=g.myHero
-    local ctx={health=h.health,maxHealth=h.maxHealth,armor=h.armor,magicResist=h.magicResist}
+    local ctx={health=h.health,maxHealth=h.maxHealth,armor=h.armor,magicResist=h.magicResist,
+        shield=h.allShield or 0,physicalShield=h.shieldAD or 0,magicShield=h.shieldAP or 0,origin=G.point(h.pos)and G.copy(h.pos)or nil}
     local spell=h.activeSpell
     -- The host flags an attack windup as channelling, and isAutoAttack is false for empowered attack names
     -- (live: Jade_VayneQ_Attack and Jade_VayneR_UltAttack suppressed Ahri Q as keep_channel): SDK recognition.
@@ -53,17 +57,33 @@ function P.Context(app,now)
             end
         end
     end
+    -- A pending last hit: Orbama's health prediction marks a minion in attack reach killable by the next attack.
+    if orb and type(orb.HasMode)=='function'and(orb:HasMode(sdk.ORBWALKER_MODE_LASTHIT)or orb:HasMode(sdk.ORBWALKER_MODE_LANECLEAR))then
+        local unit=Positioning.LastHit(sdk,h)
+        if unit then ctx.farming=true;ctx.lastHitID=unit.networkID or unit.handle end
+    end
+    ctx.now=now
     ctx.share=G.finite(ctx.health)and G.finite(ctx.maxHealth)and ctx.maxHealth>0 and ctx.health/ctx.maxHealth or 0
     return ctx
 end
-function P.Reason(t,ctx)
+function P.Reason(t,ctx,model)
+    -- No rule keeps the player inside a hit that would kill: an aura is fought in only below lethal danger.
     if t.zonePolicy=='fight'and ctx.trading and t.casterID==ctx.targetID and G.finite(t.radius)and ctx.reach<t.radius
-        and t.ccHard~=true and not(G.finite(t.cc)and t.cc>0)and ctx.share>P.tradeHealth then return 'fight_aura'end
-    if t.zonePolicy=='puddle'and ctx.trading and ctx.share>P.puddleHealth then return 'puddle'end
-    if not(ctx.channeling or ctx.trading)then return nil end
+        and t.ccHard~=true and not(G.finite(t.cc)and t.cc>0)and ctx.share>P.tradeHealth then
+        local record=danger(t,ctx,model)
+        if not record.lethal and(record.value==nil or record.value<1)then return 'fight_aura'end
+    end
+    if t.zonePolicy=='puddle'and ctx.trading and ctx.share>P.puddleHealth then
+        -- A puddle worth crossing at this health: its danger stays below a quarter of current health.
+        local record=danger(t,ctx,model)
+        if record.value==nil or record.value<P.puddleDanger then return 'puddle'end
+    end
+    if not(ctx.channeling or ctx.trading or ctx.farming)then return nil end
     -- A hit ends a recall whether or not the hero moved: standing still only adds the damage.
-    if ctx.channeling and not ctx.recalling and P.Cheap(t,ctx)then return 'keep_channel'end
-    if ctx.trading and ctx.share>P.tradeHealth and P.Cheap(t,ctx,P.tradeTier)then return 'keep_trade'end
+    if ctx.channeling and not ctx.recalling and P.Cheap(t,ctx,nil,model)then return 'keep_channel'end
+    if ctx.trading and ctx.share>P.tradeHealth and P.Cheap(t,ctx,P.tradeGuess,model)then return 'keep_trade'end
+    -- The same bar as a trade: a last hit is worth only trivial poke, never control, a targeted hit or a mark.
+    if ctx.farming and ctx.share>P.tradeHealth and P.Cheap(t,ctx,P.tradeGuess,model)then return 'keep_last_hit'end
 end
 -- One pass per decision over the (small) threat list. Returns how many are suppressed.
 function P.Apply(app,now)
@@ -74,29 +94,25 @@ function P.Apply(app,now)
         local t=list[i];local reason=nil
         if t.tier~=nil or t.zonePolicy~=nil or t.damage~=nil then
             ctx=ctx or P.Context(app,now)
-            reason=P.Reason(t,ctx)
+            reason=P.Reason(t,ctx,app.danger)
         end
         if store:Suppress(t.id,reason)and reason and app.recorder then
-            app.recorder:Event('threat_suppressed',{id=t.id,ability=t.abilityName,champion=t.champion,reason=reason,tier=t.tier})
+            local record=danger(t,ctx,app.danger)
+            app.recorder:Event('threat_suppressed',{id=t.id,ability=t.abilityName,champion=t.champion,reason=reason,tier=t.tier,
+                danger=record.value,dangerBasis=record.basis,damage=record.damage,control=record.control,followUp=record.followUp,
+                hp=ctx.health,armor=ctx.armor,magicResist=ctx.magicResist,shield=ctx.shield})
         end
         if reason then n=n+1 end
     end
     return n
 end
--- Items and ultimates answer only a forecast that matters: lethal, hard control,
--- a known hit above the shared share of current health, or - with unknown damage -
--- a reviewed tier of 4-5. Cheaper options keep their own adapter policy.
+-- Items and ultimates answer only a forecast that matters (evade.danger Matters): lethal, lethal with the
+-- enemy follow-up during its control, or a danger of at least the shared share of current health.
+-- Cheaper options keep their own adapter policy.
 function P.Worth(app,option,outcome)
     if not(option.item or option.ultimate)then return true end
-    if type(outcome)~='table'or not outcome.known then return false end
-    if outcome.lethal==true or outcome.ccHard==true or G.finite(outcome.cc)and outcome.cc>0 then return true end
     local share=app.menu and app.menu.MinDamage and app.menu.MinDamage:Value()or P.defaultShare
-    local hp=app.g.myHero.health
-    -- Basic-attack damage alone never qualifies (lethal or hard control does, above).
-    local damage=outcome.damage
-    if G.finite(damage)and G.finite(outcome.attackDamage)then damage=math.max(0,damage-outcome.attackDamage)end
-    if G.finite(damage)and G.finite(hp)and hp>0 and damage>0 and damage*100>=share*hp then return true end
-    return outcome.unknown==true and(outcome.tier or 0)>=P.severeTier
+    return(Danger.Matters(outcome,share/100,app.g.myHero.health))
 end
 -- Gaze spells punish a facing (Petrifying Gaze stuns those facing the caster).
 -- When the hit cannot be walked out of, the remaining answer is to face the
@@ -112,8 +128,8 @@ function P.Gaze(app,ctx,baseline)
             if t.gaze=='toward'then dx,dz=-dx,-dz end
             local dir=app.g.myHero.dir
             -- Already facing the safe way: nothing to send.
-            if G.point(dir)and dir.x*dx+dir.z*dz>.5 then return nil end
-            return {x=ctx.origin.x+dx*150,y=ctx.origin.y or 0,z=ctx.origin.z+dz*150},t,t.gaze
+            if G.point(dir)and dir.x*dx+dir.z*dz>.5 then return nil,t,t.gaze end
+            return {x=ctx.origin.x+dx*35,y=ctx.origin.y or 0,z=ctx.origin.z+dz*35},t,t.gaze
         end
     end
 end

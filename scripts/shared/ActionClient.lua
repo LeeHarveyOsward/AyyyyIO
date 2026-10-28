@@ -581,6 +581,21 @@ if self.gates[token]then self.gates[token]=nil;return true end;return false end
         -- ready/dependencies retain their separate waiting semantics below.
         local permitted,refusal=self:ContextValid(q)
         if not permitted then return nil,refusal end
+        -- Own cast time (`castTime`, seconds the cast keeps the hero in place): a cooperating client waits
+        -- while Evade forecasts that standing for it turns the current route into a lethal or hard-control
+        -- hit that walking avoids (Evade:CastAllowed). Waiting, never a cancellation: the action keeps its
+        -- deadline and `evadeHeld` names the reason. Evade's own answers (evadeCompatible) are not asked.
+        if self.evadePolicy and not q.evadeCompatible and type(q.castTime)=='number'and q.castTime>0 and q.castTime<=2.5 then
+            local prior=q.ready
+            q.ready=function()
+                if prior and not call(prior)then return false end
+                local evade=sdk.Evade
+                if not evade or type(evade.CastAllowed)~='function'then q.evadeHeld=nil;return true end
+                local ok,allowed,why=pcall(evade.CastAllowed,evade,q.castTime,q.owner,q.key,q.id)
+                if not ok or allowed~=false then q.evadeHeld=nil;return true end
+                q.evadeHeld=why or 'evade_cast_time';return false
+            end
+        end
         if q.group then
             local group=self.groups[q.group]
             if not group or group.owner~=q.owner or group.expires<=self:Now()then return nil,'invalid_group'end
@@ -685,7 +700,7 @@ if self.gates[token]then self.gates[token]=nil;return true end;return false end
                 local ready=q.dependencyState=='mechanical' and p.mechanical or q.dependencyState=='effect' and p.effect or not q.dependencyState and p.sentAt or q.dependencyState=='sent' and p.sentAt
                 if not ready then return false,'dependency_waiting'end
             end
-            if q.ready and not call(q.ready)then return false,'not_ready'end
+            if q.ready and not call(q.ready)then return false,q.evadeHeld or 'not_ready'end
             return call(mechanical,resolved)
         end
         if sdk.ChampionCore and sdk.ChampionCore.active then sdk.ChampionCore.active:Invalidate()end

@@ -4,8 +4,7 @@ return function(require)
 -- shields that also remove crowd control (Black Shield). Selection stays in
 -- app:Tick (EvaluateDefense/Better); this adapter offers and prepares.
 -- These are one-shot answers on a cooldown: with walking evidence they are
--- offered only for a hit that matters (lethal, hard control, the shared share
--- of current health, or - with unknown damage - a reviewed tier of 4-5).
+-- offered only for a hit that matters (dash_adapter.Trigger: evade.danger Matters).
 local G=require('evade.geometry')
 local Dash=require('evade.dash_adapter')
 local profiles=require('evade.defensedata')

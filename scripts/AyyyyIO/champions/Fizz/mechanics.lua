@@ -15,19 +15,50 @@ return function()
 --  20 is a placeholder), so e2Speed stays unset and the slam horizon is the cast-frame lower bound; the dev trace
 --  fizz_e2_landing records seconds and hop length to settle it.
 -- Normal wReachBonus 50: the W-empowered attack gains 50 bonus range (wiki Seastone Trident, read 2026-10-10).
+local D=(function()
+return {
+ FizzE={
+  BaseDamage={80,130,180,230,280},SmallAoESize=225,
+ },
+ FizzW={
+  ActiveBaseDamage={50,75,100,125,150},ActiveDuration=4,ActiveRatio=.45,DoTBaseDamage={30,45,60,75,90},DoTRatio=.25,
+ },
+ FizzRMissile={
+  mSpeed=1300,
+ },
+ FizzR={
+  DetonationTime=2,LargeDamageMulti=1.5,MaxDistance=1300,MidDamageMulti=1.25,SmallAPRatio=.6,SmallDamage={180,300,420},
+ },
+ Jade_FizzR={
+  APRatio=1,BaseDamage={200,325,450},DetonationTime=1.5,castRangeDisplayOverride=1275,
+ },
+ Jade_FizzRMissile={
+  mSpeed=1350,
+ },
+ Jade_FizzW={
+  ActiveBaseDamage={10,15,20,25,30},ActiveDuration=5,ActiveRatio=.2,DoTBaseDamage={30,40,50,60,70},DoTRatio=.35,MaxHealthScaling={.04,.05,.06,.07,.08},
+ },
+ Jade_FizzE={
+  APRatio=.75,BaseDamage={70,120,170,220,270},
+ },
+ Jade_FizzQ={
+  APRatio=.4,BaseDamage={10,40,70,100,130},
+ },
+}
+end)()
 return {
  Fizz={id='normal',q='FizzQ',w='FizzW',e='FizzE',e2='FizzETwo',buffer='FizzEBuffer',r='FizzR',
   wBuff='FizzWActive',wAttack='FizzWBasicAttack',onHit='FizzOnHitBuff',bleed='FizzWDOT',fish='FizzRCling',
-  qBase={10,25,40,55,70},qAP=.55,wBase={50,75,100,125,150},wAP=.45,wDuration=4,
-  dotBase={30,45,60,75,90},dotAP=.25,eBase={80,130,180,230,280},eAP=.95,
-  rBase={180,300,420},rAP=.6,rRange=1300,rSpeed=1300,rDelay=2,rTiered=true,
-  rTiers={near=455,far=910,band=40,mid=1.25,large=1.5},eLanding=.75,
-  e2Radius=225,e2Cast=.15,wReachBonus=50},
+  qBase={10,25,40,55,70},qAP=.55,wBase=D.FizzW.ActiveBaseDamage,wAP=D.FizzW.ActiveRatio,wDuration=D.FizzW.ActiveDuration,
+  dotBase=D.FizzW.DoTBaseDamage,dotAP=D.FizzW.DoTRatio,eBase=D.FizzE.BaseDamage,eAP=.95,
+  rBase=D.FizzR.SmallDamage,rAP=D.FizzR.SmallAPRatio,rRange=D.FizzR.MaxDistance,rSpeed=D.FizzRMissile.mSpeed,rDelay=D.FizzR.DetonationTime,rTiered=true,
+  rTiers={near=455,far=910,band=40,mid=D.FizzR.MidDamageMulti,large=D.FizzR.LargeDamageMulti},eLanding=.75,
+  e2Radius=D.FizzE.SmallAoESize,e2Cast=.15,wReachBonus=50},
  Jade_Fizz={id='classic',q='Jade_FizzQ',w='Jade_FizzW',e='Jade_FizzE',e2='Jade_FizzETwo',buffer='Jade_FizzEBuffer',r='Jade_FizzR',
   wBuff='Jade_FizzWActive',bleed='Jade_FizzWDOT',fish='Jade_FizzRCling',
-  qBase={10,40,70,100,130},qAP=.4,wBase={10,15,20,25,30},wAP=.2,wDuration=5,
-  dotBase={30,40,50,60,70},dotAP=.35,dotMissing={.04,.05,.06,.07,.08},eBase={70,120,170,220,270},eAP=.75,
-  rBase={200,325,450},rAP=1,rRange=1275,rSpeed=1350,rDelay=1.5,rTiered=false,eLanding=.75},
+  qBase=D.Jade_FizzQ.BaseDamage,qAP=D.Jade_FizzQ.APRatio,wBase=D.Jade_FizzW.ActiveBaseDamage,wAP=D.Jade_FizzW.ActiveRatio,wDuration=D.Jade_FizzW.ActiveDuration,
+  dotBase=D.Jade_FizzW.DoTBaseDamage,dotAP=D.Jade_FizzW.DoTRatio,dotMissing=D.Jade_FizzW.MaxHealthScaling,eBase=D.Jade_FizzE.BaseDamage,eAP=D.Jade_FizzE.APRatio,
+  rBase=D.Jade_FizzR.BaseDamage,rAP=D.Jade_FizzR.APRatio,rRange=D.Jade_FizzR.castRangeDisplayOverride,rSpeed=D.Jade_FizzRMissile.mSpeed,rDelay=D.Jade_FizzR.DetonationTime,rTiered=false,eLanding=.75},
 }
 
 end

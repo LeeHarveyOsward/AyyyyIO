@@ -10,7 +10,7 @@ The AyyyyIO script family for GoS:
 | **OrbamaPrediction** | prediction |
 | **OrbamaUtils** | activator, Auto-Smite, enemy cooldown tracker, recall and ward trackers, awareness |
 | **EvAYYYYde** | evade |
-| **AyyyyIO** | 59 champions, Normal and Classic profiles |
+| **AyyyyIO** | 61 champions, Normal and Classic profiles |
 
 ## Install or update
 
@@ -53,7 +53,7 @@ scripts/
   Orbama/            orbwalker and SDK
   OrbamaPrediction/  prediction
   OrbamaUtils/       utilities
-  EvAYYYYde/         evade; threats/ holds each champion's spell data (250 profiles)
+  EvAYYYYde/         evade; threats/ holds each champion's spell data (254 profiles)
   AyyyyIO/           champion core; champions/<Name>/ holds each champion's script and mechanics data
   shared/            libraries the scripts share (combat data, terrain, input geometry, overlay, guide, updater)
   release/           this release's module manifest and activation selector
@@ -64,4 +64,4 @@ The files are built and stripped for release (no development tooling). In your g
 stored by their SHA-256 under `Scripts/Common/OrbamaFamily/`; the loader checks every file's hash
 before running it. The `updates` branch holds the same release in that layout for the in-game updater.
 
-Release `d29566c89fb702327b47a685e37fe2f23d3c0643bea94b2157c864ddd40fd928`.
+Release `83a47410ac55fab3d0bb2503e960e21ec80e740321543e44aa89cfe3a27866d3`.

@@ -3,7 +3,8 @@ return function(c)
 local env,facade=require('utils.classic_facade').new(c)
 local CoreRefreshClaims
 local Core,Callback,MenuElement,GetDistance,IsValid,GetBuffs,HasBuffContainsName,IsInvulnerable,GetEnemyCount,GetTarget,GetMode,ShouldWait,IsUnderTurret,CheckChatBlock=env.Core,env.Callback,env.MenuElement,env.GetDistance,env.IsValid,env.GetBuffs,env.HasBuffContainsName,env.IsInvulnerable,env.GetEnemyCount,env.GetTarget,env.GetMode,env.ShouldWait,env.IsUnderTurret,env.CheckChatBlock
-local slots={ITEM_1,ITEM_2,ITEM_3,ITEM_4,ITEM_5,ITEM_6}
+-- Inventory slots are logical; the shared facade maps native spell metadata.
+local slots={6,7,8,9,10,11}
 -- =====================================================================================
 
 -- =====================================================================================
@@ -232,8 +233,7 @@ local function ItemReady(itemId)
 		if not item then return nil end
 	end
 	if item.ammo ~= nil and item.ammo == 0 and itemId == ITEM_FLASK then return nil end
-	local spellData = myHero:GetSpellData(cached.slot)
-	if spellData and spellData.currentCd == 0 then
+	if Core:ItemReady(cached.slot) then
 		return cached.hotkey
 	end
 	return nil
@@ -253,7 +253,7 @@ end
 local function IsMuramanaActive()
 	local cached = OwnedItems[ITEM_MURAMANA]
 	if not cached then return nil end
-	local spellData = myHero:GetSpellData(cached.slot)
+	local _, spellData = Core:ItemReady(cached.slot)
 	if not spellData then return nil end
 	if spellData.toggleState == MURAMANA_STATE_ON then return true end
 	if spellData.toggleState == MURAMANA_STATE_OFF then return false end

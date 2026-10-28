@@ -7,6 +7,7 @@ return function(require)
 -- reservation and policy. Selection stays in app:Tick (EvaluateDefense/Better).
 local G=require('evade.geometry')
 local Flash=require('evade.flash_adapter')
+local Danger=require('evade.danger')
 local M={}
 -- Bounded search: 12 directions around the player intent, one full-length
 -- endpoint each (a tumble does not stop short), at most 6 timing samples per
@@ -122,27 +123,12 @@ local function timings(p,range,speeds,limit)
     end end
     return out
 end
--- Damage that counts toward the share: basic attacks are excluded (an ability is
--- spent on an attack only when the forecast is lethal or carries hard control).
-function M.ShareDamage(outcome)
-    local damage=outcome.damage
-    if G.finite(damage)and G.finite(outcome.attackDamage)then damage=math.max(0,damage-outcome.attackDamage)end
-    return damage
-end
--- Trigger policy: lethal or hard CC always qualifies; otherwise the forecast
--- damage must reach the shared share of current health (menu MinDamage), or -
--- with unknown damage - the reviewed severity tier must be 4 or 5.
+-- Trigger policy (evade.danger Matters): lethal, lethal with the enemy follow-up during its control, or a
+-- forecast danger of at least the shared share of current health (menu MinDamage). Hard control counts
+-- through what the enemy team can do during it; without that evidence it always qualifies.
 function M.Trigger(app,outcome)
-    local severe,why=Flash.Severe(outcome,false)
-    if severe then return true,why end
-    if type(outcome)~='table'or not outcome.known then return false,'forecast_unknown'end
-    if outcome.unknown==true and(outcome.tier or 0)>=4 then return true,'severity_tier'end
     local share=app.menu and app.menu.MinDamage and app.menu.MinDamage:Value()or 20
-    local hp=app.g.myHero.health;local damage=M.ShareDamage(outcome)
-    if G.finite(damage)and G.finite(hp)and hp>0 and damage>0 and damage*100>=share*hp then
-        return true,'damage_share'
-    end
-    return false,'below_damage_threshold'
+    return Danger.Matters(outcome,share/100,app.g.myHero.health)
 end
 function M.Install(app)
     local g=app.g;local h=g.myHero
@@ -190,7 +176,11 @@ function M.Install(app)
         active=function()return app.active and h.charName~=nil end,
         options=function(ctx)
             local all={}
-            for _,p in ipairs((M.Providers(app)))do
+            -- Live s366 (Classic Vayne): no dash_considered row in a whole game with unsafe hits, so it
+            -- stayed unknown whether the tumble was missing, switched off or refused. Name each.
+            local providers,why=M.Providers(app)
+            if #providers==0 then  do end end
+            for _,p in ipairs(providers)do
                 for _,option in ipairs(dashOptions(p,ctx))do all[#all+1]=option end
             end
             return all
@@ -199,7 +189,7 @@ function M.Install(app)
     -- Point dash of one offer. Bounded per offer; at most maxProviders offers.
     function dashOptions(p,ctx)
             if p.profile~=profileName or ctx.profile~=profileName then  do end ;return {}end
-            local allowed,m=consent(p);if not allowed then return {}end
+            local allowed,m=consent(p);if not allowed then  do end ;return {}end
             local walking,baseline=ctx.walking,ctx.walkingBaseline
             if type(baseline)~='table'then  do end ;return {}end
             if walkingSafe(walking)then return {}end
@@ -331,7 +321,7 @@ function M.Install(app)
         prepare=function(option,ctx)return prepareUnit(option,ctx)end})
     function unitOptions(p,ctx)
             if p.profile~=profileName or ctx.profile~=profileName then  do end ;return {}end
-            local allowed,m=consent(p);if not allowed then return {}end
+            local allowed,m=consent(p);if not allowed then  do end ;return {}end
             local walking,baseline=ctx.walking,ctx.walkingBaseline
             if type(baseline)~='table'then  do end ;return {}end
             if walkingSafe(walking)then return {}end

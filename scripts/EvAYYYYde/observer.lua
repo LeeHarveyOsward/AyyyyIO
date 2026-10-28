@@ -5,7 +5,12 @@ local G=require('evade.geometry')
 local Calculations=require('evade.calculations')
 local Returns=require('evade.returns')
 local Locked=require('evade.locked')
+local Identities=require('evade.identities')
 local Extras=require('evade.extras')
+local Landings=require('evade.landings')
+local Impacts=require('evade.impacts')
+local Anchors=require('evade.anchors')
+local Extents=require('evade.extents')
 local Abilities=require('CombatProfiles.abilities')
 local CombatMechanics=require('CombatProfiles.champion_mechanics')
 local function readCastFinish(spell,start)
@@ -17,6 +22,24 @@ local function readCastFinish(spell,start)
     return start+windup,'windup'
 end
 local O={};O.__index=O
+-- The facing rule of a gaze ability (`gaze`: the safe sense relative to the caster) for the planner:
+-- broken, the ability's hard control conditional on facing applies (its longest stated duration, or an
+-- unknown duration); met, only its soft effect does. One table per definition.
+local facingRules=setmetatable({},{__mode='k'})
+local function facingRule(gaze,definition)
+    if gaze~='away'and gaze~='toward'then return nil end
+    local key=facingRules[definition]
+    if key and key.sense==gaze then return key end
+    local rule={sense=gaze}
+    local profile=type(definition.ccProfile)=='table'and definition.ccProfile.effects
+    for _,effect in ipairs(type(profile)=='table'and profile or {})do
+        if type(effect)=='table'and effect.conditional=='facing'and effect.hard==true then
+            rule.hard=true
+            if G.finite(effect.lowerBound)and effect.lowerBound>(rule.cc or 0)then rule.cc=effect.lowerBound end
+        end
+    end
+    facingRules[definition]=rule;return rule
+end
 local function sameCastPoint(a,b)
     return a and b and a.x==b.x and a.z==b.z and (a.y or 0)==(b.y or 0)
 end
@@ -67,7 +90,7 @@ local function shadowCall(shadow,method,...)
 end
 function O.new(g,threats,catalog)
     return setmetatable({g=g,threats=threats,catalog=catalog,heroes={},roster={},loaded={},seen={},casts={},lastCast={},unknown={},nextRoster=0,maxMissiles=1024,
-        returns=Returns.new(),locked=Locked.new()},O)
+        returns=Returns.new(),locked=Locked.new(),landings=Landings.new()},O)
 end
 function O:Roster(now,shadow)
     if now<self.nextRoster then return end;self.nextRoster=now+.5
@@ -81,7 +104,7 @@ function O:Roster(now,shadow)
         self.hostCalls=self.hostCalls+1;local h=game.Hero(i)
         if not h then return false,'hero_read_failed'end
         if h and h.charName and h.team~=self.g.myHero.team then
-            local f=self.catalog[h.charName]
+            local f=self.catalog[Identities.Resolve(h.charName)]
             if f and not self.loaded[h.charName]then
                 local set=Abilities.ApplyCatalog(h.charName,f(),CombatMechanics);self.loaded[h.charName]=set;O.IndexSet(set)
                 self.loadedCount=(self.loadedCount or 0)+1
@@ -104,6 +127,7 @@ function O:Roster(now,shadow)
     local clean=true
     for _,hero in pairs(self.heroes)do if hero==false then clean=false;break end end
     self.heroIndexClean=clean
+    for id in pairs(self.knownCastSamples or {})do if not self.heroes[id]then self.knownCastSamples[id]=nil end end
 end
 function O:Allowed(owner,definition)
     return not self.enabled or self.enabled(owner.charName,definition.castAlias or definition.name)
@@ -169,10 +193,14 @@ function O:CastCapacity(add,expires)
     self.threats.overflowUntil=math.max(self.threats.overflowUntil or 0,expires)
     return false
 end
-function O:CancelCast(owner,spell,now,definition)
-    local ownerID=owner.networkID or owner.handle
+local function castEpoch(spell)
     local start=spell.startTime
     if start==nil or start==0 then start=spell.castStartTime end
+    return start
+end
+function O:CancelCast(owner,spell,now,definition)
+    local ownerID=owner.networkID or owner.handle
+    local start=castEpoch(spell)
     local profile=definition and definition.cast
     if not profile or owner.team==self.g.myHero.team or not ownerID or not G.finite(now)or not G.finite(start)or start<=0
         or start>now+.1 or now-start>2 then return end
@@ -314,7 +342,8 @@ function O:MatchObservedCast(owner,c,origin,destination,start,launch)
                 -- Match forward correlation: radial distance cannot establish a
                 -- launch epoch for a stale off-ray start or a position behind it.
                 if progress>=0 and math.abs(px*bz-pz*bx)<=20
-                    and ax*bx+az*bz>.98 and epochMatches(c,progress,previous.at,launch)then
+                    -- A fixed-time cast's speed is per flight: use the projectile's own.
+                    and ax*bx+az*bz>.98 and epochMatches(c.flightTime and {speed=previous.speed}or c,progress,previous.at,launch)then
                     if chosen then return nil,nil,'ambiguous_observed_cast'end -- simultaneous emitters
                     chosen=previous;chosenID=id
                 end
@@ -544,6 +573,25 @@ function O:ObserveCast(owner,spell,now,knownSet)
     if set==nil then set=owner and self.loaded[owner.charName]end
     if set==false then set=nil end
     local definition=spell and type(spell.name)=='string'and set and set.__casts and set.__casts[spell.name:lower()]
+    -- Charge starts for this profile's charged rows (evade.extents); the charge cast itself may model nothing.
+    local chargeIndex=set and set.__chargeIndex
+    if chargeIndex==nil and set then chargeIndex=Extents.Index(set)end
+    if chargeIndex and owner and spell and type(spell.name)=='string'then
+        local ownerID=owner.networkID or owner.handle
+        if ownerID then Extents.Cast(self,ownerID,spell.name:lower(),spell,chargeIndex,now)end
+    end
+    if definition and self.onKnownCast and self.diagnostics and self.diagnostics()then
+        local ownerID=owner.networkID or owner.handle
+        local epoch=spell.startTime or spell.castStartTime
+        if ownerID then
+        self.knownCastSamples=self.knownCastSamples or {}
+        local prior=self.knownCastSamples[ownerID]
+        if not prior or prior.name~=spell.name or prior.epoch~=epoch or prior.valid~=spell.valid or prior.stopped~=spell.isStopped then
+            self.knownCastSamples[ownerID]={name=spell.name,epoch=epoch,valid=spell.valid,stopped=spell.isStopped}
+            self.onKnownCast(owner,spell,definition)
+        end
+        end
+    end
     if definition and definition.cast and definition.cast.channel then
         if owner.team==self.g.myHero.team or owner.dead and not definition.cast.postDeath or not self:Allowed(owner,definition)then return end
         self.channels=self.channels or Channels.new(self.threats)
@@ -553,9 +601,18 @@ function O:ObserveCast(owner,spell,now,knownSet)
         elseif t==nil then self:Reject('cast_rejected','channel:'..tostring(owner.networkID or owner.handle),why,owner,spell,now,definition,owner.pos)end
         return
     end
-    if owner and spell and spell.isStopped==true then
-        self:CancelCast(owner,spell,now,definition)
-        return
+    -- A stop is a cancellation only after the same cast was seen running. The host shows
+    -- isStopped from the first sample for casts that launch (live 2026-10-28, Classic: 17 of 20
+    -- Blitzcrank grabs, 25 of 28 Aatrox E, 40 of 51 Kassadin R were first seen stopped and fired;
+    -- earlier sessions: 126 of 181 Ezreal Q). No cast was ever seen to change its flag.
+    local stopped=spell and spell.isStopped==true
+    if stopped then
+        local ownerID=owner and(owner.networkID or owner.handle)
+        local seen=ownerID and self.running and self.running[ownerID]
+        if seen and seen.name==spell.name and seen.start==castEpoch(spell)then
+            self:CancelCast(owner,spell,now,definition)
+            return
+        end
     end
     if not owner or not spell or not spell.valid or type(spell.name)~='string'or owner.team==self.g.myHero.team then return end
     -- `set`/`definition` above already hold this synchronous call's lookup for
@@ -600,8 +657,22 @@ function O:ObserveCast(owner,spell,now,knownSet)
     local finish,finishSource,finishReason=readCastFinish(spell,start)
     if not finish then reject(finishReason);return end
     local ownerID=owner.networkID or owner.handle;if not ownerID then return end
+    if not stopped then
+        self.running=self.running or {}
+        local seen=self.running[ownerID]
+        if not seen then seen={};self.running[ownerID]=seen end
+        seen.name=spell.name;seen.start=start
+    end
     local key=tostring(ownerID)..':'..c.alias..':'..tostring(start)
     if self.lastCast[ownerID]==key and c.nativeCastGeometry~=true then return end
+    -- Charged or stat-scaled reach/radius, fixed at this release (evade.extents).
+    local extent=definition.charge
+    local extentValue,extentSource,extentInput
+    if extent then
+        if not Extents.Valid(extent)then reject('invalid_extent');return end
+        extentValue,extentSource,extentInput=Extents.Value(self,owner,ownerID,extent,start,now,extent.key=='radius'and c.radius or c.range)
+    end
+    local radius=extent and extent.key=='radius'and extentValue or c.radius
     local id='cast:'..key
     -- A fan's parent survives ray replacement and prelaunch cancellation.
     -- An older cast echo cannot republish rays after another cast becomes latest.
@@ -657,7 +728,7 @@ function O:ObserveCast(owner,spell,now,knownSet)
         destination=G.lerp(origin,destination,reach/length);length=reach
     end
     -- A reviewed ground ring (e.g. a cage perimeter) is centred on the placement like a circle.
-    local reach=c.range
+    local reach=extent and extent.key=='range'and extentValue or c.range
     -- Sheet circle a fixed distance ahead of the caster in the aimed direction.
     if c.centerForward~=nil then
         if c.shape~='circle'and c.shape~='ring'or not G.finite(c.centerForward)or c.centerForward<0 or c.centerForward>3000 then
@@ -669,7 +740,7 @@ function O:ObserveCast(owner,spell,now,knownSet)
         if length<1 then geometryRejected(self,previous,reject,'zero_cast_direction',c,ownerID,key,start,finish,now);return end
         -- Sheet shapes: `toCursor` stops at the aimed point (not below minRange);
         -- `originForward` starts the footprint ahead of (negative: behind) the caster.
-        if c.toCursor then reach=math.max(c.minRange or 0,math.min(length,c.range))end
+        if c.toCursor then reach=math.max(c.minRange or 0,math.min(length,reach))end
         local shift=c.originForward
         if shift~=nil then
             if not G.finite(shift)or math.abs(shift)>2000 then reject('invalid_origin_shift');return end
@@ -748,21 +819,53 @@ function O:ObserveCast(owner,spell,now,knownSet)
     end
     local threat={id=id,instanceID=id,stageID=id,damageID=id,casterID=ownerID,profile=definition.profile,evidence='cast-derived',
         ability=definition.id,abilityName=definition.name,champion=owner.charName,source=definition.source,
-        shape=c.shape,origin=(c.shape=='circle'or c.shape=='ring')and destination or origin,b=destination,radius=c.radius,
+        shape=c.shape,origin=(c.shape=='circle'or c.shape=='ring')and destination or origin,b=destination,radius=radius,
         starts=activation,ends=latestActivation+(c.effectWindow or .15),persistent=c.persistent,halfAngle=c.halfAngle,
         castOrigin=origin,contourOrigin=c.shape=='missile'and G.copy(origin)or nil,
         observedAt=previous and previous.observedAt or now,castStart=start,castLaunch=launch,arrivalLatest=latestActivation,
         castStartSource=startSource,castFinishSource=finishSource,
         length=reach,blockable=c.blockable~=false and not c.persistent,timingScope=c.timing,
-        tier=definition.tier,windwall=definition.windwall,gaze=c.gaze,zonePolicy=c.zonePolicy,collide=definition.collide,
+        tier=definition.tier,windwall=definition.windwall,gaze=c.gaze,facing=c.gaze and facingRule(c.gaze,definition)or nil,zonePolicy=c.zonePolicy,collide=definition.collide,
         untargetableBlockable=definition.untargetableBlockable==true or c.shape=='missile'and definition.untargetableBlockable~=false,
             cc=definition.cc,ccUnknown=definition.ccUnknown,ccHard=definition.ccHard,parryable=definition.parryable,
-            repeatInterval=c.repeatInterval,innerRadius=c.innerRadius,arcRadius=c.arcRadius,parts=c.parts}
+            repeatInterval=c.repeatInterval,innerRadius=c.innerRadius,arcRadius=c.arcRadius,parts=c.parts,
+            zones=c.zones or definition.zones,displace=definition.displace}
     if wallA then threat.origin=wallA;threat.b=wallB;threat.length=wallLength;threat.wallLengthSource=wallSource end
     if c.shape=='missile'then
         threat.speed=c.speed;threat.acceleration=c.acceleration;threat.minSpeed=c.minSpeed;threat.maxSpeed=c.maxSpeed;threat.speedUncertain=c.speedUncertain
+        -- Fixed-time flight (`flightTime`): arrival is launch plus that time whatever
+        -- the distance, so the constant speed is this cast's own length over it.
+        if c.flightTime~=nil then
+            if not G.finite(c.flightTime)or c.flightTime<=0 or c.flightTime>10 then reject('invalid_flight_time');return end
+            threat.speed=math.max(reach,1)/c.flightTime;threat.flightTime=c.flightTime
+            threat.acceleration,threat.minSpeed,threat.maxSpeed,threat.speedUncertain=nil,nil,nil,nil
+        end
+        -- Speed step (`speedStep`): the flight changes speed once, `at` units from its start.
+        local step=definition.speedStep
+        if step and c.flightTime==nil and not c.curve and not threat.acceleration and not threat.speedUncertain then
+            threat.speedStep={at=step.at,speed=step.speed}
+        end
         local _,latest=G.travelTimeBounds(threat,reach);threat.launch=launch;threat.ends=launch+latest
+        -- Curved flight (`curve`): its static corridor from launch to the curve's arrival.
+        if c.curve~=nil then
+            local arrival=launch+(c.flightTime or latest*(type(c.curve)=='table'and c.curve.stretch or 1))
+            local ok,why=G.curveCorridor(threat,c.curve,launch,arrival)
+            if not ok then reject(why);return end
+        end
     end
+    -- Growing circle (`grow`): its radius rises linearly from `initial` to the full radius.
+    local grow=c.grow
+    if grow and threat.shape=='circle'then
+        local from=activation
+        local time=grow.time or(G.finite(grow.speed)and grow.speed>0 and(threat.radius-grow.initial)/grow.speed)
+        if not G.finite(grow.initial)or grow.initial<0 or grow.initial>=threat.radius or not G.finite(time)or time<=0 or time>10 then
+            reject('invalid_growth');return
+        end
+        threat.radiusTransition={initial=grow.initial,final=threat.radius,starts=from,ends=from+time}
+        -- The effect window counts from the full size: a wave is live until its front arrives.
+        threat.ends=math.max(threat.ends,from+time+(c.effectWindow or .15))
+    end
+    if extent then threat.extentSource,threat.extentValue,threat.extentInput=extentSource,extentValue,extentInput end
     if self.clip and threat.collide then threat=self.clip(self,threat,now)end
     if not c.rays and threat.ends<now then reject('cast_already_expired');return end
     if not c.rays then threat.damage=self:Damage(owner,definition)end
@@ -802,6 +905,13 @@ function O:ObserveCast(owner,spell,now,knownSet)
     end
     if self.threats:Observe(threat)then
         if self.onThreat then self.onThreat(threat)end
+        local anchor=definition.anchored
+        if anchor and anchor.unit~='hit'then
+            -- The area follows a unit or object (evade.anchors); an unknown anchor removes it.
+            self.anchored=self.anchored or Anchors.new(self.threats)
+            local tracked,why=self.anchored:Cast(self,threat,owner,spell,anchor,now)
+            if not tracked and not self.threats.byID[id]then reject(why or 'anchor_unresolved');self.lastCast[ownerID]=key;return end
+        elseif threat.shape=='missile'then self:TrackFlight(threat,definition.impact,anchor,now)end
         if c.detonation then self:WatchDetonation(id,owner,c.detonation)end
         if c.extras then Extras.Publish(self,threat,c,origin,destination,launch,now)end
         if c.follow then self.auras=self.auras or require('evade.auras').new(self.threats);self.auras:Follow(id,owner,c.follow)end
@@ -810,6 +920,18 @@ function O:ObserveCast(owner,spell,now,knownSet)
             nativeDestination=nativeDestination,observedAt=threat.observedAt,
             starts=start,launch=launch,ends=threat.ends,damageID=id,linked=false}
     elseif previous then geometryRejected(self,previous,reject,'cast_revision_rejected',c,ownerID,key,start,finish,now)end
+end
+-- A published straight flight with an impact area and/or a hit anchor (evade.impacts,
+-- evade.anchors). An invalid spec publishes nothing; the flight itself stands.
+function O:TrackFlight(row,impact,anchor,now)
+    if anchor and anchor.unit~='hit'then anchor=nil end
+    if not impact and not anchor then return end
+    if impact and not Impacts.Valid(impact)then impact=nil end
+    if anchor and not Anchors.Valid(anchor)then anchor=nil end
+    if not impact and not anchor then return end
+    self.impacts=self.impacts or Impacts.new(self.threats)
+    if anchor then self.anchored=self.anchored or Anchors.new(self.threats)end
+    self.impacts:Track(self,row,impact,anchor,now)
 end
 local function sameMissileModel(a,b)
     return a.radius==b.radius and a.speed==b.speed and a.range==b.range
@@ -915,7 +1037,8 @@ local dx,dz=G.direction(d.startPos,d.endPos)
 local px,pz=pos.x-d.startPos.x,pos.z-d.startPos.z
 local progress=px*dx+pz*dz
 if progress<0 or math.abs(px*dz-pz*dx)>20 then return nil,nil,'off_ray_correlation'end
-local earliest,latest=G.travelTimeBounds(definition,progress)
+-- A speed-step phase model times its flight from the start with its record (stepBase).
+local earliest,latest=G.travelTimeBounds(definition.stepBase or definition,progress)
 local chosen,spatialCandidate
 for id,c in pairs(self.casts)do
 local matches=c.missile==definition.name
@@ -1069,11 +1192,19 @@ function O:Scan(now)
     if rosterOK==false then return false,rosterReason end
     -- Phases are methods so development profiling can attribute observer cost.
     self:ScanCasts(now,shadow)
+    self.landings:Prune(now)
     local ok,why,trajectoryUnmodeled=self:ScanMissiles(now,shadow)
     if not ok then return false,why end
     self:ScanAttached(now)
     local present,stamp=self.present,self.scanID
-    for id in pairs(self.seen)do if present[id]~=stamp then self.threats:Remove(id);self.seen[id]=nil end end
+    local impacts=self.impacts
+    for id in pairs(self.seen)do if present[id]~=stamp then
+        -- A projectile seen to disappear has stopped: its impact collapses there (evade.impacts).
+        if impacts then impacts:Stopped(self,id,now)end
+        self.threats:Remove(id);self.seen[id]=nil
+    end end
+    if self.flightModels then for id in pairs(self.flightModels)do if present[id]~=stamp then self.flightModels[id]=nil end end end
+    if self.extentModels then for id in pairs(self.extentModels)do if present[id]~=stamp then self.extentModels[id]=nil end end end
     -- Only a completed native scan retires these diagnostic identities. The
     -- next sample is still raw evidence, not proof of a new cast or impact.
     if self.excluded then for key,row in pairs(self.excluded)do
@@ -1084,6 +1215,9 @@ function O:Scan(now)
     for id,at in pairs(present)do if at~=stamp then present[id]=nil end end
     -- Retire absent returns/segments and publish predictions after the complete pass.
     if self.returns then self.returns:Finish(self,now)end
+    -- Impact areas from this pass's flights, then areas that follow their anchors.
+    if self.impacts then self.impacts:Scan(self,now)end
+    if self.anchored then self.anchored:Scan(self,now)end
     self.damageScope=nil;self.threats:Expire(now)
     if self.castGeometryUnmodeled then
         self.castGeometryUnmodeled=false
@@ -1158,12 +1292,127 @@ function O:ScanCasts(now,shadow)
         local set=self.loaded[owner.charName]
         if owner.valid~=false and owner.visible~=false and(not owner.dead or set and set.__postDeath)then
             self:ObserveCast(owner,owner.activeSpell,now,set or false)
+            -- Move speed samples for a stat-scaled row of this caster (evade.extents).
+            local index=set and set.__chargeIndex
+            if index and index.stat then Extents.Sample(self,owner,owner.networkID or owner.handle,now)end
         elseif owner.dead then
             if self.channels then self.channels:Reconcile(owner,owner.activeSpell,now)end
             if self.locked and self.locked.attackCount>0 then self.locked:Reconcile(self,owner,nil,now)end
         end
     end
     if shadow then shadowCall(shadow,'Casts',now)end
+end
+-- FixedTimeMovement (`flightTime`): the flight lasts that long whatever its
+-- length, so its constant speed is this projectile's own length over the time.
+-- The catalogue speed is only nominal (range / flightTime). One model per
+-- projectile, measured at first sight and kept while its native end stays put
+-- (a host startPos that follows the caster does not re-time it); pruned with the scan.
+local function flightTimeModel(self,id,definition,d,charged)
+    local start,finish=d.startPos,d.endPos
+    if not G.point(start)or not G.point(finish)then return nil,'flight_time_geometry_missing'end
+    local time=definition.flightTime
+    if not G.finite(time)or time<=0 or time>10 then return nil,'invalid_flight_time'end
+    local models=self.flightModels;if not models then models={};self.flightModels=models end
+    local kept=models[id]
+    if kept and kept.base==definition and math.abs(kept.ex-finish.x)<=20 and math.abs(kept.ez-finish.z)<=20 then
+        return kept.model
+    end
+    -- A charged flight (`charge`) flies its charged reach in the same fixed time.
+    local length=charged or definition.projectTargetToCastRange and G.finite(definition.range)and definition.range or G.dist(start,finish)
+    if length<1 then return nil,'flight_time_geometry_missing'end
+    local model=setmetatable({speed=length/time},{__index=definition})
+    models[id]={base=definition,ex=finish.x,ez=finish.z,model=model}
+    return model
+end
+-- Charged reach of an observed projectile (`charge`, evade.extents): fixed at its first
+-- sighting (the release, or later: only longer) and kept for the projectile's lifetime.
+function O:ChargedRange(id,owner,spec,now)
+    local kept=self.extentModels and self.extentModels[id]
+    if kept and kept.spec==spec then return kept.value,kept.source,kept.input end
+    if not Extents.Valid(spec)or spec.key~='range'then return end
+    local ownerID=owner.networkID or owner.handle
+    local value,source,input=Extents.Value(self,owner,ownerID,spec,now,now,spec.max)
+    if not G.finite(value)or value<=0 then return end
+    self.extentModels=self.extentModels or {}
+    self.extentModels[id]={spec=spec,value=value,source=source,input=input}
+    return value,source,input
+end
+-- Speed step (`speedStep`) of an observed projectile: the speed of its current phase, by its
+-- progress from its native start; a missing start takes the later speed (earlier arrival).
+-- stepBase keeps the record for timing the whole flight from its start (cast correlation).
+local function stepModel(definition,d,pos)
+    local step=definition.speedStep
+    local progress=G.point(d.startPos)and G.point(pos)and G.dist(d.startPos,pos)
+    if progress and progress<step.at then return setmetatable({stepAfter=step.at,stepBase=definition},{__index=definition})end
+    return setmetatable({speed=step.speed,speedStep=false,stepBase=definition},{__index=definition})
+end
+-- Curved projectile (`curve`): the host reports its start, end and current
+-- position, never the curve. It is the static corridor of its whole flight
+-- (G.curveCorridor) from the native start to the native end, anchored at the
+-- correlated cast's launch or the first sighting, so later samples do not move it.
+-- A sample outside the corridor is reported; the corridor is kept.
+function O:ObserveCurved(owner,set,definition,m,d,id,now)
+    local start,finish,pos=d.startPos,d.endPos,m.pos
+    if not G.point(start)or not G.point(finish)or not G.point(pos)then
+        self.threats:Remove(id);self.seen[id]=nil
+        self:Reject('missile_rejected',id,'curve_geometry_missing',owner,d,now,definition,pos,nil,m);return
+    end
+    local ownerID=owner.networkID or owner.handle
+    local previous=self.seen[id]
+    if previous and(not previous.curve or previous.owner~=d.owner or previous.alias~=definition.name
+        or G.dist(previous.start,start)>20 or G.dist(previous.hostEndpoint,finish)>20)then
+        self.threats:Remove(id);previous=nil
+    end
+    local launch,damageID,observedAt,instanceID=now,id,now,id..':'..tostring(now)
+    if previous then launch,damageID,observedAt,instanceID=previous.launch,previous.damageID,previous.observedAt,previous.instanceID
+    else
+        -- The modelled cast this projectile carries, when exactly one matches.
+        local chosen,chosenID
+        for key,c in pairs(self.casts)do
+            local matches=c.missile==definition.name
+            if not matches and c.missiles then for _,name in ipairs(c.missiles)do if name==definition.name then matches=true;break end end end
+            if matches and c.owner==ownerID and not c.cancelled and not c.linked and G.finite(c.launch)
+                and now>=c.starts and now<=c.ends+.25 and G.point(c.origin)and G.dist(c.origin,start)<=400 then
+                if chosen then chosen=false;break end
+                chosen,chosenID=c,key
+            end
+        end
+        if chosen then
+            chosen.linked=true;self.threats:Remove(chosenID)
+            launch,damageID,observedAt=math.min(now,chosen.launch),chosen.damageID,chosen.observedAt or now
+            instanceID=chosen.damageID
+        end
+    end
+    local length=G.dist(start,finish)
+    local time=definition.flightTime
+    if time==nil and G.finite(definition.speed)and definition.speed>0 then
+        time=length*(type(definition.curve)=='table'and definition.curve.stretch or 1)/definition.speed
+    end
+    if not G.finite(time)or time<=0 or time>10 or length<1 then
+        self.threats:Remove(id);self.seen[id]=nil
+        self:Reject('missile_rejected',id,'invalid_flight_time',owner,d,now,definition,pos,nil,m);return
+    end
+    local effects=set[definition.castAlias]or definition
+    local threat={id=id,instanceID=instanceID,stageID=instanceID,damageID=damageID,casterID=d.owner,profile=definition.profile,
+        evidence='observed',ability=definition.id,abilityName=definition.castAlias or definition.name,champion=owner.charName,
+        source=definition.source,shape='missile',origin=G.copy(start),b=G.copy(finish),radius=definition.radius,
+        observedAt=observedAt,starts=launch,ends=launch+time,blockable=definition.blockable~=false,endpointSource='host_endpos',
+        damage=self:Damage(owner,effects),cc=effects.cc,ccUnknown=effects.ccUnknown,ccHard=effects.ccHard,parryable=effects.parryable,
+        untargetableBlockable=effects.untargetableBlockable~=false,tier=effects.tier or definition.tier,
+        windwall=effects.windwall or definition.windwall,zones=effects.zones or definition.zones,flightTime=definition.flightTime,
+        displace=effects.displace or definition.displace,
+        nativeAlias=definition.name}
+    if effects.cast and effects.cast.blockable==false then threat.blockable=false end
+    local ok,why=G.curveCorridor(threat,definition.curve,launch,launch+time)
+    if not ok then
+        self.threats:Remove(id);self.seen[id]=nil
+        self:Reject('missile_rejected',id,why,owner,d,now,definition,pos,nil,m);return
+    end
+    self.seen[id]={curve=true,owner=d.owner,alias=definition.name,at=now,pos=G.copy(pos),start=G.copy(start),hostEndpoint=G.copy(finish),
+        launch=launch,damageID=damageID,observedAt=observedAt,instanceID=instanceID}
+    if G.distance(threat,pos,now)>1 then self:Reject('missile_uncertain',id,'curve_outside_envelope',owner,d,now,definition,pos,nil,m)end
+    local accepted=self.threats:Observe(threat)
+    if accepted and not previous and self.onThreat then self.onThreat(threat)end
 end
 function O:ScanMissiles(now,shadow)
     local game=self.g.Game
@@ -1259,6 +1508,7 @@ function O:ScanMissiles(now,shadow)
             -- Own-profile caster returns and blade segments have their own models. A
             -- consumed object skips the straight-flight path; outbound/blade anchors do not.
             local modeled=set and self.returns and self.returns:Missile(self,owner,set,m,d,now)
+            if not modeled and set then modeled=self.landings:Missile(self,owner,set,m,d,mName,now)end
             local definition,definitionReason
             if not modeled and set then definition,definitionReason=missileDefinition(set,mName,d)end
             local id
@@ -1271,16 +1521,34 @@ function O:ScanMissiles(now,shadow)
                 id=idKey;present[id]=stamp
                 -- A projectile locked onto the player becomes a targeted row (evade.locked).
                 local locked=d.target~=0 and self.locked and self.locked:Missile(self,owner,ownerView,m,d,mName,id,now)
+                local flightReason
+                local charged,chargeSource,chargeInput
+                local chargeSpec=not locked and definition and definition.eligible and definition.charge
+                if chargeSpec then charged,chargeSource,chargeInput=self:ChargedRange(id,owner,chargeSpec,now)end
+                if not locked and definition and definition.eligible and definition.flightTime~=nil and not definition.curve then
+                    definition,flightReason=flightTimeModel(self,id,definition,d,charged)
+                end
+                if not locked and not flightReason and definition and definition.eligible and definition.speedStep
+                    and definition.flightTime==nil and not definition.curve and not definition.acceleration then
+                    definition=stepModel(definition,d,m.pos)
+                end
                 if locked then
+                elseif flightReason then
+                    self.threats:Remove(id);self.seen[id]=nil
+                    self:Reject('missile_rejected',id,flightReason,owner,d,now,nil,m.pos,nil,m,mName)
+                elseif definition and definition.curve and definition.eligible and self:Allowed(owner,definition)and d.target==0 then
+                    self:ObserveCurved(owner,set,definition,m,d,id,now)
                 elseif definition and definition.eligible and self:Allowed(owner,definition)and d.target==0 and G.point(m.pos)and G.point(d.endPos)
                     and (G.finite(definition.speed)and definition.speed>0)then
+        -- Native fields belong to this synchronous observation only.
+        local nativeSpeed=d.speed
         local previous=self.seen[id];local pos=G.copy(m.pos)
         -- Missile handles can be recycled without an intervening empty scan.
         -- Neither damage identity nor motion confirmation belongs to the new owner.
                     local movedStart=previous and previous.start and G.point(d.startPos)
     and G.dist(previous.start,d.startPos)>.001
                     local retainedFlight=false
-                    if movedStart and previous.owner==d.owner and previous.alias==definition.name
+                    if movedStart and previous.owner==dOwner and previous.alias==definition.name
                       and (previous.confirmed or previous.motionUnknown)and G.point(previous.hostEndpoint)
                       and G.dist(previous.hostEndpoint,d.endPos)<=20 then
                       -- A mutable caster-origin field cannot reset a projectile
@@ -1292,7 +1560,7 @@ function O:ScanMissiles(now,shadow)
                       retainedFlight=elapsed>=0 and (distance<=.001 or withinBounds(distance,lower,expected,30,.3))
                         and G.segment(pos,anchor,previous.endpoint)<=20
                     end
-                    if previous and (previous.owner~=d.owner or previous.alias~=definition.name
+                    if previous and (previous.owner~=dOwner or previous.alias~=definition.name
                         or movedStart and G.dist(previous.start,d.startPos)>20 and not retainedFlight)then
             self.threats:Remove(id);previous=nil
         end
@@ -1301,8 +1569,8 @@ function O:ScanMissiles(now,shadow)
                     -- whose launch agrees with this observation before replacing history.
                     local freshDamage,freshCast
                     if previous and G.finite(previous.flightEnd)and now>previous.flightEnd
-                        and G.finite(d.speed)and d.speed>0
-                        and math.abs(d.speed-definition.speed)<=math.max(20,definition.speed*.1)
+                        and G.finite(nativeSpeed)and nativeSpeed>0
+                        and math.abs(nativeSpeed-definition.speed)<=math.max(20,definition.speed*.1)
                         and (not G.finite(d.width)or d.width<=definition.radius*2+10)then
                         local key,c=self:FindCorrelation(owner,definition,d,now,pos)
                         if key and now>=c.launch and c.damageID~=previous.damageID and c.launch>previous.flightEnd then
@@ -1315,7 +1583,7 @@ function O:ScanMissiles(now,shadow)
                     -- Native endPos can be the cast's aimed point, not its maximum
                     -- flight endpoint. Use the already-supported full-range cast
                     -- model when its exact stage and observed origin are available.
-                local projectedRange=cast and cast.shape=='missile'and cast.range
+                local projectedRange=charged or cast and cast.shape=='missile'and cast.range
                     or definition.projectTargetToCastRange and definition.range
                 local observedLength=projectedRange and G.point(d.startPos)and G.dist(d.startPos,d.endPos)
                 if retainedFlight then
@@ -1328,20 +1596,20 @@ function O:ScanMissiles(now,shadow)
                     -- the projectile. Extending that ray rotates a valid flight.
                     if math.abs(px*dz-pz*dx)<=20 and px*dx+pz*dz>=-20 then
                         endpoint={x=d.startPos.x+dx*projectedRange,y=d.startPos.y,z=d.startPos.z+dz*projectedRange}
-                        endpointSource=cast and cast.shape=='missile'and 'cast_profile_range'or 'missile_profile_range'
+                        endpointSource=charged and 'charged_range'or cast and cast.shape=='missile'and 'cast_profile_range'or 'missile_profile_range'
                     else endpointSource='host_endpos_start_off_ray' end
                     end
                     endpoint=endpoint or G.copy(d.endPos)
                     -- Match live owner/alias/metadata first. Subsequent unexpected motion invalidates
                     -- the fixed-trajectory model rather than silently fitting it.
-                    local metadataSpeed=G.finite(d.speed)and d.speed>0 and math.abs(d.speed-definition.speed)<=math.max(20,definition.speed*.1)
+                    local metadataSpeed=G.finite(nativeSpeed)and nativeSpeed>0 and math.abs(nativeSpeed-definition.speed)<=math.max(20,definition.speed*.1)
                     local speedConflict=false
                     local boundedSpeed=definition.minSpeed and definition.maxSpeed and not definition.acceleration
                     if boundedSpeed then
-                        metadataSpeed=G.finite(d.speed)and d.speed>=definition.minSpeed and d.speed<=definition.maxSpeed
-                        speedConflict=G.finite(d.speed)and d.speed>0 and not metadataSpeed
+                        metadataSpeed=G.finite(nativeSpeed)and nativeSpeed>=definition.minSpeed and nativeSpeed<=definition.maxSpeed
+                        speedConflict=G.finite(nativeSpeed)and nativeSpeed>0 and not metadataSpeed
                     end
-                    local speed=metadataSpeed and d.speed or definition.speed
+                    local speed=metadataSpeed and nativeSpeed or definition.speed
                     if definition.acceleration and G.point(d.startPos)then
                         -- Retained flight uses its established launch origin. The host's
                         -- mutable caster field cannot change acceleration progress.
@@ -1371,7 +1639,7 @@ function O:ScanMissiles(now,shadow)
                     local motionAt=previous and (previous.motionAt or previous.at)or now
                     local motionSpeed=previous and (previous.motionSpeed or previous.speed)or speed
                     local motionUnknown=false;local motionRejected=false
-                    if previous and previous.owner==d.owner and previous.alias==definition.name and now>previous.at then
+                    if previous and previous.owner==dOwner and previous.alias==definition.name and now>previous.at then
                       local elapsed=now-motionAt;local distance=G.dist(motionPos,pos)
                       local changed=distance>.001
                       -- Match the same endpoint-clamped bounds used by collision.
@@ -1409,7 +1677,14 @@ function O:ScanMissiles(now,shadow)
                     local wrapperMotion=previous and previous.wrapperMotion or false
                     local wrapperOrigin=previous and previous.wrapperOrigin or pos
                     local wrapperAt=previous and previous.wrapperAt or now
-                    if m.valid==false then
+                    if mValid==false then
+                        -- A projectile from a caster in fog has no cast to see. First seen
+                        -- near its own launch point, on its own ray and far from its end, it
+                        -- is a fresh flight: waiting one more sample cost the 2026-10-27
+                        -- Vayne game 47 of ~200 ms against Classic Graves' Buckshot from fog.
+                        if not previous and not wrapperMotion and owner and owner.visible==false and G.point(d.startPos)
+                            and G.dist(d.startPos,pos)<=400 and G.segment(pos,d.startPos,endpoint)<=20
+                            and G.dist(pos,endpoint)>100 then wrapperMotion=true end
                         -- Enumeration and metadata alone cannot resurrect a stale wrapper.
                         -- Require displacement matching the independently profiled flight.
                         if not wrapperMotion and now>wrapperAt then
@@ -1437,7 +1712,7 @@ function O:ScanMissiles(now,shadow)
                     if correlationReason then self:Reject('correlation_unresolved',id,correlationReason,owner,d,now,definition,pos,nil,m)end
                     if not damageID then
                         local sharedReason
-                        damageID,shared,sharedReason=self:SharedEffect(definition,d.owner,d,pos,now)
+                        damageID,shared,sharedReason=self:SharedEffect(definition,dOwner,d,pos,now)
                         if sharedReason then self:Reject('correlation_unresolved',id,sharedReason,owner,d,now,definition,pos,nil,m)end
                     end
                     damageID=damageID or id
@@ -1463,12 +1738,12 @@ function O:ScanMissiles(now,shadow)
             self.anchors=self.anchors or {}
             self.anchors[tostring(ownerView.networkID or ownerView.handle)..':'..definition.name]={pos=G.copy(endpoint),at=now}
         end
-        self.seen[id]={pos=pos,at=now,speed=speed,owner=d.owner,alias=definition.name,start=retainedFlight and previous.start or G.point(d.startPos)and G.copy(d.startPos),hostEndpoint=retainedFlight and previous.hostEndpoint or G.copy(d.endPos),
+        self.seen[id]={pos=pos,at=now,speed=speed,owner=dOwner,alias=definition.name,start=retainedFlight and previous.start or G.point(d.startPos)and G.copy(d.startPos),hostEndpoint=retainedFlight and previous.hostEndpoint or G.copy(d.endPos),
                         effectMembers=effectMembers,
                         endpoint=endpoint,damageID=damageID,group=definition.effectGroup,confirmed=confirmed,castLinked=previous and previous.castLinked or correlated~=nil,
                       speedOrigin=speedOrigin,speedAt=speedAt,speedValidated=speedValidated,
                       motionPos=motionPos,motionAt=motionAt,motionSpeed=motionSpeed,motionUnknown=motionUnknown,
-                       wrapperState=m.valid,wrapperMotion=wrapperMotion,wrapperOrigin=wrapperOrigin,wrapperAt=wrapperAt,
+                       wrapperState=mValid,wrapperMotion=wrapperMotion,wrapperOrigin=wrapperOrigin,wrapperAt=wrapperAt,
                        wrapperSpeed=previous and previous.wrapperSpeed or speed,
                       contourOrigin=contourOrigin,instanceID=instanceID,stageID=stageID,observedAt=observedAt}
                     if motionRejected then
@@ -1477,7 +1752,7 @@ function O:ScanMissiles(now,shadow)
                     end
                     if confirmed or motionUnknown then
                       local distance=G.dist(motionPos,endpoint)
-                    local threat={id=id,instanceID=instanceID,stageID=stageID,damageID=damageID or id,casterID=d.owner,profile=definition.profile,
+                    local threat={id=id,instanceID=instanceID,stageID=stageID,damageID=damageID or id,casterID=dOwner,profile=definition.profile,
                             evidence='observed',ability=definition.id,abilityName=definition.castAlias or definition.name,champion=owner.charName,
                         source=definition.source,shape='missile',origin=motionPos,contourOrigin=contourOrigin,observedAt=observedAt,
                         b=G.copy(endpoint),endpointSource=endpointSource,radius=math.max(width or 0,definition.radius),speed=motionSpeed,
@@ -1494,6 +1769,15 @@ function O:ScanMissiles(now,shadow)
             threat.untargetableBlockable=effects.untargetableBlockable~=false
             threat.tier=effects.tier or definition.tier;threat.windwall=effects.windwall or definition.windwall
             threat.collide=effects.collide or definition.collide
+            threat.zones=effects.zones or definition.zones;threat.flightTime=definition.flightTime
+            threat.displace=effects.displace or definition.displace
+            if definition.stepAfter then
+                -- The step is `at` units from the native start; the row starts at the latest moved sample.
+                local start=self.seen[id].start
+                local left=definition.stepAfter-(G.point(start)and G.dist(start,motionPos)or 0)
+                if left>0 then threat.speedStep={at=left,speed=definition.speedStep.speed}else threat.speed=definition.speedStep.speed end
+            end
+            if charged then threat.extentSource,threat.extentValue,threat.extentInput=chargeSource,charged,chargeInput end
                         local _,latest=G.travelTimeBounds(threat,distance)
                         local flightEnd=motionAt+latest
                         self.seen[id].flightEnd=not(boundedSpeed and motionUnknown)and flightEnd or nil
@@ -1503,6 +1787,8 @@ function O:ScanMissiles(now,shadow)
                       if self.channels then self.channels:Correlate(threat)end
                       if self.clip and threat.collide and not motionUnknown then threat=self.clip(self,threat,now)end
                       local accepted=self.threats:Observe(threat)
+                      local impact,anchor=definition.impact or effects.impact,definition.anchored or effects.anchored
+                      if accepted and(impact or anchor)then self:TrackFlight(threat,impact,anchor,now)end
                 if accepted and confirmed and(not previous or not previous.confirmed)then
                     if self.onThreat then self.onThreat(threat)end
                     -- First attributable native sample; never confuse the prepared

@@ -2,11 +2,11 @@ return function()
 -- GENERATED: tools/build_ayyyyio_controllers.py; Classic data; release payload.
 local modules={}
 modules.overlayClient=(function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end)(require)
-modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("105d25b3d528397643ce147540e7b847313529612ff58156df19d70a7c09ae91")(require) end)(require)
-modules.abilityProfiles=_G.OrbamaFamily:Require("04b3201d7674a3b04c12a7732b3345f73bbccf0f40cfb72203e846891e06f379")
+modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("c573bc09602a9a132c55899af54011b1d90ef4191ab35858361d95c72391fe90")(require) end)(require)
+modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Thresh"]=function()return _G.OrbamaFamily:Require("81b7050a61aa003ff662e2eb1783d77fff37089699377398ce2e8f18a32fa6af")()end
+factories["Thresh"]=function()return _G.OrbamaFamily:Require("a41721dcd5ac01ee9b03b5fd0b8e82af99951a442c8b7c760c403bd45f983723")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -24,16 +24,17 @@ modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c296915
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
 modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
 modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
-modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("a8b0dae6f22e1be48bd91c9c82136f14fa6021bda02b48ebb89e55f2612db730")(require) end)(require)
+modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
-modules["autojungle"]=_G.OrbamaFamily:Require("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("9e32908504b1e01599ffc8a55f7d52a3a92a974d794c085ee29160c628b85e38")
-modules["gameplay"]=_G.OrbamaFamily:Require("038c846d2b126f3f80142b2c55b4ace9ee78a9347b22cb2f242dcb5ed5185f2f")
+modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("9b0f0ca4dc10e89ac5153be241244434028523e5505df6b650ac40f1e6f736d3")
+modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("454102f4f573681afa019a39b08ec2a6adca91fb526d8515918046a8d866415c")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -516,6 +517,7 @@ env.ShouldWait=ShouldWait
 env.SpellFarmDefault=SpellFarmDefault
 env.CastSpellAOE=CastSpellAOE
 local CombatMechanics=modules.combatMechanics
+Core.strike=modules.strike(env,Core)
 Core.gameplay=modules.gameplay(env,Core,CombatMechanics)
 if champion=="Thresh" then
 local entry=(function()
@@ -537,6 +539,7 @@ function ThreshChampion:__init()
   CollisionTypes={OrbamaPrediction.COLLISION_MINION,OrbamaPrediction.COLLISION_ENEMYHERO,OrbamaPrediction.COLLISION_YASUOWALL}}
  self:LoadMenu();self.allow=Core:TargetConsent(Menu.Misc.Targets,self,'','E');self.targets=self.allow.targets;self:Discover();Callback.Add('Tick',function()self:Tick()end);Callback.Add('Draw',function()self:Draw()end)
  _G.SDK.Orbwalker:OnPostAttack(function()self:OnPostAttack()end)
+ _G.SDK.Orbwalker:OnPreAttack(function(args)if self:HookProcedure()then args.Process=false end end)
  Core:RegisterCleanup('Thresh',function()cleanup(self)end)
  local ok,why=Core:RegisterPreparation('Thresh.preview',{intervalMs=125,maxDelayMs=500,units=2,maxUnits=2},
   function()self:PreparePreview();return true end,function()return Menu.Draw.Preview:Value()end,function()self.preview=nil end)
@@ -545,7 +548,7 @@ function ThreshChampion:__init()
  -- start = the throw (0.5 s) plus a margin. Q2 is a pull to an enemy, not a dodge: it is not offered.
  self.shieldRegistered,self.shieldReason,self.shieldDefense=Core:RegisterShield({name='ThreshW',slot=_W,key=HK_W,profile=profile.id,spell=profile.w,
   source=profile.shieldSource,ready=function()return self:Ready(_W)and not self.lantern end,amount=function()return self:ShieldAmount()end,
-  duration=profile.shieldDuration,start=profile.lanternTravel+.1,target=function()return point(myHero.pos)end,kind='self_shield'})
+  duration=profile.shieldDuration,start=profile.lanternTravel+.1,target=function()return point(myHero.pos)end,kind='world'})
  self.flashCombo=Core:FlashFollow('ThreshFlashBox')
  -- Health-bar damage and KILL mark (S9): ready Q, E and R in reach plus one attack, against current health.
  Core:RegisterComboDamage(function(u)
@@ -627,7 +630,7 @@ function ThreshChampion:Controlled(u,margin)
  end;return false
 end
 function ThreshChampion:Native(q)
- return Core:NativeCast(q)~=nil
+ return Core:NativeCast(q)~=nil or q.spellName==profile.q and Core:NativeCast(q,profile.qNative)~=nil
 end
 function ThreshChampion:Damage(u,slot)
  local d=myHero:GetSpellData(slot);local base=slot==_Q and profile.qBase[d.level]or slot==_E and profile.eBase[d.level]or slot==_R and profile.rBase[d.level]
@@ -1101,8 +1104,18 @@ function ThreshChampion:PreparePreview()
  -- so a late preparation never blinks it; Draw shows it only while R is ready.
  self.preview={crossings=self:Ready(_R)and self:Caught()or 0,expires=Game.Timer()+1}
 end
+-- The host keeps QInternal channeling after its castEndTime while the hook
+-- flies or tethers. A native stopped/invalid channel releases immediately.
+function ThreshChampion:HookProcedure()
+ local cast=myHero.activeSpell;local now=Game.Timer()
+ return cast and cast.valid==true and not cast.isStopped and cast.name==profile.qNative
+  and cast.isChanneling==true and finite(cast.startTime)and finite(cast.castEndTime)
+  and cast.startTime<=now and cast.castEndTime>=cast.startTime
+  and now<=cast.castEndTime+self.QRange/self.QSpell.Speed+1.5 or false
+end
 function ThreshChampion:Tick()
- if ShouldWait()or not Core:Available()then self.hook=nil;self.leap=nil;self.attack=nil;return end
+ local available=Core:Available()and not ShouldWait()
+ if not available then self.hook=nil;self.leap=nil;self.attack=nil;return end
  if Game.Timer()>=self.allow.nextRefresh then self:Discover()end;self:ObserveLantern();self:OwnedHook()
  if self.flashCombo:Busy()and self.flashCombo:Maintain()then return end
  if self:ContinueLeap()or IsCasting()then return end
@@ -1129,7 +1142,10 @@ function ThreshChampion:RegisterGuide(guide)
    {'FARM','LastHit protects lethal normal attacks and confirmed incoming kills. Flay rescue refuses other nearby lane minions; unverified passive damage is excluded from guaranteed CS.'}}}
  end)
 end
-Core:StandardPolicy(ThreshChampion,{damageTypes={Q='magical',E='magical',R='magical'},exceptions={non_interrupting_summoner=true},
+Core:StandardPolicy(ThreshChampion,{
+ -- QInternal is a tether after startup, not an uninterruptible spell channel.
+ channel=function(self)return not Core:SelfChanneling()or self:HookProcedure()and myHero.activeSpell.castEndTime<=Game.Timer()end,
+ damageTypes={Q='magical',E='magical',R='magical'},exceptions={non_interrupting_summoner=true},
  methods={Finisher=function()return {priority='interactive'}end,AutoHook=function()return {priority='interactive'}end},
  validate=function(self,q,slot)if type(slot)=='number'and slot>=_Q and slot<=_R then return self:Ready(slot,slot==_Q and q.spellName==profile.q2)end;return true end})
 ThreshChampion()

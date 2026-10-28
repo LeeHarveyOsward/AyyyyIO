@@ -17,16 +17,50 @@ return function()
 -- ArmorMRDuration): armor and magic resistance 20/27.5/35/42.5/50 (+20% bonus armor/MR) for 3 s, cast time none,
 -- plus a flat reduction 8-24 per hit (at most 50%). Offered to Evade as `resist` with the rank base only: the 20%
 -- scaling, the flat reduction and the 3 s extension on a hit are left out, so the offer is a lower bound.
+local D=(function()
 return {
- Leona={classic=false,q={10,35,60,85,110},e={50,90,130,170,210},r={150,225,300},width=70,
+ LeonaShieldOfDaybreak={
+  BaseDamage={10,35,60,85,110},
+ },
+ LeonaZenithBlade={
+  BaseDamage={50,90,130,170,210},mCastTime=.25,
+ },
+ LeonaZenithBladeMissile={
+  castRange=900,mMissileWidth=70,
+ },
+ LeonaSolarFlare={
+  CCDuration=1.75,ExplosionBaseDamage={150,225,300},
+ },
+ LeonaSolarBarrier={
+  ArmorMRDuration=3,MRBaseBonus={20,27.5,35,42.5,50},
+ },
+ Jade_LeonaZenithBladeMissile={
+  castRange=900,mMissileWidth=90,
+ },
+ Jade_LeonaZenithBlade={
+  BaseDamage={60,100,140,180,220},
+ },
+ Jade_LeonaSolarBarrier={
+  BonusARMR={30,40,50,60,70},BuffDuration=3,
+ },
+ Jade_LeonaShieldOfDaybreak={
+  Damage={40,70,100,130,160},
+ },
+ Jade_LeonaSolarFlare={
+  CCDuration=1.5,ExplosionBaseDamage={150,250,350},
+ },
+}
+end)()
+return {
+ Leona={classic=false,q=D.LeonaShieldOfDaybreak.BaseDamage,e=D.LeonaZenithBlade.BaseDamage,r=D.LeonaSolarFlare.ExplosionBaseDamage,width=D.LeonaZenithBladeMissile.mMissileWidth,
   qBuff='LeonaShieldOfDaybreak',eCast='LeonaZenithBlade',root='LeonaZenithBladeRoot',sunlight='LeonaSunlight',wBuff='LeonaSolarBarrier',
-  eRange=900,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=1.75,qBonusRange=50,
-  wResist={20,27.5,35,42.5,50},wDuration=3,w='LeonaSolarBarrier',
+  eRange=D.LeonaZenithBladeMissile.castRange,rCast=D.LeonaZenithBlade.mCastTime,rImpact=.625,rEpicenter=100,rArea=325,rStun=D.LeonaSolarFlare.CCDuration,qBonusRange=50,
+  wResist=D.LeonaSolarBarrier.MRBaseBonus,wDuration=D.LeonaSolarBarrier.ArmorMRDuration,w='LeonaSolarBarrier',
   wSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Leona/Eclipse (cast time none, armor/MR 20-50 for 3 s) + family-assets/Leona/spells.json LeonaSolarBarrier ArmorBaseBonus/MRBaseBonus/ArmorMRDuration, read 2026-10-10; rank base only (lower bound)'},
- Jade_Leona={classic=true,q={40,70,100,130,160},e={60,100,140,180,220},r={150,250,350},width=90,
+ Jade_Leona={classic=true,q=D.Jade_LeonaShieldOfDaybreak.Damage,e=D.Jade_LeonaZenithBlade.BaseDamage,r=D.Jade_LeonaSolarFlare.ExplosionBaseDamage,width=D.Jade_LeonaZenithBladeMissile.mMissileWidth,
   qBuff='Jade_LeonaShieldOfDaybreak',eCast='Jade_LeonaZenithBlade',root='Jade_LeonaZenithBladeRoot',sunlight='Jade_LeonaSunlight',wBuff='Jade_LeonaSolarBarrier',
-  eRange=900,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=1.5,qBonusRange=50,
-  wResist={30,40,50,60,70},wDuration=3,w='Jade_LeonaSolarBarrier',
+  eRange=D.Jade_LeonaZenithBladeMissile.castRange,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=D.Jade_LeonaSolarFlare.CCDuration,qBonusRange=50,
+  wResist=D.Jade_LeonaSolarBarrier.BonusARMR,wDuration=D.Jade_LeonaSolarBarrier.BuffDuration,w='Jade_LeonaSolarBarrier',
   wSource='family-assets/Jade_Leona/spells.json Jade_LeonaSolarBarrier BonusARMR/BuffDuration + wiki League_Classic/Leona, read 2026-10-10'}
 }
 

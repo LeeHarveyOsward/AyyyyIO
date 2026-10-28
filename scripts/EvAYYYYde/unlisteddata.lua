@@ -17,13 +17,8 @@ local wiki='League wiki Template:Data_<champion> (read 2026-10-10); name from ow
 return {
     SyndraR={tier=5,source=wiki,note='Unleashed Power: execute-scaling burst; sphere travel speed unpublished (instant model)',window=.35},
     VayneCondemn={tier=4,ccHard=true,speed=2200,source=wiki,note='Condemn: knockback, stun against terrain; bolt speed 2200'},
-    RyzeW={tier=4,ccHard=true,source=wiki,note='Rune Prison: root'},
-    NautilusGrandLine={tier=5,ccHard=true,source=wiki,note='Depth Charge: knock-up; travel speed unpublished (instant model)',window=.5},
     CaitlynR={tier=5,speed=3200,source=wiki,note='Ace in the Hole: 1 s channel then a 3200 speed bullet'},
-    JayceThunderingBlow={tier=4,ccHard=true,source=wiki,note='Thundering Blow: knockback'},
     MaokaiW={tier=4,ccHard=true,source=wiki,note='Twisted Advance: dash to target and root'},
-    LuluW={tier=4,ccHard=true,source=wiki,note='Whimsy on an enemy: polymorph (disarm + silence)'},
-    CamilleR={tier=4,ccHard=true,source=wiki,note='The Hextech Ultimatum: leap, knockback of nearby enemies, zone lock'},
     SettR={tier=4,ccHard=true,source=wiki,note='The Show Stopper: suppression while carried'},
     MordekaiserR={tier=4,source=wiki,note='Realm of Death: banished with Mordekaiser'},
 }

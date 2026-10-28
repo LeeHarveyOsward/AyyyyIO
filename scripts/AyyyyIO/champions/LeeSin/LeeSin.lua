@@ -13,7 +13,7 @@ if not _G.SDK then
  if not ok or not (_G.SDK and _G.SDK.OrbamaVersion) then print("[AyyyyIO/LeeSin] Orbama load failed: " .. tostring(err or "SDK unavailable")); return end
 end
 if _G.AyyyyIO and _G.AyyyyIO.active and not _G.AyyyyIO.loading then return _G.AyyyyIO.controller end
-local incomingBuild = "2026-10-10-ranking"
+local incomingBuild = "current-patch-review"
 local previous = _G.AyyyyIOLeeSin
 if previous then
  if previous.build == incomingBuild and previous.active then return previous end
@@ -75,17 +75,17 @@ modules["leesin.wardnames"] = function(require) return _G.OrbamaFamily:Factory("
 modules["leesin.wards"] = function(require) return _G.OrbamaFamily:Factory("75b975d7de499e1c6c410018baabf166fb5664683aab19c8ade41e3431ccfc9e")(require) end
 modules["leesin.wave"] = function(require) return _G.OrbamaFamily:Factory("5f0720c996455c7ceb8c5626674b3e572b5bbaa9384739a90e7e27e4cc662f26")(require) end
 modules["Orbama.menus"] = function(require) return _G.OrbamaFamily:Factory("d77e24d9e67e4afce47aec143cde65f28183d8a9d3505511d35fc782fae476fe")(require) end
-modules["ActionClient"] = function(require) return _G.OrbamaFamily:Factory("105d25b3d528397643ce147540e7b847313529612ff58156df19d70a7c09ae91")(require) end
+modules["ActionClient"] = function(require) return _G.OrbamaFamily:Factory("c573bc09602a9a132c55899af54011b1d90ef4191ab35858361d95c72391fe90")(require) end
 modules["Overlay.client"] = function(require) return _G.OrbamaFamily:Factory("c15dfe50118b0ba11d3499e69a188b763f7bf413b791dd04a0a0d9fa6f2bb92a")(require) end
 modules["Overlay.damage"] = function(require) return _G.OrbamaFamily:Factory("58bff42953d762d6e6bdb77b288442f90a4c6f2427ca70949be1a299af756241")(require) end
-modules["AyyyyIO.autojungle"] = function(require) return _G.OrbamaFamily:Factory("12c9f19e56e973236e0bcff8c7222940806f07b1c7bf1e88042f1b34eddcc520")(require) end
+modules["AyyyyIO.autojungle"] = function(require) return _G.OrbamaFamily:Factory("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")(require) end
 modules["CombatProfiles.camp_timing"] = function(require) return _G.OrbamaFamily:Factory("2d57ee1752e69959f1f19f9d0db112f6fc4e368636ad800025f6c307183102ee")(require) end
 modules["CombatProfiles.classic_camps"] = function(require) return _G.OrbamaFamily:Factory("dd8d382af457ae61aa5f6fa779bab1b2e02301b557e863f020d2ec75859cc4a9")(require) end
 modules["CombatProfiles.normal_camps"] = function(require) return _G.OrbamaFamily:Factory("bf478ad3bded3b66d0c1ccae1ced56308a28c067a83c8c5628a78d47c79d5dd2")(require) end
 modules["CombatProfiles.classic_camp_formations"] = function(require) return _G.OrbamaFamily:Factory("350c61b34f4b7ddbec4fc72de9eefdbb73338b35740254abb733e6e5d43b7d44")(require) end
 modules["CombatProfiles.normal_camp_formations"] = function(require) return _G.OrbamaFamily:Factory("37708c5cf79c846a41b3755041696fcdb26afc439a5ba0b684586daac395039a")(require) end
 modules["CombatProfiles.world"] = function(require) return _G.OrbamaFamily:Factory("283debfb90308f50cc23be05b6bd05b74ddfd75687ca20b0064f3c6c75a0d06e")(require) end
-modules["CombatProfiles.leesin"] = function(require) return _G.OrbamaFamily:Factory("8e2a1e04f5c0a5d44b59d82c99fbd1c033f095555596c6ba3350ad881baff684")(require) end
+modules["CombatProfiles.leesin"] = function(require) return _G.OrbamaFamily:Factory("ced88bfc1baba0bada5925ef7b084890945e0acdc63f646670fe91bdce165fb1")(require) end
 modules["OrbamaUtils.itemdata"] = function(require) return _G.OrbamaFamily:Factory("a9973f34c3ef2f1b8227a3cb3d2cbbf977f539fc2da244d6330d93699e997273")(require) end
 modules["ChampionMobility.navdata"] = function(require) return _G.OrbamaFamily:Factory("14b69c92b499a610eb5726f185aa129ece83cadbad0b26ea1c39aaaee140b81c")(require) end
 modules["ChampionMobility.navigation"] = function(require) return _G.OrbamaFamily:Factory("bb74dd0a64b2a04960a0ac0c320d11227d47cc1b05209aad6efacf56d2570916")(require) end

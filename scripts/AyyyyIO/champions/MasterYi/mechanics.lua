@@ -20,16 +20,47 @@ return function()
 -- Q first strike: castFrame 7.935 at 30 fps (.26 s, both assets), used as the LastHit rescue impact.
 -- Alpha Strike (Normal page): marks every 0.231 s, 4 marks, reappears after 0.165 s (1.087 s with 4 bounces). The
 --   controller keeps its conservative one-strike .25 s untargetable minimum; the Classic page states no duration.
+local D=(function()
 return {
-    normal={id='normal',wReset=true,q='AlphaStrike',w='Meditate',e='WujuStyle',r='Highlander',qType='physical',qBase={20,40,60,80,100},qAD=.7,qMonster={60,85,110,135,160},
-      eBase={20,25,30,35,40},eBonusAD=.35,eActive='WujuStyleSuperCharged',eDuration=5,rDuration=7,dsRatio=.5,dsCount=4,dsDuration=4,
-      qBounce=550,qImpact=.26,wDelay=3.25/30,wChannel=4,wInitialSeconds=.5,wInitial={.7,.7,.7,.7,.7},wReduction={.45,.475,.5,.525,.55},
+ MasterYiPassive={
+  AttackCount=4,StackDuration=4,
+ },
+ AlphaStrike={
+  AttackDamageRatio=.7,BaseDamage={20,40,60,80,100},BonusMonsterDamage={60,85,110,135,160},
+ },
+ Meditate={
+  DamageReduction={.45,.475,.5,.525,.55},HealDuration=4,InitialExtraDRDuration=.5,castFrame=3.25,
+ },
+ WujuStyle={
+  ADRatio=.35,BaseDamage={20,25,30,35,40},Duration=5,
+ },
+ Highlander={
+  RDuration=7,
+ },
+ Jade_MasterYiAlphaStrike={
+  APRatio=1,BaseDamage={100,150,200,250,300},TotalMonsterDamage={260,320,380,440,500},
+ },
+ Jade_MasterYiHighlander={
+  RDuration={8,10,12},
+ },
+ Jade_MasterYiWujuStyle={
+  Duration=10,PassiveAD={15,20,25,30,35},
+ },
+ Jade_MasterYiMeditate={
+  DefenseStat={100,150,200,250,300},Duration=5,castFrame=3.25,
+ },
+}
+end)()
+return {
+    normal={id='normal',wReset=true,q='AlphaStrike',w='Meditate',e='WujuStyle',r='Highlander',qType='physical',qBase=D.AlphaStrike.BaseDamage,qAD=D.AlphaStrike.AttackDamageRatio,qMonster=D.AlphaStrike.BonusMonsterDamage,
+      eBase=D.WujuStyle.BaseDamage,eBonusAD=D.WujuStyle.ADRatio,eActive='WujuStyleSuperCharged',eDuration=D.WujuStyle.Duration,rDuration=D.Highlander.RDuration,dsRatio=.5,dsCount=D.MasterYiPassive.AttackCount,dsDuration=D.MasterYiPassive.StackDuration,
+      qBounce=550,qImpact=.26,wDelay=D.Meditate.castFrame/30,wChannel=D.Meditate.HealDuration,wInitialSeconds=D.Meditate.InitialExtraDRDuration,wInitial={.7,.7,.7,.7,.7},wReduction=D.Meditate.DamageReduction,
       wSource='MasterYi spells.json Meditate castFrame 3.25, DamageReduction+InitialExtraDR (.5 s), HealDuration 4; wiki Master_Yi V26.19 read 2026-10-10'},
-    classic={id='classic',wReset=true,q='Jade_MasterYiAlphaStrike',w='Jade_MasterYiMeditate',e='Jade_MasterYiWujuStyle',r='Jade_MasterYiHighlander',qType='magical',qBase={100,150,200,250,300},
+    classic={id='classic',wReset=true,q='Jade_MasterYiAlphaStrike',w='Jade_MasterYiMeditate',e='Jade_MasterYiWujuStyle',r='Jade_MasterYiHighlander',qType='magical',qBase=D.Jade_MasterYiAlphaStrike.BaseDamage,
         -- research/family-assets/Jade_MasterYi/spells.json Jade_MasterYiAlphaStrike TotalMonsterDamage (rank 1-5)
         -- with MonsterDamageProcChance .5: a random proc, so farming never counts it as certain.
-        qMonster={260,320,380,440,500},qAP=1,eActive='Jade_MasterYiWujuStyleSuperCharged',eDuration=10,ePassive={15,20,25,30,35},rDuration={8,10,12},
-        qBounce=550,qImpact=.26,wDelay=3.25/30,wChannel=5,wResist={100,150,200,250,300},
+        qMonster=D.Jade_MasterYiAlphaStrike.TotalMonsterDamage,qAP=D.Jade_MasterYiAlphaStrike.APRatio,eActive='Jade_MasterYiWujuStyleSuperCharged',eDuration=D.Jade_MasterYiWujuStyle.Duration,ePassive=D.Jade_MasterYiWujuStyle.PassiveAD,rDuration=D.Jade_MasterYiHighlander.RDuration,
+        qBounce=550,qImpact=.26,wDelay=D.Jade_MasterYiMeditate.castFrame/30,wChannel=D.Jade_MasterYiMeditate.Duration,wResist=D.Jade_MasterYiMeditate.DefenseStat,
         wSource='Jade_MasterYi spells.json Jade_MasterYiMeditate castFrame 3.25, DefenseStat 100-300, Duration 5; wiki League_Classic/Master_Yi read 2026-10-10'},
 }
 

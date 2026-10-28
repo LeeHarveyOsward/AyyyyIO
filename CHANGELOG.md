@@ -6,6 +6,39 @@ Entries for v3 through v8 were reconstructed from published commits. Dates below
 
 The one-line installer follows `main`. GitHub Releases retain the historical snapshots. Offline checks establish implementation behavior, not live game outcomes.
 
+## [v9](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v9) - 2026-10-28
+
+Lucian, Hecarim, shared ability data and steadier dodges
+
+### Added
+
+- Lucian for Normal and Classic. Abilities go between attacks and never over a pending double shot, Q reaches through minions, E only lands where the target stays in attack range, and R finishes enemies out of attack range. Classic R is cast only through the selected-target bind because its shot count is not established.
+- Evade recognizes Classic Lucian's Q, W and R instead of treating them as unknown casts.
+- Orbama handles the Classic Lucian E attack reset and the movement and attack rules during his R.
+- Hecarim for Normal and Classic, including shared approach-angle steering for his empowered E attack. Steering considers allied follow-up, terrain, escape risk and whether the hit already kills.
+- Evade models projectiles that stop on the second unit, curved and fixed-time flights, impact areas, attached areas, charged ranges, growing areas and stepped projectile speeds where researched data supports them.
+
+### Changed
+
+- Update champion mechanics, cooldowns and Evade data for patch 26.21.
+- Use the same readiness check for Classic item actives as for other casts, and read the native item spell slot.
+- Share extracted ability values between champion mechanics and Evade, with explicit Normal and Classic stages and provenance.
+- Score threat damage, control and displacement against the current game state, and share safe attack windows with the orbwalker.
+
+### Fixed
+
+- Keep a dodge route stable while the game still reports the old path, without sending the same click again.
+- Keep prepared Evade outlines visible when only their timing refreshes.
+- Reject recall observations with invalid clocks.
+- Allow Evade's own defensive casts while it is dodging.
+- Let Aatrox E follow the live Q wrapper cast and record each Q result once.
+- Let Fiora Q chase freely moving targets and defer an early post-attack callback until the observed attack windup ends.
+- Clear stale chat input latches when chat closes.
+
+### Verification
+
+The individual changes have focused offline checks and live-log evidence. The final combined development build passed syntax loading in Lua 5.1 and LuaJIT and deployment readback. Broader combined behavioural and performance gates were deferred at the owner's request to deploy immediately. Full ability coverage and live correctness remain unverified.
+
 ## [v8](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v8) - 2026-10-17
 
 Champion casts, awareness and shared state

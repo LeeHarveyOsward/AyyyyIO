@@ -89,6 +89,8 @@ return function(g,C,P)
   -- one there is no switch and no preview work (enemy health bars already show the
   -- combo damage, the game shows passive and buff state).
   option(menu.Draw,ext.previewLabel~=nil,{id='Preview',name=ext.previewLabel or '',value=ext.previewLabel~=nil})
+  -- `strikeLabel` names the angled strike the champion steers (F:MaintainStrike); off by default.
+  option(menu.Draw,ext.strikeLabel~=nil,{id='Strike',name=ext.strikeLabel or '',value=false})
   if ext.menu then ext.menu(self,menu)end
  end
  function F:Cleanup(reason)
@@ -96,6 +98,7 @@ return function(g,C,P)
   if self.retiredReservation then C.adapter:ReleaseReservation(self.retiredReservation,reason or 'controller_closed');self.retiredReservation=nil end
   self.sequences={};self.preview=nil;self.objects={};self.attack=nil;self.gestures={}
   C:ReleaseAttackPreference(self.profile.champion)
+  if self.steering then self.steering:Release(reason or 'cleanup')end;self.strikePlan=nil
   if self.ext.cleanup then self.ext.cleanup(self,reason)end
  end
  -- Units, consent, buffs and the rescue rule live in the shared core (core.lua).
@@ -299,6 +302,7 @@ return function(g,C,P)
    local preferred=self.ext.attackTarget(self,self:Mode())
    if preferred then C:PreferAttack(self.profile.champion,preferred,.25)else C:ReleaseAttackPreference(self.profile.champion)end
   end
+  if self.ext.strike then self:MaintainStrike()end
   if self:Assist()then return end
   if not C:SelfChanneling(true)then
    if self.ext.gapclose and self.ext.gapclose(self)then return end
@@ -315,6 +319,31 @@ return function(g,C,P)
   end
   if self.previewFallback and self.menu.Draw.Preview:Value()and G.Timer()>=(self.nextPreview or 0)then self.nextPreview=G.Timer()+.125;self:PreparePreview()end
  end
+ -- Angled strike (strike.lua, docs/ANGLED-STRIKES.md): while `ext.strike(f,mode)`
+ -- names an armed strike (target, spec, opts) the scorer picks the side to strike
+ -- from (replanned every .15 s, outside any input callback) and the shared
+ -- steering walks there on the movement lease. One trace row per decision change.
+ function F:MaintainStrike()
+  local S=C.strike;local steering=self.steering
+  if not steering then steering=S.Steering(self.profile.champion..'.strike');self.steering=steering end
+  local u,spec,opts=self.ext.strike(self,self:Mode())
+  if not u then if steering:Release(spec or 'unarmed')then self:TraceStrike(self.strikePlan,steering.last)end;self.strikePlan=nil;self.strikeKey=nil;return end
+  local plan=self.strikePlan;local now=G.Timer()
+  if not plan or plan.expires<=now or plan.target~=id(u)then
+   plan=S.Plan(u,spec,opts);self.strikePlan=plan
+  end
+  local was=steering.active;local _,state=steering:Update(plan,u)
+  local key=tostring(plan.target)..':'..tostring(plan.reason)..':'..tostring(state)
+  if key~=self.strikeKey then self.strikeKey=key;self:TraceStrike(plan,state,was)end
+ end
+ function F:TraceStrike(plan,state,was)
+  if not C.logger or not plan then return end
+  local parts=plan.parts or {}
+  C:Trace('strike_decision',{profile=self.profile.id,target=plan.target,steer=plan.steer,reason=plan.reason,state=state,wasSteering=was==true,
+   angle=plan.angle,straightAngle=plan.straightAngle,score=plan.score,straight=plan.straight,gain=plan.gain,candidates=plan.candidates,refused=plan.refused,
+   ally=parts.ally,turret=parts.turret,wall=parts.wall,team=parts.team,enemyTurret=parts.enemyTurret,travel=parts.travel,exposure=parts.exposure,hit=parts.hit,
+   x=plan.point and plan.point.x,z=plan.point and plan.point.z,landingX=plan.landing and plan.landing.x,landingZ=plan.landing and plan.landing.z})
+ end
  function F:PreparePreview()
   -- Kept for a second: a late preparation must not blink the drawing; Draw checks
   -- what each element needs (ready ability, living visible unit) on its own.
@@ -324,6 +353,11 @@ return function(g,C,P)
  end
  function F:Draw()
   if H.dead then return end
+  local plan=self.strikePlan
+  if plan and plan.steer and self.menu.Draw.Strike:Value()and plan.point and plan.landing then
+   local gold=g.Draw.Color(255,255,200,60)
+   g.Draw.Circle(g.Vector(plan.point.x,H.pos.y,plan.point.z),60,2,gold);g.Draw.Circle(g.Vector(plan.landing.x,H.pos.y,plan.landing.z),40,2,gold)
+  end
   -- Ranges of ready abilities only (own spell data, no search). Readiness and
   -- radius are refreshed at 10 Hz; the circles follow the hero every frame.
   if not self.menu.Draw.Ranges:Value()then return end

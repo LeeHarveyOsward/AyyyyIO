@@ -2,11 +2,20 @@ return function(require)
 local G=require('evade.geometry')
 local ChannelLink=require('evade.channel_link')
 local D=require('evade.damage')
+local Danger=require('evade.danger')
 local Trajectory=require('evade.trajectory')
 local ChampionMotion=require('CombatProfiles.champion_motion')
 local P={};P.__index=P
+-- A facing rule (threat.facing) is met only beyond this cosine to the caster: 'away' needs at least 120
+-- degrees between the heading and the caster, 'toward' at most 60. The exact game predicate is not in the
+-- records (a 180-degree arc is described), so the margin covers latency and turn time.
+P.facingSlack=.5
+-- Time added to the attack windup before a dodge starts after an attack: latency and one callback.
+P.weaveMargin=.1
+P.weaveAlternatives=4
 function P.new(terrain,threats)
-    return setmetatable({terrain=terrain,threats=threats,maxCandidates=64,minimumCandidates=24,maxNodes=512,horizon=2,query={}},P)
+    -- `danger`: the app replaces this team-free model with one that reads the enemy team (evade.danger).
+    return setmetatable({terrain=terrain,threats=threats,danger=Danger.new(),maxCandidates=64,minimumCandidates=24,maxNodes=512,horizon=2,query={}},P)
 end
 local function unknown(why)return {safe=false,known=false,reason=why,damage=0,unknown=true,lethal=false,cc=0,hits={}}end
 -- Unknown for every path of this context: no candidate route can be evaluated either.
@@ -50,7 +59,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
     -- wall while it stands (defense.wall: a segment, or a radius around the caster).
     local function walled(s,at)
         local w=defense and defense.kind=='windwall'and defense.wall
-        if not w or s.windwall~=true or s.shape~='missile'or s.motion or s.motionUnknown or s.speedUncertain
+        if not w or s.windwall~=true or s.shape~='missile'or s.motion or s.motionUnknown or s.speedUncertain or s.speedStep
             or not G.finite(s.speed)or s.speed<=0 or not G.finite(defense.starts)or not G.finite(defense.ends)then return false end
         local o=s.origin or s.a;local launch=s.launch or s.starts
         if G.finite(w.radius)and G.point(w.center)then
@@ -90,7 +99,36 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
         local crossing=launch+u*length/s.speed
         return crossing>=defense.starts and crossing<defense.ends and crossing<=at
     end
-    local function contact(row,source)
+    -- Zone band of each contacted threat that states zones (innermost contact wins).
+    local bands
+    -- Where the hero faces: the heading of the walking segment in progress, else the last one walked, else
+    -- the observed facing (ctx.facing, any length). Read only by threats with a facing rule (Petrifying Gaze).
+    -- Kept on the planner, not in new upvalues: an evaluation allocates nothing for it.
+    self.faceX,self.faceZ=nil,nil
+    if G.point(ctx.facing)then
+        local length=math.sqrt(ctx.facing.x*ctx.facing.x+ctx.facing.z*ctx.facing.z)
+        if length>.01 then self.faceX,self.faceZ=ctx.facing.x/length,ctx.facing.z/length end
+    end
+    local function contact(row,source,a,b,t0,t1)
+        if source and source.zones and a then
+            local band=Danger.Band(source,G.lerp(a,b,t1>t0 and (row.at-t0)/(t1-t0)or 0),row.at)
+            if band then bands=bands or {};if not bands[row.id]or band<bands[row.id]then bands[row.id]=band end end
+        end
+        -- A facing rule decides the control of this contact: met (facing `sense` relative to the caster by more
+        -- than `facingSlack`) leaves only the soft effect; anything else gets the rule's hard control. With the
+        -- facing unknown the threat keeps its own (unknown) control.
+        local rule=source and source.facing
+        if rule and self.faceX and a and G.point(source.castOrigin or source.origin)then
+            local at=G.lerp(a,b,t1>t0 and (row.at-t0)/(t1-t0)or 0)
+            local dx,dz=G.direction(at,source.castOrigin or source.origin)
+            local toward=self.faceX*dx+self.faceZ*dz
+            if rule.sense=='away'and toward<-P.facingSlack or rule.sense=='toward'and toward>P.facingSlack then
+                row.cc=0;row.ccHard=nil;row.ccUnknown=nil;row.facing='met'
+            else
+                row.facing='broken'
+                if rule.hard then row.ccHard=true;row.cc=rule.cc or row.cc;row.ccUnknown=not G.finite(rule.cc)or nil end
+            end
+        end
         if source then
             row.abilityName=source.abilityName;row.champion=source.champion;row.tier=source.tier
             -- Where the hit comes from (directional block) and whether it is a basic attack (attack dodge).
@@ -142,6 +180,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
         if walking and speedKnownUntil and not expiryCovered and t1>speedKnownUntil and G.dist(a,b)>0 then
             return false,'movement_speed_expiry_unknown'
         end
+        if walking and (a.x~=b.x or a.z~=b.z)then self.faceX,self.faceZ=G.direction(a,b)end
         local coverHits={}
         for _,s in ipairs(self.threats:Query(a,b,t0,t1,reach,self.query))do
             local coveredMiss=false
@@ -189,8 +228,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
                 if hi>lo then for sample=1,16 do
                     budget.remaining=budget.remaining-1;if budget.remaining<0 then return false,'geometry_budget'end
                     local at=lo+(hi-lo)*(sample-.5)/16
-                    local point=G.lerp(a,b,t1>t0 and (at-t0)/(t1-t0)or 0)
-                    local distance=G.distance(s,point,at)
+                    local distance=G.distance(s,G.probe(a,b,t1>t0 and (at-t0)/(t1-t0)or 0),at)
                     if distance==nil then return false,'geometry_unknown'end
                     if distance<=reach then exposure=exposure+(hi-lo)/16 end
                 end end
@@ -221,7 +259,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
                     if s.shape~='targeted'then walkingContact=true end
                             contact({id=s.id,damageID=key,at=at,damage=s.damage,
                                 cc=s.cc,ccUnknown=s.ccUnknown,ccHard=s.ccHard,blockable=s.blockable,parryable=s.parryable,
-                                externalCounted=s.externalCounted,alreadyApplied=s.alreadyApplied,untargetableBlockable=s.untargetableBlockable},s)
+                                externalCounted=s.externalCounted,alreadyApplied=s.alreadyApplied,untargetableBlockable=s.untargetableBlockable},s,a,b,t0,t1)
                         end
                     end
                 end
@@ -234,7 +272,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
                 if hit then
                     if s.shape~='targeted'then walkingContact=true end
                     contact({id=s.id,damageID=s.damageID,at=at,atLatest=s.shape=='targeted'and s.impactLatest or nil,damage=s.damage,cc=s.cc,ccUnknown=s.ccUnknown,ccHard=s.ccHard,parryable=s.parryable,
-                        blockable=s.blockable,externalCounted=s.externalCounted,alreadyApplied=s.alreadyApplied,untargetableBlockable=s.untargetableBlockable},s)
+                        blockable=s.blockable,externalCounted=s.externalCounted,alreadyApplied=s.alreadyApplied,untargetableBlockable=s.untargetableBlockable},s,a,b,t0,t1)
                 end
             end
             -- An initial protected contact cannot certify remaining inside a
@@ -252,7 +290,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
                     if hit==nil then return false,at end
                     if hit then
                         contact({id=s.id,damageID=key,at=at,
-                            cc=s.cc,ccUnknown=s.ccUnknown,ccHard=s.ccHard,parryable=s.parryable,blockable=s.blockable,untargetableBlockable=s.untargetableBlockable},s)
+                            cc=s.cc,ccUnknown=s.ccUnknown,ccHard=s.ccHard,parryable=s.parryable,blockable=s.blockable,untargetableBlockable=s.untargetableBlockable},s,start,b,lo,t1)
                     end
                 end
             end
@@ -402,6 +440,11 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
         end
     end end
     local result=D.forecast(hits,ctx.stats or {},defense)
+    for _,row in ipairs(hits)do
+        if row.facing=='met'then result.facingMet=result.facingMet or {};result.facingMet[row.id]=true end
+    end
+    -- Live danger of this outcome (cached per threat and player state; this only sums the records).
+    self.danger:Outcome(result,ctx.stats or {},ctx.origin,ctx.now,self.threats.byID,bands)
     result.potentialHits=potential;result.potentialCount=#potential
     if #potential>0 then result.unknown=true;result.potentialDamageUnknown=true end
     result.known=true;result.safe=#potential==0 and (#hits==0 or #result.hits==0 and not result.unknown);result.arrival=t;result.position=G.copy(from)
@@ -420,7 +463,7 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
     end
     -- Reject collision-doomed candidates before costly native wall queries.
     -- An exposure-only result never certifies terrain or authorizes input.
-    local unusable=not result.walkSafe and not defense and not (exposure>0 and result.exitClear)
+    local unusable=not result.walkSafe and not defense and not (exposure>0 and result.exitClear)and not result.facingMet
     result.terrainValidated=false
     if not observedRoute and not (skipUnusableTerrain and unusable)then
   if timedSegments then
@@ -472,10 +515,11 @@ local function compareCore(a,b)
     local order=compare(walkingSafe(a)and 0 or 1,walkingSafe(b)and 0 or 1);if order~=nil then return order end
     order=compare(a.lethal and 1 or 0,b.lethal and 1 or 0);if order~=nil then return order end
     order=compare(a.unknown and (#a.hits+(a.potentialCount or 0))or 0,b.unknown and (#b.hits+(b.potentialCount or 0))or 0);if order~=nil then return order end
-    -- With equally many unknown hits, the reviewed severity tier stands in for the missing damage.
-    order=compare(a.unknown and a.tier or 0,b.unknown and b.tier or 0);if order~=nil then return order end
+    -- Live danger (evade.danger): damage now, hard control weighed by the enemy follow-up during it, and a
+    -- reviewed tier only for hits of unknown damage and no control. Then plain damage and control.
+    order=compare(a.hitDanger or 0,b.hitDanger or 0);if order~=nil then return order end
     order=compare(a.damage,b.damage);if order~=nil then return order end
-    -- With equal damage, any hard control (even without a known duration) is worse.
+    -- With equal danger and damage, any hard control (even without a known duration) is worse.
     order=compare(a.ccHard and 1 or 0,b.ccHard and 1 or 0);if order~=nil then return order end
     order=compare(a.cc or 0,b.cc or 0);if order~=nil then return order end
     order=compare(a.danger or 0,b.danger or 0);if order~=nil then return order end
@@ -490,7 +534,11 @@ local function positionCost(r,ctx)
         angle=G.dist(ctx.origin,first)>5 and 1-math.max(-1,math.min(1,dx*x+dz*z))or 2
     end
     local remaining=r.position and G.dist(r.position,aim)or math.huge
-    return ctx.flee and remaining or angle+(r.combatCost or 0),ctx.flee and angle or remaining
+    -- The attack target (combatCost, seconds of walking back into reach) outranks the heading: every started
+    -- tenth of a second counts more than the whole angle term (0-2). Flee has no attack target.
+    local combat=r.combatCost or 0
+    if combat>0 then combat=3*math.ceil(combat*10-1e-6)end
+    return ctx.flee and remaining or angle+combat,ctx.flee and angle or remaining
 end
 local function stale(self,result)
     return result and (result.threatRevision~=nil and result.threatRevision~=self.threats.revision
@@ -501,9 +549,19 @@ function P:Executable(result,baseline,ctx)
     if stale(self,result)or stale(self,baseline)then return false end
     if not result or not result.known or result.observedRoute or result.terrainValidated==false then return false end
     if walkingSafe(result)then return true end
+    if not baseline or not baseline.known or walkingSafe(baseline)then return false end
+    -- A hit no walk avoids but whose control depends on facing (Petrifying Gaze): a route that meets every
+    -- such rule, takes no hit the current path does not take and ranks better than it is the answer.
+    local met=result.facingMet
+    if met and #result.hits>0 and (result.potentialCount or 0)==0 then
+        local old={};for _,id in ipairs(baseline.hits)do old[id]=true end
+        local all=true
+        for _,id in ipairs(result.hits)do if not met[id]or not old[id]then all=false;break end end
+        if all then return self:Better(result,baseline,ctx)end
+    end
     -- Leaving an already active zone necessarily intersects it initially. Permit
     -- a fully evaluated exit only when it reduces exposure without new hits.
-    if not baseline or not baseline.known or walkingSafe(baseline)or not result.exitClear
+    if not result.exitClear
         or (result.exposure or 0)+.03>=(baseline.exposure or 0)then return false end
     local old={};for _,id in ipairs(baseline.hits)do old[id]=true end
     for _,id in ipairs(result.hits)do if not old[id]then return false end end
@@ -538,8 +596,9 @@ function P:Better(a,b,ctx)
     order=compare(x2,y2);if order~=nil then return order end
     return compare((a.arrival or ctx.now)-ctx.now,(b.arrival or ctx.now)-ctx.now)or false
 end
-function P:Retain(prior,best,ctx)
-    if not prior or not (prior.continuing or prior.committed)or not prior.known or not walkingSafe(prior)or not prior.terrainValidated
+function P:Retain(prior,best,ctx,baseline)
+    local exiting=prior and prior.continuing and not walkingSafe(prior)and self:Executable(prior,baseline,ctx)
+    if not prior or not (prior.continuing or prior.committed)or not prior.known or not (walkingSafe(prior)or exiting)or not prior.terrainValidated
         or prior.threatRevision~=self.threats.revision or prior.terrainRevision~=self.terrain.revision then return false end
     if not best or not best.known then return true end
     -- Hysteresis applies only to positioning. Never trade safety, damage, CC,
@@ -547,7 +606,7 @@ function P:Retain(prior,best,ctx)
     if compareCore(prior,best)~=nil then return false end
     -- A dodge that is requested but not yet sent keeps its destination while it is as safe as the best:
     -- alternating between equal escapes only loses the request (live: evade_route_changed, nothing sent).
-    if prior.committed then return true end
+    if prior.committed or exiting then return true end
     local x1,x2=positionCost(prior,ctx);local y1,y2=positionCost(best,ctx)
     if ctx.flee then return x1<=y1+25 and x2<=y2+.02 end
     return x1<=y1+.02 and x2<=y2+25
@@ -648,6 +707,9 @@ function P:Search(ctx,previous)
             bucket[z]={y=y,result=r}
         end
         if not r.known and terrainRefusal[r.reason]then terrainBlocked=true end
+        -- Escapes the weave check may try when the best one leaves no time for the attack (at most four).
+        local weave=ctx.weaveList
+        if weave and #weave<P.weaveAlternatives and r.known and walkingSafe(r)then weave[#weave+1]=r end
         if self:Better(r,best,ctx)then best=r end;return r
     end
     -- Revalidate a continuing dodge first. Releasing it merely because the
@@ -672,6 +734,9 @@ function P:Search(ctx,previous)
             end
             count=count+1;local prior=self:Evaluate(remaining,priorContext,nil,false,true)
             prior.continuing=following==true;prior.committed=not following and ctx.commitPrevious==true
+            -- A followed exit still intersects an active zone on its way out.
+            -- Compare it with the held replacement command, not with itself.
+            if prior.continuing and command and not walkingSafe(command)and self:Executable(prior,command,ctx)then baseline=command end
             if prior.continuing or prior.committed then continuing=prior end
             if self:Better(prior,best,ctx)then best=prior end
         end
@@ -793,7 +858,7 @@ function P:Search(ctx,previous)
             end end end
         end
     end
-    if self:Retain(continuing,best,ctx)then best=continuing end
+    if self:Retain(continuing,best,ctx,baseline)then best=continuing end
     if best then best.candidates=count;best.nodes=expanded;best.refinementDeferred=refinementDeferred or optionalStopped and 'checkpoint'
         best.work=math.min(ctx.cycleBudget or 64000,(ctx.cycleBudget or 64000)-ctx.sharedBudget.remaining)
         best.native=shared.native and (shared.nativeGranted or ctx.nativeBudget)-math.max(0,shared.native)or nil
@@ -808,7 +873,56 @@ end
 -- One decision. Routes are searched against padded shapes first (`ctx.margin`); only when none clears them
 -- is the remaining budget spent on exact shapes: a tight escape beats none, and a route that is clear
 -- only by less than the margin is kept rather than abandoned for nothing.
+-- Whether the orbwalker's attack fits before a dodge: the route, walked only after the attack's windup
+-- plus `weaveMargin` and the input delay (standing still meanwhile, as an attacking hero does), still
+-- avoids every hit. Evaluated as a timed route without new terrain queries (the same points were checked).
+function P:Fits(route,ctx,pause)
+    if not route or not route.path or #route.path==0 then return false end
+    local timed={};for k,v in pairs(ctx)do timed[k]=v end
+    timed.windup=pause+.035+math.min(.1,ctx.sendLag or 0);timed.delay=timed.windup;timed.sendLag=nil
+    timed.currentPath=nil;timed.sharedBudget=nil;timed.weaveList=nil
+    local r=self:Evaluate(route.path,timed,nil,true)
+    return r.known and walkingSafe(r)
+end
+-- The attack decision of a dodge (`ctx.attack`, the orbwalker's attack in an attack mode). Writes
+-- `attack` (kept: it may start now and the dodge follows; delayed: the dodge needs the time; none) and
+-- `attackReason` on the returned route, which is `best` or an equally safe escape that leaves the time.
+function P:Weave(best,baseline,ctx,alternatives)
+    local attack=ctx.attack
+    if not best or not attack then return best end
+    local status,reason='none',nil
+    if best==baseline or best.continuing or not walkingSafe(best)then reason=best==baseline and 'no_dodge'or not walkingSafe(best)and 'no_safe_route'or 'following_route'
+    elseif not attack.ready then reason='not_ready'
+    elseif not G.finite(attack.windup)then reason='windup_unknown'
+    elseif ctx.observedMotion or ctx.controlHoldUntil or (ctx.windup or 0)>0 then reason='busy'
+    elseif G.dist(ctx.origin,attack.position)>attack.reach then reason='out_of_reach'
+    else
+        local pause=attack.windup+P.weaveMargin
+        if self:Fits(best,ctx,pause)then status,reason='kept','attack_fits'
+        else
+            status,reason='delayed','windup_exceeds_time'
+            for _,r in ipairs(alternatives or {})do
+                if r~=best and r.path and compareCore(r,best)==nil and not stale(self,r)and r.terrainValidated
+                    and self:Fits(r,ctx,pause)then
+                    r.candidates,r.nodes,r.work,r.native,r.exhausted=best.candidates,best.nodes,best.work,best.native,best.exhausted
+                    r.refinementDeferred=best.refinementDeferred;r.tight=best.tight
+                    best=r;status,reason='kept','attack_fits_alternative';break
+                end
+            end
+        end
+    end
+    best.attack=status;best.attackReason=reason
+    return best
+end
 function P:Plan(ctx,previous)
+    -- A dodge in an attack mode collects a few safe escapes for the weave check.
+    if ctx.attack and ctx.attack.ready then
+        local copy={};for k,v in pairs(ctx)do copy[k]=v end;copy.weaveList={};ctx=copy
+    end
+    local best,baseline=self:Choose(ctx,previous)
+    return self:Weave(best,baseline,ctx,ctx.weaveList),baseline
+end
+function P:Choose(ctx,previous)
     local margin=ctx.margin
     if not margin or margin<=0 then return self:Search(ctx,previous)end
     local padded={};for k,v in pairs(ctx)do padded[k]=v end

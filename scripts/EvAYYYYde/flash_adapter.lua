@@ -11,14 +11,22 @@ M.profiles=require('CombatProfiles.flash')
 -- Bounded search: 12 directions ordered around the player intent, up to four
 -- wall-aware distances each, one shared work budget, at most three offers.
 M.directions=12;M.distances={375,325,275,225};M.workBudget=48000;M.maxOffered=3;M.cost=150;M.expiresMs=50
+-- Nonlethal hard control is worth Flash when its danger (evade.danger) reaches this share of current health.
+M.severeShare=.2
 local function walkingSafe(r)return r and r.known and (r.safe or r.walkSafe==true)end
-function M.Severe(result,onlyLethal)
+function M.Severe(result,onlyLethal,share)
     if type(result)~='table'or not result.known then return false,'forecast_unknown'end
     if result.lethal==true then return true,'lethal'end
+    if onlyLethal then return false,'not_lethal'end
     -- Missing CC data is not hard CC evidence. A known positive duration counts, and so
     -- does reviewed hard control whose duration is unknown (ccHard: hooks, pulls, knockbacks).
-    if not onlyLethal and (G.finite(result.cc)and result.cc>0 or result.ccHard==true)then return true,'hard_cc'end
-    return false,onlyLethal and 'not_lethal'or 'not_lethal_or_hard_cc'
+    if G.finite(result.cc)and result.cc>0 or result.ccHard==true then
+        -- Weighed by what the enemy team can do during it (evade.danger); without that evidence it counts.
+        if result.lethalRisk==true then return true,'lethal_follow_up'end
+        if result.hitDanger==nil or result.followUpUnknown or result.hitDanger>=(share or M.severeShare)then return true,'hard_cc'end
+        return false,'hard_cc_below_danger'
+    end
+    return false,'not_lethal_or_hard_cc'
 end
 -- A Flash landing must be completely clear: no modeled hit, potential hit, CC
 -- uncertainty or added positioning danger. Partial mitigation never qualifies.

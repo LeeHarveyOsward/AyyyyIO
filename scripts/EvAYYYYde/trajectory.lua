@@ -2,6 +2,26 @@ return function(require)
 -- Observed waypoints describe movement; cursor intent only ranks alternatives.
 local G=require('evade.geometry')
 local T={}
+-- A world cursor sample is usable as intent only when its native projection
+-- agrees with the provider's logical player screen point. No input is sent.
+function T.CursorMatches(g,point,screen)
+    local ok,matched,reason=pcall(function()
+        if not G.point(point)then return false,'cursor_world_unavailable'end
+        if not screen or not G.finite(screen.x)or not G.finite(screen.y)then
+            return false,'cursor_screen_unavailable'
+        end
+        local vector=g.Vector and g.Vector(point.x,point.y or 0,point.z)or point
+        local projected=vector:To2D()
+        if not projected or not G.finite(projected.x)or not G.finite(projected.y)then
+            return false,'cursor_projection_unavailable'
+        end
+        local dx,dy=projected.x-screen.x,projected.y-screen.y
+        if projected.onScreen==false or dx*dx+dy*dy>25 then return false,'cursor_projection_mismatch'end
+        return true
+    end)
+    if not ok then return false,'cursor_projection_unavailable'end
+    return matched==true,reason
+end
 function T.Read(hero)
     local p=hero.pathing
     if not p or not p.hasMovePath then return {G.copy(hero.pos)}end

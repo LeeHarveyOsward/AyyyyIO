@@ -2557,6 +2557,9 @@ Data = {
 		["Lucian"] = function()
 			return Buff:HasBuff(myHero, "LucianR")
 		end,
+		["Jade_Lucian"] = function()
+			return Buff:HasBuff(myHero, "Jade_LucianR")
+		end,
 		["Malzahar"] = function()
 			return Buff:HasBuff(myHero, "alzaharnethergraspsound")
 		end,
@@ -2639,6 +2642,9 @@ Data = {
 		end,
 		["Lucian"] = function()
 			return Buff:HasBuff(myHero, "LucianR")
+		end,
+		["Jade_Lucian"] = function()
+			return Buff:HasBuff(myHero, "Jade_LucianR")
 		end,
 		["Varus"] = function()
 			return Buff:HasBuff(myHero, "VarusQ")
@@ -2976,6 +2982,8 @@ Data = {
 		Jade_Kayle = { 4, false, 0.638 },
 		Jade_Kennen = { 4, false, 0.69 },
 		Jade_KogMaw = { 5, false, 0.665 },
+		Jade_Lucian = { 5, false, 0.625 },
+		Jade_Hecarim = { 2, true, 0.67 },
 		Jade_LeeSin = { 3, true, 0.651 },
 		Jade_Leona = { 1, true, 0.625 },
 		Jade_Lulu = { 3, false, 0.625 },
@@ -3162,6 +3170,7 @@ Data = {
 		["Leona"] = { { Slot = _Q, Key = HK_Q } },
 		["Jade_Leona"] = { { Slot = _Q, Key = HK_Q } },
 		["Lucian"] = { { Slot = _E, Key = HK_E, OnCast = true, CanCancel = true } },
+		["Jade_Lucian"] = { { Slot = _E, Key = HK_E, OnCast = true, CanCancel = true } },
 		["Malphite"] = { { Slot = _W, Key = HK_W } },		
 		["MasterYi"] = { { Slot = _W, Key = HK_W } },
 		["Nasus"] = { { Slot = _Q, Key = HK_Q } },
@@ -6335,15 +6344,46 @@ return function(cursor,env)
         r.releasedAt=env.clock();self:record(r.sentAt and 'sent' or 'aborted',r,result and nil or 'key submission declined or uncertain')
         return result
     end
+    -- A physical-Enter latch older than this without the host confirming the editor expires.
+    cursor.ChatLatchMs=8000
+    -- A key held this long while the latch is set means the player is playing, not typing.
+    cursor.ChatHoldMs=600
+    -- Keys that are part of typing or that do not mean play (Enter, Backspace, modifiers, mouse buttons).
+    local CHAT_KEYS={[1]=true,[2]=true,[4]=true,[8]=true,[13]=true,[16]=true,[17]=true,[18]=true,
+        [160]=true,[161]=true,[162]=true,[163]=true,[164]=true,[165]=true}
     function cursor:IsChatOpen()
-        -- Some hosts report false while the chat editor is visibly open.
-        -- Keep physical Enter/Escape evidence until explicitly dismissed;
-        -- injected Enter and key-repeat must never change this latch.
-        return self.ChatLatched==true or (env.chat and safe(env.chat)==true) or false
+        -- Some hosts report false while the chat editor is visibly open, so a physical Enter
+        -- latches "open" until Enter/Escape dismisses it (injected Enter and key-repeat never
+        -- change it). The latch is only a stand-in for a silent host: once the host's own flag
+        -- has reported the editor open this session, it is trusted and the latch never blocks,
+        -- and an unconfirmed latch expires after ChatLatchMs. A missed dismissal (an Enter the
+        -- game consumed, a message sent another way) must not stop all input until a reload.
+        if env.chat and safe(env.chat)==true then self.NativeChatSeen=true;return true end
+        if self.ChatLatched~=true then return false end
+        local now=env.clock();self.ChatLatchedAt=self.ChatLatchedAt or now
+        local reason=self.NativeChatSeen and 'latch ignored: host chat flag reports closed'
+            or now-self.ChatLatchedAt>self.ChatLatchMs and 'unconfirmed latch expired'
+        if not reason and self.PhysicalAt then
+            -- Typing taps keys; a key held down (a combo or clear key) means the player is playing.
+            for key,on in pairs(self.Physical)do
+                if on and not CHAT_KEYS[key]and self.PhysicalAt[key]and now-self.PhysicalAt[key]>self.ChatHoldMs then reason='key held outside the editor';break end
+            end
+        end
+        if reason then self.ChatLatched=false;self:record('chat_guard',nil,reason);return false end
+        return true
     end
     function cursor:Available()
         return not self.Resolving and not self.Stopped and safe(env.enabled) and safe(env.focus)
             and not self:IsChatOpen() and not env.hero.dead
+    end
+    -- Diagnostics: which Available() condition fails (nil when available).
+    function cursor:UnavailableReason()
+        if self.Resolving then return 'resolving' end
+        if self.Stopped then return 'stopped' end
+        if not safe(env.enabled) then return 'orbwalker_disabled' end
+        if not safe(env.focus) then return 'unfocused' end
+        if self:IsChatOpen() then return 'chat_open' end
+        if env.hero.dead then return 'dead' end
     end
     function cursor:SetPosition(p,phase,action)
         if self.Resolving then return false end
@@ -6725,6 +6765,18 @@ return function(cursor,env)
             if not ok or obj~=nil then
                 -- Retained only until MoveAtCursor returns, for a bounded detour.
                 if ok and r.pointerMove then r.hoverObject=obj end
+                -- Development trace (live s366: eight Evade dodges in a row refused here within 0.6 s
+                -- while the player rested the cursor 750 units away): what was hovered and how far it
+                -- is from the click target, to separate a lagging under-mouse sample from a real unit.
+                if ok and self.DiagnosticsEnabled~=false then
+                    local read,fields=pcall(function()
+                        local c=obj.pos;local d=worldDistance(c,r.target)
+                        return {hoverName=obj.charName or obj.name,hoverType=obj.type,hoverTeam=obj.team,
+                            hoverRadius=obj.boundingRadius,hoverX=c and c.x,hoverZ=c and c.z,
+                            hoverDistance=d<math.huge and d or nil}
+                    end)
+                    self:record('hover_obstructed',r,'ground_hover_obstructed',read and fields or {hoverReadFailed=true})
+                end
                 r.reason=ok and 'ground_hover_obstructed' or 'ground_hover_error';return false
             end
         end
@@ -7405,10 +7457,14 @@ return function(cursor,env)
             end
         end
         if freshPress then
+            self.PhysicalAt=self.PhysicalAt or {};self.PhysicalAt[down and (canonicalKey[param] or param) or mouseVK]=env.clock()
             if down and safe(env.focus) and (param==13 or param==27) then
-                self.ChatLatched=param==13 and not self:IsChatOpen() or false
+                self.ChatLatched=param==13 and not self:IsChatOpen() or false;self.ChatLatchedAt=self.ChatLatched and env.clock() or nil
                 self:record('chat_guard',nil,self.ChatLatched and 'physical Enter opened editor' or 'physical editor dismissal',
                     {chatLatched=self.ChatLatched,nativeChat=env.chat and safe(env.chat)==true or false})
+            elseif mouseDown and self.ChatLatched then
+                -- Clicking into the game leaves the editor: an unconfirmed latch is dismissed.
+                self.ChatLatched=false;self:record('chat_guard',nil,'physical click left the editor')
             end
             self.LastInputEdge.classification='new manual press or unmatched echo'
             for _,id in ipairs(self.Recent) do local r=self.Records[id];if r and r.sentAt and not r.observedAt then r.interrupted=true end end
@@ -7490,12 +7546,19 @@ end
 end)()
     Cursor = create(Cursor, {
         clock=GetTickCount, screen=Game.cursorPos,
+        -- A cursor point off the map is no cursor: on 2026-10-27 Game.mousePos()
+        -- answered (176412032, 176404864) for a whole game. Then the global, then
+        -- the hero's own position (no preferred direction) answer instead.
         world=function()
+            local function onMap(p)
+                return p and type(p.x)=='number' and type(p.z)=='number' and p.x==p.x and p.z==p.z
+                    and math.abs(p.x)<=20000 and math.abs(p.z)<=20000 and p or nil
+            end
             if type(Game.mousePos)=='function' then
                 local ok,p=pcall(Game.mousePos)
-                if ok and p and type(p.x)=='number' and type(p.z)=='number' then return p end
+                if ok and onMap(p) then return p end
             end
-            return mousePos
+            return onMap(mousePos) or myHero.pos
         end,
         liveWorld=Game.mousePos,
         set=Control.SetCursorPos, down=Control.KeyDown, up=Control.KeyUp,
@@ -9228,7 +9291,7 @@ install(Damage,Attack,Data,myHero,GameTimer,(function()
 --   (full angles, wiki); the order inside one tier is not published.
 -- Love Tap: .5 total AD, +.1 at levels 4/7/9/11/13/20/25/30 (asset MissFortunePassive calculation), halved on minions
 --   (wiki; Riot 11.20). Monsters and structures are not credited (no reviewed classification).
--- Normal E: 8.75/12.5/16.25/20/23.75 (+15% AP) magic per tick, every .25 s for 2 s (asset BaseDamagePerSecond/4,
+-- Normal E: 11.25/15/18.75/22.5/26.25 (+15% AP) magic per tick, every .25 s for 2 s (current BaseDamagePerSecond/4,
 --   APRatioPerSecond .6/4, TicksPerSecond 4, BaseDuration 2), slow 40% (+6% per 100 AP), cast delay .25.
 -- Classic E: asset BaseDamage 95/155/215/275/335 (+80% AP) read as the TOTAL over 2 s in 8 ticks (the smaller
 --   reading; the field could be per second), MoveSpeedMod -.20/-.28/-.36/-.44/-.52, Duration 2.
@@ -9238,16 +9301,35 @@ install(Damage,Attack,Data,myHero,GameTimer,(function()
 --   (asset Jade_MissFortuneViciousStrikes: ASMod, Grievous; the Classic Strut is the uncastable passive).
 -- Normal R: 30 deg cone, 1450 effect radius (wiki; asset geometry 34 deg, the narrower is used for occupancy), first wave
 --   .066 s after the channel starts, waves .2036/.1781/.1583 s apart (wiki). Classic: no published cone or wave timing.
+local D=(function()
+return {
+ MissFortuneScattershot={
+  BaseSlowAmount=.4,CastDelay=.25,
+ },
+ MissFortuneViciousStrikes={
+  PassiveMaxMS={60,70,80,90,100},castFrame=8,
+ },
+ MissFortuneBullets={
+  castRange=1450,
+ },
+ Jade_MissFortuneRicochetShot={
+  castRangeDisplayOverride=650,
+ },
+ Jade_MissFortuneScattershot={
+  APRatio=.8,BaseDamage={95,155,215,275,335},mCastTime=.25,
+ },
+}
+end)()
 return {
  normal={id='normal',qReach='attack',qCrit=1.5,qCritIE=.15,ieItem=3031,
   loveTap={base=.5,step=.1,levels={4,7,9,11,13,20,25,30},minion=.5},
   tiers={{range=500,angle=20},{range=500,angle=40},{range=500,angle=110},{range=150,angle=160}},
-  eTick={8.75,12.5,16.25,20,23.75},eTickAP=.15,eTicks=8,eInterval=.25,eSlow=.4,eSlowAP=.0006,eDelay=.25,
-  wHaste={60,70,80,90,100},wHasteSeconds=2,wDelay=8/30,
+  eTick={11.25,15,18.75,22.5,26.25},eTickAP=.15,eTicks=8,eInterval=.25,eSlow=D.MissFortuneScattershot.BaseSlowAmount,eSlowAP=.0006,eDelay=D.MissFortuneScattershot.CastDelay,
+  wHaste=D.MissFortuneViciousStrikes.PassiveMaxMS,wHasteSeconds=2,wDelay=D.MissFortuneViciousStrikes.castFrame/30,
   wSource='MissFortune spells.json MissFortuneViciousStrikes PassiveMaxMS 60-100, castFrame 8; wiki Miss_Fortune Strut read 2026-10-10 (full Strut on cast); 2 s planning bound',
-  rAngle=30,rRange=1450,rFirstWave=.066,rInterval={.2036,.1781,.1583}},
- classic={id='classic',qReach=650,
-  eTotal={95,155,215,275,335},eAP=.8,eTicks=8,eInterval=.25,eSlowRank={.2,.28,.36,.44,.52},eDelay=.25,
+  rAngle=30,rRange=D.MissFortuneBullets.castRange,rFirstWave=.066,rInterval={.2036,.1781,.1583}},
+ classic={id='classic',qReach=D.Jade_MissFortuneRicochetShot.castRangeDisplayOverride,
+  eTotal=D.Jade_MissFortuneScattershot.BaseDamage,eAP=D.Jade_MissFortuneScattershot.APRatio,eTicks=8,eInterval=.25,eSlowRank={.2,.28,.36,.44,.52},eDelay=D.Jade_MissFortuneScattershot.mCastTime,
   rAngle=30,rRange=1400},
 }
 
@@ -9443,36 +9525,70 @@ end
 
 end)()
 install(Damage,Buff,GameTimer,(function()
--- 26.20 active slot/calculation extraction. Units: world units, seconds, raw damage.
--- Provenance: research/26.20-five-champions/<identity>/{manifest,spells}.json.
+-- Current profile data: implementation/family/current-patch.json.
+-- Units: world units, seconds, raw damage.
 -- Runtime aliases and gameplay outcomes require live acceptance; retained rows are not stages.
-local P={version=1,patch='26.20',assetVersion='16.20.1'}
+local P={version=1,patch='26.21',assetVersion='16.21.829.8620'}
 local factories={}
 factories['aatrox']=function()
 -- Shared Aatrox Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+local D=(function()
+return {
+ AatroxR={
+  RDuration=10,RHealingAmp={.5,.75,1},RTotalADAmp={.2,.3,.4},
+ },
+ AatroxQ={
+  QBaseDamage={10,25,40,55,70},QExtensionTime=4,QRampBonus=.25,QSweetSpotBonus=.75,QTotalADRatio={.6,.675,.75,.825,.9},
+ },
+ AatroxQWrapperCast={
+  mCastTime=.6,
+ },
+ AatroxW={
+  WBaseDamage={30,40,50,60,70},WBonusADRatio=.4,castRange=825,mCastTime=.25,mMissileWidth=80,mSpeed=1800,
+ },
+ AatroxE={
+  EMaxRange=300,ESpellVamp=16,
+ },
+ Jade_AatroxW={
+  LowHealthPercent=50,WBaseDamage={60,95,130,165,200},WBaseHeal={20,25,30,35,40},WDamageADRatio=1,WHealADRatio=.25,WLowHealthHealBonus=3,
+ },
+ Jade_AatroxEConeMissile={
+  EAPRatio=.6,EBaseDamage={75,120,165,210,255},EBonusADRatio=.6,castRange=1075,mMissileWidth=40,mSpeed=1250,
+ },
+ Jade_AatroxE={
+  EHealthCostPercent=.05,mCastTime=.25,
+ },
+ Jade_AatroxR={
+  RAttackSpeed={.4,.5,.6},RBaseDamage={200,300,400},RBonusRange=175,RDuration=12,RRadius=550,
+ },
+ Jade_AatroxQ={
+  QBaseDamage={70,115,160,205,250},QBonusADRatio=.6,QDamageRadius=310,QHealthCostPercent=.1,QKnockupRadius=190,QMaxLeapRange=650,
+ },
+}
+end)()
 local profiles={}
 profiles['Aatrox']=profiles['Aatrox']or {}
 profiles['Aatrox'].combat={id='normal',champion='Aatrox',names={{'AatroxQ','AatroxQ2','AatroxQ3'},{'AatroxW'},{'AatroxE'},{'AatroxR'}},
-  q={range=625,radius=90,delay=.6,speed=math.huge,type='physical',base={10,25,40,55,70},ad={.6,.675,.75,.825,.9}},
+  q={range=625,radius=90,delay=D.AatroxQWrapperCast.mCastTime,speed=math.huge,type='physical',base=D.AatroxQ.QBaseDamage,ad=D.AatroxQ.QTotalADRatio},
   -- 2026-10-10 (wiki Aatrox, Last changed V26.19, read 2026-10-10): W physical since V25.11. Q1 625x180 (half-width
   -- 90); Q2 trapezoid from 100 behind to 475 ahead, 300 to 500 wide (half-widths 150/250); Q3 300-radius circle 200
   -- ahead, 180-radius sweet spot. Q1/Q2 sweet depths are not published: 475 and 350 kept (live damage logs settle them).
   -- qWindow 4 s (asset QExtensionTime). wChainRadius: not published; 150 is below DepressiveAIONext's 185+bounding,
   -- development 'aatrox_w_pull' traces settle it. qMinion: wiki "55/60/65/70% (based on level)" without the level
   -- breakpoints; the lowest share 0.55 is used for every level so a minion kill is never overestimated.
-  w={range=825,radius=80,delay=.25,speed=1800,type='physical',base={30,40,50,60,70},ad=.4,collision=true},
-  e={range=300},r={range=0},qStages={{range=625,width=90,sweetMin=475,sweetMax=625},{range=475,back=100,near=150,width=250,sweetMin=350,sweetMax=475},{center=200,radius=300,sweetRadius=180}},qRamp=.25,sweetBonus=.75,
-  qWindow=4,wChainRadius=150,qMinion=.55,
-  passiveNames={'AatroxPassiveReady','AatroxPassive'},tetherNames={'AatroxW'},passiveHP={.04,.10},passiveCap={100,320},eHealingHP=.00013,eHealing=.16,rAD={.2,.3,.4},rHealing={.5,.75,1},rDuration=10}
+  w={range=D.AatroxW.castRange,radius=D.AatroxW.mMissileWidth,delay=D.AatroxW.mCastTime,speed=D.AatroxW.mSpeed,type='physical',base=D.AatroxW.WBaseDamage,ad=D.AatroxW.WBonusADRatio,collision=true},
+  e={range=D.AatroxE.EMaxRange},r={range=0},qStages={{range=625,width=90,sweetMin=475,sweetMax=625},{range=475,back=100,near=150,width=250,sweetMin=350,sweetMax=475},{center=200,radius=300,sweetRadius=180}},qRamp=D.AatroxQ.QRampBonus,sweetBonus=D.AatroxQ.QSweetSpotBonus,
+  qWindow=D.AatroxQ.QExtensionTime,wChainRadius=150,qMinion=.55,qCast='AatroxQWrapperCast',
+  passiveNames={'AatroxPassiveReady','AatroxPassive'},tetherNames={'AatroxW'},passiveHP={.04,.10},passiveCap={100,320},eHealingHP=.00013,eHealing=D.AatroxE.ESpellVamp/100,rAD=D.AatroxR.RTotalADAmp,rHealing=D.AatroxR.RHealingAmp,rDuration=D.AatroxR.RDuration}
 profiles['Jade_Aatrox']=profiles['Jade_Aatrox']or {}
 profiles['Jade_Aatrox'].combat={id='classic',champion='Aatrox',names={{'Jade_AatroxQ'},{'Jade_AatroxW','Jade_AatroxW2'},{'Jade_AatroxE'},{'Jade_AatroxR'}},
-  q={range=650,radius=310,knockupRadius=190,delay=.6,speed=math.huge,type='physical',base={70,115,160,205,250},bonusAD=.6,healthCost=.1},
-  w={range=0,type='physical',base={60,95,130,165,200},bonusAD=1},
+  q={range=D.Jade_AatroxQ.QMaxLeapRange,radius=D.Jade_AatroxQ.QDamageRadius,knockupRadius=D.Jade_AatroxQ.QKnockupRadius,delay=.6,speed=math.huge,type='physical',base=D.Jade_AatroxQ.QBaseDamage,bonusAD=D.Jade_AatroxQ.QBonusADRatio,healthCost=D.Jade_AatroxQ.QHealthCostPercent},
+  w={range=0,type='physical',base=D.Jade_AatroxW.WBaseDamage,bonusAD=D.Jade_AatroxW.WDamageADRatio},
   -- E: Jade_AatroxEConeMissile castRange 1075, missile line radius 40 (field 1a24e25e; the second blade 15,
   -- castRadius 100 is the spread, not the hit width); 26.20 Jade_Aatrox spells.json, 2026-10-10.
-  e={range=1075,radius=40,delay=.25,speed=1250,type='magical',base={75,120,165,210,255},bonusAD=.6,ap=.6,healthCost=.05},
-  r={range=550,type='magical',base={200,300,400},ap=1},wHeal={20,25,30,35,40},wHealAD=.25,wHealThreshold=.5,wHealAmplifier=3,
-  healNames={'Jade_AatroxWLife'},damageNames={'Jade_AatroxWPower'},reviveNames={'Jade_AatroxPassiveDeath'},wAttacks=3,reviveDuration=3,rDuration=12,rAS={.4,.5,.6},rAttackRange=175}
+  e={range=D.Jade_AatroxEConeMissile.castRange,radius=D.Jade_AatroxEConeMissile.mMissileWidth,delay=D.Jade_AatroxE.mCastTime,speed=D.Jade_AatroxEConeMissile.mSpeed,type='magical',base=D.Jade_AatroxEConeMissile.EBaseDamage,bonusAD=D.Jade_AatroxEConeMissile.EBonusADRatio,ap=D.Jade_AatroxEConeMissile.EAPRatio,healthCost=D.Jade_AatroxE.EHealthCostPercent},
+  r={range=D.Jade_AatroxR.RRadius,type='magical',base=D.Jade_AatroxR.RBaseDamage,ap=1},wHeal=D.Jade_AatroxW.WBaseHeal,wHealAD=D.Jade_AatroxW.WHealADRatio,wHealThreshold=D.Jade_AatroxW.LowHealthPercent/100,wHealAmplifier=D.Jade_AatroxW.WLowHealthHealBonus,
+  healNames={'Jade_AatroxWLife'},damageNames={'Jade_AatroxWPower'},reviveNames={'Jade_AatroxPassiveDeath'},wAttacks=3,reviveDuration=3,rDuration=D.Jade_AatroxR.RDuration,rAS=D.Jade_AatroxR.RAttackSpeed,rAttackRange=D.Jade_AatroxR.RBonusRange}
 local normal,classic=profiles.Aatrox.combat,profiles.Jade_Aatrox.combat
 normal.e.mobility=true;classic.q.mobility=true
 function normal.rawModifier(p,raw,s,slot,rank,stats,target,options,finite)
@@ -9538,12 +9654,39 @@ factories['akali']=function()
 --     for hit counts. Needs a live geometry check.
 --   Normal e2KillRange 1500: the E recast reaches the marked target at any distance (wiki read 2026-10-10); 1500 is the
 --     policy bound for a recast that kills by itself, 1000 for every other recast.
+-- Classic q 575: Jade_AkaliQ castRangeDisplayOverride (castRange 600), 16.21 ability table 2026-10-28; the earlier
+--   550 had no source.
+local D=(function()
 return {
- Jade_Akali={id='classic',q=550,w=475,e=325,r=700,qAP=.4,eAP=.4,qMark={base={45,70,95,120,145},ap=.4},
-  rDash={name='Jade_AkaliR',range=700,speeds={1600,2000},castDelays={0,.25},onTarget=true,through=715,
+ AkaliW={
+  castRange=350,
+ },
+ AkaliQ={
+  APRatio=.6,castRange=550,
+ },
+ AkaliR={
+  CooldownBetweenCasts=2.5,castRange=675,mCastTime=.25,
+ },
+ AkaliE={
+  TotalAPRatio=1.1,castRange=825,
+ },
+ Jade_AkaliR={
+  DashDistance=715,
+ },
+ Jade_AkaliQ={
+  APRatioInitial=.4,APRatioProc=.4,ProcDamageBase={45,70,95,120,145},castRangeDisplayOverride=575,
+ },
+ Jade_AkaliE={
+  ERadius=325,TotalAPRatio=.4,
+ },
+}
+end)()
+return {
+ Jade_Akali={id='classic',q=D.Jade_AkaliQ.castRangeDisplayOverride,w=475,e=D.Jade_AkaliE.ERadius,r=700,qAP=D.Jade_AkaliQ.APRatioInitial,eAP=D.Jade_AkaliE.TotalAPRatio,qMark={base=D.Jade_AkaliQ.ProcDamageBase,ap=D.Jade_AkaliQ.APRatioProc},
+  rDash={name='Jade_AkaliR',range=700,speeds={1600,2000},castDelays={0,.25},onTarget=true,through=D.Jade_AkaliR.DashDistance,
    source='2026-10-10 conservative bracket: wiki League_Classic/Akali (target range 700, speed 1600 before V5.9, 2000 after) and installed Jade_AkaliR (castRange 800, DashDistance 715); both end points checked'}},
- Akali={id='normal',q=500,qHitRange=550,w=350,e=825,r=675,qAP=.6,eAP=1.1,r2Window=10,r2Delay=2.5,qFan={range=500,angle=20},e2Range=1000,e2KillRange=1500,r2Dash={750,800},
-  rDash={name='AkaliR',range=675,speeds={1500},castDelays={.25},through=750,past=150,
+ Akali={id='normal',q=500,qHitRange=D.AkaliQ.castRange,w=D.AkaliW.castRange,e=D.AkaliE.castRange,r=D.AkaliR.castRange,qAP=D.AkaliQ.APRatio,eAP=D.AkaliE.TotalAPRatio,r2Window=10,r2Delay=D.AkaliR.CooldownBetweenCasts,qFan={range=500,angle=20},e2Range=1000,e2KillRange=1500,r2Dash={750,800},
+  rDash={name='AkaliR',range=D.AkaliR.castRange,speeds={1500},castDelays={D.AkaliR.mCastTime},through=750,past=150,
    source='https://wiki.leagueoflegends.com/en-us/Akali 2026-10-08: Perfect Execution first cast range 675, cast 0.25, speed 1500, dash 750 and at least 150 past the target'}},
 }
 
@@ -9556,30 +9699,80 @@ factories['amumu']=function()
 -- (the self-toggle's indicator fields; no separate effect/damage radius exists in the client data), so no field
 -- settles it. wRadius stays the confirmed (conservative) radius; Normal wReach 350 (wiki V25.18, KillerAmumu) is
 -- the switch-on/keep-on reach so Despair is never off where it could already hurt. Classic has no second source.
+local D=(function()
+return {
+ CurseoftheSadMummy={
+  RCoefficient=.8,RDamage={200,300,400},
+ },
+ AuraofDespair={
+  castRadius=300,
+ },
+ Tantrum={
+  BaseDamage={65,95,125,155,185},castRadius=350,
+ },
+ BandageToss={
+  BaseDamage={70,95,120,145,170},
+ },
+ Jade_AmumuAuraofDespair={
+  castRadius=300,
+ },
+ Jade_AmumuCurseoftheSadMummy={
+  RCoefficient=.8,RDamage={150,250,350},
+ },
+ Jade_AmumuBandageToss={
+  APRatio=.7,BaseDamage={80,140,200,260,320},
+ },
+}
+end)()
 return {
  Amumu={id='normal',q='BandageToss',w='AuraofDespair',e='Tantrum',r='CurseoftheSadMummy',
-  charges=2,passive='AmumuPDebuff',passiveKind='true_damage_amp',qBase={70,95,120,145,170},qAP=.85,
-   eBase={65,95,125,155,185},eAP=.5,rBase={200,300,400},rAP=.8,rInterrupt=true,wRadius=300,wReach=350},
+  charges=2,passive='AmumuPDebuff',passiveKind='true_damage_amp',qBase=D.BandageToss.BaseDamage,qAP=.85,
+   eBase=D.Tantrum.BaseDamage,eAP=.5,rBase=D.CurseoftheSadMummy.RDamage,rAP=D.CurseoftheSadMummy.RCoefficient,rInterrupt=true,wRadius=D.AuraofDespair.castRadius,wReach=D.Tantrum.castRadius},
  Jade_Amumu={id='classic',q='Jade_AmumuBandageToss',w='Jade_AmumuAuraofDespair',e='Jade_AmumuTantrum',r='Jade_AmumuCurseoftheSadMummy',
-  charges=0,passive='Jade_AmumuCursedTouch',passiveKind='magic_resist_reduction',qBase={80,140,200,260,320},qAP=.7,
-   eBase={65,95,125,150,175},eAP=.5,rBase={150,250,350},rAP=.8,rInterrupt=false,wRadius=300},
+  charges=0,passive='Jade_AmumuCursedTouch',passiveKind='magic_resist_reduction',qBase=D.Jade_AmumuBandageToss.BaseDamage,qAP=D.Jade_AmumuBandageToss.APRatio,
+   eBase={65,95,125,150,175},eAP=.5,rBase=D.Jade_AmumuCurseoftheSadMummy.RDamage,rAP=D.Jade_AmumuCurseoftheSadMummy.RCoefficient,rInterrupt=false,wRadius=D.Jade_AmumuAuraofDespair.castRadius},
 }
 
 end
 factories['annie']=function()
 -- Shared Annie mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ AnnieR={
+  InitialDamage={150,275,400},
+ },
+ AnnieQ={
+  APRatio=.8,BaseDamage={80,125,170,215,260},
+ },
+ AnnieE={
+  ShieldAmount={60,95,130,165,200},ShieldDuration=3,
+ },
+ AnnieW={
+  APRatio=.8,BaseDamage={70,110,150,190,230},
+ },
+ Jade_AnnieR={
+  InitialDamage={200,325,450},
+ },
+ Jade_AnnieQ={
+  APRatio=.75,BaseDamage={90,130,170,210,250},
+ },
+ Jade_AnnieW={
+  APRatio=.8,BaseDamage={85,135,185,235,285},
+ },
+}
+end)()
 return {
  Annie={id='normal',q='Disintegrate',w='Incinerate',e='AnnieE',r='InfernalGuardian',
   guides={AnnieRController=true,InfernalGuardianGuide=true},stack='anniepassivestack',primed='anniepassiveprimed',
-  qBase={80,125,170,215,260},qAP=.8,wBase={70,110,150,190,230},wAP=.8,rBase={150,275,400},rAP=.75,allyE=true,
+  qBase=D.AnnieQ.BaseDamage,qAP=D.AnnieQ.APRatio,wBase=D.AnnieW.BaseDamage,wAP=D.AnnieW.APRatio,rBase=D.AnnieR.InitialDamage,rAP=.75,allyE=true,
   -- Molten Shield: 60-200 (+40% AP) for 3 s on Annie or an ally within 800, no cast time.
-  eShield={60,95,130,165,200},eShieldAP=.4,eShieldDuration=3,eDelay=0,
+  eShield=D.AnnieE.ShieldAmount,eShieldAP=.4,eShieldDuration=D.AnnieE.ShieldDuration,eDelay=0,
   shieldSource='https://wiki.leagueoflegends.com/en-us/Annie Molten Shield, read 2026-10-08 (page last changed V26.04)',
   -- Tibbers also receives the Molten Shield (wiki Annie, read 2026-10-10, V26.04): E in Combo while he fights.
   ePet=true},
  Jade_Annie={id='classic',q='Jade_Annie_Disintegrate',w='Jade_Annie_Incinerate',e='Jade_AnnieE',r='Jade_AnnieR',
   guides={Jade_Annie_InfernalGuardianGuide=true},stack='Jade_AnniePassive_StunBuildupBuff',primed='Jade_AnniePassive_StunReadyBuff',
-  qBase={90,130,170,210,250},qAP=.75,wBase={85,135,185,235,285},wAP=.8,rBase={200,325,450},rAP=.7,allyE=false},
+  qBase=D.Jade_AnnieQ.BaseDamage,qAP=D.Jade_AnnieQ.APRatio,wBase=D.Jade_AnnieW.BaseDamage,wAP=D.Jade_AnnieW.APRatio,rBase=D.Jade_AnnieR.InitialDamage,rAP=.7,allyE=false},
  -- Classic Molten Shield is +20-60 armor and magic resist for 5 s on Annie (Jade_Annie/spells.json Resistances,
  -- ShieldDuration; League_Classic/Annie read 2026-10-08): no absorb amount, so no eShield and no shield offer.
  -- Whether Classic E also reaches Tibbers is unmeasured (no ePet): the dev trace annie_classic_e_tibbers settles it.
@@ -9590,34 +9783,79 @@ factories['caitlyn']=function()
 -- Ranking pass 2026-10-10 (experiments/champion-ranking-20261010/dossiers/Caitlyn.md), wiki.leagueoflegends.com/en-us/Caitlyn
 -- read 2026-10-10: Normal R crit bonus is 1 + (0.30 + 0.09 with Infinity Edge) x crit chance (was 0.3 x crit x (critDamage-1),
 -- which refused kills). Headshot every 5 attacks, 4 from brush (patch 13.16; was 6, preview data only). The Normal passive
--- crit term below (critChance x (critDamage-1)) is not confirmed by the wiki text read; Hooks.attack records observed
--- Headshots (caitlyn_headshot trace) to settle it. Classic: the net enabling a Headshot is unmeasured (no net buff alias),
+-- crit term follows the current installed CriticalStrikeScaling and calculation. Current source pins are in
+-- implementation/family/current-patch.json; live Headshot acceptance remains pending. Classic: the net enabling a Headshot is unmeasured (no net buff alias),
 -- so the E + Headshot finisher is Normal only.
--- Shared Caitlyn Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+-- Shared Caitlyn Normal/Classic mechanics; current pins are in implementation/family/current-patch.json.
 -- R timing, 2026-10-08: Normal 0.375 s cast + 1 s channel (delay 1.375), missile speed 3200
 -- (wiki.leagueoflegends.com/en-us/Caitlyn, Ace in the Hole); the earlier 1 / 1500 made the lethal
 -- check add two more seconds of regeneration and refuse valid kills. Classic: speed 3200 and a
 -- 1 s channel (wiki.leagueoflegends.com/en-us/League_Classic/Caitlyn; V1.0.0.112 raised it from
 -- 2200); its "brief delay" before the channel is not quantified, so delay stays 1.
 -- Classic W: arm 1.1 s and three traps per the League Classic page (V1.0.0.114: 3 from 2); the
--- earlier 1 / 2 only cost a trap or made a trap arm 0.1 s late. Uncertain and unchanged: Classic Q
--- cast time (.625 here, 1 on the page), Classic E range (750 here, 950 on the page) and recoil
+-- earlier 1 / 2 only cost a trap or made a trap arm 0.1 s late. Classic Q cast time 1 s and Classic E
+-- range 950, half width 80, speed 2000 come from Classic's own records (2026-10-28, 16.21 ability table:
+-- Jade_CaitlynQ CastTime 1, Jade_CaitlynEMissile castRangeDisplayOverride 950, mMissileWidth 80, mSpeed 2000);
+-- the earlier .625 / 750 / 70 / 1600 were the Normal values. Uncertain and unchanged: Classic E recoil
 -- (390 here, 400 on the page). Normal E recoil speed 1000 (same page, "1600 / 1000") is recorded
 -- as recoilSpeed; the Normal recoil is offered to Evade with the cast mirrored (Core:RegisterMobility aim).
+local D=(function()
+return {
+ CaitlynPassive={
+  AttacksPerHeadshot=5,CriticalStrikeScaling=.8,
+ },
+ CaitlynEMissile={
+  castRange=800,mMissileWidth=70,mSpeed=1600,
+ },
+ CaitlynE={
+  Damage={80,130,180,230,280},castRangeDisplayOverride=750,
+ },
+ CaitlynW={
+  ADRatio=.3,BaseDamage={35,80,125,170,215},MaximumTraps={3,3,4,4,5},TrapDuration={30,35,40,45,50},castFrameSeconds=.25,castRadius=75,castRange=800,
+ },
+ CaitlynR={
+  CriticalStrikeModifier=.3,RBaseDamage={300,475,650},castRange=3500,
+ },
+ CaitlynRMissile={
+  mMissileWidth=40,mSpeed=3200,
+ },
+ CaitlynQ={
+  BaseDamage={50,95,140,185,230},SecondaryMult=.6,castRange=1300,castRangeDisplayOverride=1250,mMissileWidth=60,mSpeed=2200,tADRatio={1.25,1.45,1.65,1.85,2.05},
+ },
+ Jade_CaitlynRMissile={
+  mMissileWidth=40,mSpeed=3200,
+ },
+ Jade_CaitlynR={
+  RADRatio=2,RBaseDamage={250,475,700},castRange={2000,2500,3000},
+ },
+ Jade_CaitlynEMissile={
+  castRangeDisplayOverride=950,mMissileWidth=80,mSpeed=2000,
+ },
+ Jade_CaitlynE={
+  Damage={80,130,180,230,280},
+ },
+ Jade_CaitlynW={
+  BaseDamage={80,130,180,230,280},MaxTraps=3,castFrameSeconds=.25,castRadius=75,castRange=800,
+ },
+ Jade_CaitlynQ={
+  ADRatio=1.3,BaseDamage={20,60,100,140,180},CastTime=1,ExtraHitPercentReduction=.1,MinimumDamagePercent=.5,castRangeDisplayOverride=1250,mMissileWidth=90,mSpeed=2200,
+ },
+}
+end)()
 local profiles={}
 profiles['Caitlyn']=profiles['Caitlyn']or {}
 profiles['Caitlyn'].combat={id='normal',champion='Caitlyn',names={{'CaitlynQ','CaitlynQ2'},{'CaitlynW'},{'CaitlynE'},{'CaitlynR'}},
-   q={range=1250,flightRange=1300,radius=60,delay=.625,speed=2200,type='physical',base={50,90,130,170,210},ad={1.25,1.45,1.65,1.85,2.05}},
-  w={range=800,delay=.25,arm=1,radius=75,max={3,3,4,4,5},duration={30,35,40,45,50},type='physical',base={35,80,125,170,215},bonusAD=.3},
-   e={range=750,flightRange=800,radius=70,delay=.15,speed=1600,collision=true,type='magical',base={80,130,180,230,280},ap=.8,recoil=390,recoilSpeed=1000},
-  r={range=3500,delay=1.375,speed=3200,radius=40,type='physical',base={300,475,650},bonusAD=1,crit=.3,critIE=.09},qPierce=.6,
-  headshotNames={'CaitlynPassiveDriver'},trapNames={'CaitlynWSight','CaitlynWSnare'},netNames={'Eternals_CaitlynEHeadshotTracker'},trapObjectNames={'CaitlynTrap'},headshotLevel={.6,.8,1},headshotAttacks=5,headshotAttacksBrush=4}
+   q={range=D.CaitlynQ.castRangeDisplayOverride,flightRange=D.CaitlynQ.castRange,radius=D.CaitlynQ.mMissileWidth,delay=.625,speed=D.CaitlynQ.mSpeed,type='physical',base=D.CaitlynQ.BaseDamage,ad=D.CaitlynQ.tADRatio},
+  w={range=D.CaitlynW.castRange,delay=D.CaitlynW.castFrameSeconds,arm=1,radius=D.CaitlynW.castRadius,max=D.CaitlynW.MaximumTraps,duration=D.CaitlynW.TrapDuration,type='physical',base=D.CaitlynW.BaseDamage,bonusAD=D.CaitlynW.ADRatio},
+   e={range=D.CaitlynE.castRangeDisplayOverride,flightRange=D.CaitlynEMissile.castRange,radius=D.CaitlynEMissile.mMissileWidth,delay=.15,speed=D.CaitlynEMissile.mSpeed,collision=true,type='magical',base=D.CaitlynE.Damage,ap=.8,recoil=390,recoilSpeed=1000},
+  r={range=D.CaitlynR.castRange,delay=1.375,speed=D.CaitlynRMissile.mSpeed,radius=D.CaitlynRMissile.mMissileWidth,type='physical',base=D.CaitlynR.RBaseDamage,bonusAD=1,crit=D.CaitlynR.CriticalStrikeModifier,critIE=.09},qPierce=D.CaitlynQ.SecondaryMult,
+  headshotNames={'CaitlynPassiveDriver'},trapNames={'CaitlynWSight','CaitlynWSnare'},netNames={'Eternals_CaitlynEHeadshotTracker'},trapObjectNames={'CaitlynTrap'},headshotLevel={.6,.7,.8},headshotCrit=D.CaitlynPassive.CriticalStrikeScaling,headshotAttacks=D.CaitlynPassive.AttacksPerHeadshot,headshotAttacksBrush=4}
 profiles['Jade_Caitlyn']=profiles['Jade_Caitlyn']or {}
 profiles['Jade_Caitlyn'].combat={id='classic',champion='Caitlyn',names={{'Jade_CaitlynQ'},{'Jade_CaitlynW'},{'Jade_CaitlynE'},{'Jade_CaitlynR'}},
-  q={range=1250,radius=90,delay=.625,speed=2200,type='physical',base={20,60,100,140,180},ad=1.3},
-  w={range=800,delay=.25,arm=1.1,radius=75,max={3,3,3,3,3},type='magical',base={80,130,180,230,280},ap=.6},
-  e={range=750,radius=70,delay=.15,speed=1600,collision=true,type='magical',base={80,130,180,230,280},ap=.8,recoil=390},
-  r={range={2000,2500,3000},delay=1,speed=3200,radius=40,type='physical',base={250,475,700},bonusAD=2},qPierceStep=.1,qPierceMin=.5,
+  q={range=D.Jade_CaitlynQ.castRangeDisplayOverride,radius=D.Jade_CaitlynQ.mMissileWidth,delay=D.Jade_CaitlynQ.CastTime,speed=D.Jade_CaitlynQ.mSpeed,type='physical',base=D.Jade_CaitlynQ.BaseDamage,ad=D.Jade_CaitlynQ.ADRatio},
+  w={range=D.Jade_CaitlynW.castRange,delay=D.Jade_CaitlynW.castFrameSeconds,arm=1.1,radius=D.Jade_CaitlynW.castRadius,max={D.Jade_CaitlynW.MaxTraps,D.Jade_CaitlynW.MaxTraps,D.Jade_CaitlynW.MaxTraps,D.Jade_CaitlynW.MaxTraps,D.Jade_CaitlynW.MaxTraps},type='magical',base=D.Jade_CaitlynW.BaseDamage,ap=.6},
+  e={range=D.Jade_CaitlynEMissile.castRangeDisplayOverride,radius=D.Jade_CaitlynEMissile.mMissileWidth,delay=.15,speed=D.Jade_CaitlynEMissile.mSpeed,collision=true,type='magical',base=D.Jade_CaitlynE.Damage,ap=.8,recoil=390},
+  r={range=D.Jade_CaitlynR.castRange,delay=1,speed=D.Jade_CaitlynRMissile.mSpeed,radius=D.Jade_CaitlynRMissile.mMissileWidth,type='physical',base=D.Jade_CaitlynR.RBaseDamage,bonusAD=D.Jade_CaitlynR.RADRatio},qPierceStep=D.Jade_CaitlynQ.ExtraHitPercentReduction,qPierceMin=D.Jade_CaitlynQ.MinimumDamagePercent,
   headshotNames={'Jade_CaitlynHeadshot'},headshotCountNames={'Jade_CaitlynHeadshotCount'},trapNames={'Jade_CaitlynYordleTrapDebuff'},trapObjectNames={'Jade_CaitlynTrap'},headshotBonus=.5,headshotNonChampion=1.5,headshotAttacks={8,7,6},trapLifetimeUnknown=true}
 local normal,classic=profiles.Caitlyn.combat,profiles.Jade_Caitlyn.combat
 normal.e.mobilitySource='https://wiki.leagueoflegends.com/en-us/Caitlyn 90 Caliber Net: recoils 390 units, cast time 0.15, speed 1600 / 1000 (missile / recoil), read 2026-10-08'
@@ -9642,33 +9880,65 @@ end
 function normal.passive(p,stats,target,finite)
  if not finite(stats.critChance)or not finite(stats.critDamage)then return 0 end
  local level=stats.level
- local scale=target and target.type~=stats.heroType and 1.1 or(level>=13 and 1 or level>=7 and .8 or .6)
- return stats.totalDamage*(scale+stats.critChance*(stats.critDamage-1)),'physical'
+ local scale=target and target.type~=stats.heroType and 1.1 or p.headshotLevel[level>=13 and 3 or level>=7 and 2 or 1]
+ return stats.totalDamage*(scale+p.headshotCrit*stats.critChance*(stats.critDamage-1)),'physical'
 end
 return profiles
 
 end
 factories['chogath']=function()
 -- Shared Chogath mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ Feast={
+  CastRangePerStack=2.5,RBaseDamage={300,475,650},RBaseMonsterDamage=1200,RMinionMaxStacks=6,
+ },
+ VorpalSpikesMissle={
+  castRange=650,mMissileWidth=170,mSpeed=1475,
+ },
+ VorpalSpikes={
+  BaseDamage={30,50,70,90,110},BuffDuration=6,FeastStackMultiplier=.5,PercentHealthDamage={2.5,2.85,3.2,3.55,3.9},
+ },
+ Rupture={
+  BaseDamage={80,135,190,245,300},castRadius=230,
+ },
+ Jade_ChogathR={
+  MaxStacks=6,RAPRatio=.7,RBaseDamage={300,475,650},RBaseMonsterDamage=1000,
+ },
+ Jade_ChogathQ={
+  BaseDamage={80,135,190,245,305},KnockupDelay=.625,castRadius=250,
+ },
+ Jade_ChogathEMissile={
+  castRange=650,mMissileWidth=170,mSpeed=1475,
+ },
+ Jade_ChogathE={
+  BaseDamage={20,35,50,65,80},
+ },
+ Jade_ChogathW={
+  BaseDamage={75,125,175,225,275},
+ },
+}
+end)()
 return {
  Chogath={id='normal',q={'Rupture'},w={'FeralScream'},e={'VorpalSpikes'},r={'Feast'},
-  qBase={80,135,190,245,300},qRadius=230,qDelay=.625,wBase={80,130,180,230,280},wRange=585,
-  eBase={30,50,70,90,110},ePercent={2.5,2.85,3.2,3.55,3.9},eToggle=false,
-  rBase={300,475,650},rMonster=1200,rAP=.5,rHP=.1,stackCapKind='non_epic',stackCap=6,feastBuff='Feast',
+  qBase=D.Rupture.BaseDamage,qRadius=D.Rupture.castRadius,qDelay=.625,wBase={80,130,180,230,280},wRange=585,
+  eBase=D.VorpalSpikes.BaseDamage,ePercent=D.VorpalSpikes.PercentHealthDamage,eToggle=false,
+  rBase=D.Feast.RBaseDamage,rMonster=D.Feast.RBaseMonsterDamage,rAP=.5,rHP=.1,stackCapKind='non_epic',stackCap=D.Feast.RMinionMaxStacks,feastBuff='Feast',
   -- LoL wiki Cho'Gath V26.17 (read 2026-10-10): Feast range +2.5 per stack up to +25; spikes 650 long, 1475 speed,
   -- width 340-500 (the narrowest half width is used); 110-310 (+30% AP) per spike against monsters; +0.5% maximum
   -- health per Feast stack (installed asset FeastStackMultiplier 0.5); E lasts 6 s (asset BuffDuration).
-  rStackRange=2.5,rStackRangeMax=10,eSpikeRange=650,eSpikeSpeed=1475,eHalfWidth=170,eMonster={110,160,210,260,310},
-  eStackPercent=.5,eDuration=6},
+  rStackRange=D.Feast.CastRangePerStack,rStackRangeMax=10,eSpikeRange=D.VorpalSpikesMissle.castRange,eSpikeSpeed=D.VorpalSpikesMissle.mSpeed,eHalfWidth=D.VorpalSpikesMissle.mMissileWidth,eMonster={110,160,210,260,310},
+  eStackPercent=D.VorpalSpikes.FeastStackMultiplier,eDuration=D.VorpalSpikes.BuffDuration},
  Jade_Chogath={id='classic',q={'Jade_ChogathQ'},w={'Jade_ChogathW','Jade_Chogath_FeralScream'},
   e={'Jade_ChogathE','Jade_ChogathE_Jade'},r={'Jade_ChogathR','Jade_Chogath_Feast'},
-  qBase={80,135,190,245,305},qRadius=250,qDelay=.625,wBase={75,125,175,225,275},wRange=650,
-  eBase={20,35,50,65,80},eToggle=true,rBase={300,475,650},rMonster=1000,rAP=.7,rHP=0,
-  stackCapKind='total',stackCap=6,feastBuff='Jade_ChogathR',
-  -- Installed Jade_ChogathEMissile: castRange 650, missileSpeed 1475, castRadius 175 (half width candidate; 150
-  -- is used until measured). Feast stack range growth and per-stack spike damage are unmeasured: none here.
+  qBase=D.Jade_ChogathQ.BaseDamage,qRadius=D.Jade_ChogathQ.castRadius,qDelay=D.Jade_ChogathQ.KnockupDelay,wBase=D.Jade_ChogathW.BaseDamage,wRange=650,
+  eBase=D.Jade_ChogathE.BaseDamage,eToggle=true,rBase=D.Jade_ChogathR.RBaseDamage,rMonster=D.Jade_ChogathR.RBaseMonsterDamage,rAP=D.Jade_ChogathR.RAPRatio,rHP=0,
+  stackCapKind='total',stackCap=D.Jade_ChogathR.MaxStacks,feastBuff='Jade_ChogathR',
+  -- Installed Jade_ChogathEMissile: castRange 650, missileSpeed 1475, mMissileWidth 170 (the half width, the same
+  -- field Normal reads; 16.21 ability table 2026-10-28, was 150 'until measured'). Feast stack range growth and
+  -- per-stack spike damage are unmeasured: none here.
   -- Whether Classic Feast stacks survive death is unverified (chogath-provenance gaps): death makes the count unknown.
-  eSpikeRange=650,eSpikeSpeed=1475,eHalfWidth=150,stacksMayDropOnDeath=true},
+  eSpikeRange=D.Jade_ChogathEMissile.castRange,eSpikeSpeed=D.Jade_ChogathEMissile.mSpeed,eHalfWidth=D.Jade_ChogathEMissile.mMissileWidth,stacksMayDropOnDeath=true},
 }
 
 end
@@ -9694,16 +9964,53 @@ factories['corki']=function()
 -- wSpeed is the dash speed WITHOUT the movement-speed part (Normal adds 100% movement speed): a floor, so a
 -- consumer never assumes a faster dash than the real one. wCast 0: Normal wiki "none"; the Classic asset block has no
 -- cast-time field (spells that have one carry it) and the Classic page lists none.
+local D=(function()
 return {
- Corki={id='normal',qRange=825,qSpeed=1100,qRadius=250,qBase={60,105,150,195,240},qAP=1,qBonusAD=1.25,
-  rBase={90,170,250},rBonusAD=.85,rTotalAD=0,rAP=0,rMultiplier=2,rDamage='physical',
-   bigBuff='corkimissilebarragecounterbig',rRange=1300,bigRange=1500,splash=150,bigSplash=300,maxAmmo=4,eRange=690,eAngle=35,
-   wName='CarpetBomb',wMinRange=300,wRange=600,wSpeed=650,wCast=0,
+ MissileBarrage={
+  ADRatio=.85,BaseDamage={90,170,250},RBigOneMissileRadius=300,
+ },
+ MissileBarrageMissile2={
+  castRange=1500,
+ },
+ MissileBarrageMissile={
+  castRange=1300,
+ },
+ PhosphorusBombMissile={
+  mSpeed=1100,
+ },
+ PhosphorusBomb={
+  ADRatio=1.25,BaseDamage={60,105,150,195,240},castRange=825,
+ },
+ CarpetBomb={
+  DashSpeedBase=650,MaximumRange=600,MinimumRange=300,
+ },
+ Jade_CorkiE={
+  castRange=600,
+ },
+ Jade_CorkiR={
+  BaseDamage={120,190,260},MaxAmmoTooltip=7,
+ },
+ Jade_CorkiR_Missile={
+  castRange=1225,
+ },
+ Jade_CorkiW={
+  MaxRange=800,MinRange=300,
+ },
+ Jade_CorkiQ={
+  APRatio=.5,BaseDamage={80,130,180,230,280},castRadius=250,castRange=600,
+ },
+}
+end)()
+return {
+ Corki={id='normal',qRange=D.PhosphorusBomb.castRange,qSpeed=D.PhosphorusBombMissile.mSpeed,qRadius=250,qBase=D.PhosphorusBomb.BaseDamage,qAP=1,qBonusAD=D.PhosphorusBomb.ADRatio,
+  rBase=D.MissileBarrage.BaseDamage,rBonusAD=D.MissileBarrage.ADRatio,rTotalAD=0,rAP=0,rMultiplier=2,rDamage='physical',
+   bigBuff='corkimissilebarragecounterbig',rRange=D.MissileBarrageMissile.castRange,bigRange=D.MissileBarrageMissile2.castRange,splash=150,bigSplash=D.MissileBarrage.RBigOneMissileRadius,maxAmmo=4,eRange=690,eAngle=35,
+   wName='CarpetBomb',wMinRange=D.CarpetBomb.MinimumRange,wRange=D.CarpetBomb.MaximumRange,wSpeed=D.CarpetBomb.DashSpeedBase,wCast=0,
    wSource='https://wiki.leagueoflegends.com/en-us/Corki Valkyrie range 300-600, no cast time, speed 650 + 100% movement speed (floor 650 declared), read 2026-10-08'},
- Jade_Corki={id='classic',qRange=600,qSpeed=math.huge,qRadius=250,qBase={80,130,180,230,280},qAP=.5,qBonusAD=0,
-  rBase={120,190,260},rBonusAD=0,rTotalAD=.2,rAP=.3,rMultiplier=1.5,rDamage='magical',
-   bigBuff='jade_corkir_check',rRange=1225,bigRange=1225,splash=75,bigSplash=150,maxAmmo=7,eRange=600,
-   wName='Jade_CorkiW',wMinRange=300,wRange=800,wAssetMaxRange=800,wSpeed=650,wCast=0,
+ Jade_Corki={id='classic',qRange=D.Jade_CorkiQ.castRange,qSpeed=math.huge,qRadius=D.Jade_CorkiQ.castRadius,qBase=D.Jade_CorkiQ.BaseDamage,qAP=D.Jade_CorkiQ.APRatio,qBonusAD=0,
+  rBase=D.Jade_CorkiR.BaseDamage,rBonusAD=0,rTotalAD=.2,rAP=.3,rMultiplier=1.5,rDamage='magical',
+   bigBuff='jade_corkir_check',rRange=D.Jade_CorkiR_Missile.castRange,bigRange=D.Jade_CorkiR_Missile.castRange,splash=75,bigSplash=150,maxAmmo=D.Jade_CorkiR.MaxAmmoTooltip,eRange=D.Jade_CorkiE.castRange,
+   wName='Jade_CorkiW',wMinRange=D.Jade_CorkiW.MinRange,wRange=D.Jade_CorkiW.MaxRange,wAssetMaxRange=D.Jade_CorkiW.MaxRange,wSpeed=650,wCast=0,
    wSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Corki Valkyrie RANGE 800, SPEED 650 (read 2026-10-08); research/family-assets/Jade_Corki/spells.json Jade_CorkiW MaxRange 800 / MinRange 300, no cast-time field'},
 }
 
@@ -9730,14 +10037,42 @@ factories['ezreal']=function()
 --  the ratio is left out (a lower bound) and the speed is a slow 1000 bound (a later impact only raises the requirement).
 --  Q/W target range: wiki and asset castRange say 1200, the display override 1150; 1150 is kept until the ezreal_q_reach
 --  development trace records landed hits beyond it.
+local D=(function()
 return {
-    Ezreal={id='normal',qRange=1150,qBase={20,45,70,95,120},qAD=1.3,qAP=.4,
-        wRange=1150,wSpeed=1700,wRadius=80,wBase={80,135,190,245,300},wAP=.9,wAD=1,rBase={350,550,750},rAP=1.1,rAD=1,marks=true,
-        e='EzrealE',eRange=475,eCast=.25,eBase={80,130,180,230,280},eAD=.6,eAP=.75,eBolt=750,eBoltSpeed=2000,
+ EzrealE={
+  BaseDamage={80,130,180,230,280},EAPRatio=.75,MissileRange=750,castRangeDisplayOverride=475,
+ },
+ EzrealQ={
+  BaseDamage={20,45,70,95,120},BaseDamageADRatio=1.3,BaseDamageAPRatio=.4,castRangeDisplayOverride=1150,
+ },
+ EzrealW={
+  APRatio=.9,BaseDamage={80,135,190,245,300},castRange=1200,castRangeDisplayOverride=1150,mMissileWidth=80,mSpeed=1700,
+ },
+ EzrealR={
+  BaseDamage={350,550,750},RAPRatio=1.1,
+ },
+ Jade_EzrealW={
+  APRatio=.6,BaseDamage={80,130,180,230,280},castRange=1050,mMissileWidth=100,mSpeed=1600,
+ },
+ Jade_EzrealR={
+  BaseDamage={350,500,650},RAPRatio=1,
+ },
+ Jade_EzrealQ={
+  BaseDamage={40,65,90,115,140},BaseDamageADRatio=1.1,
+ },
+ Jade_EzrealE={
+  BaseDamage={75,125,175,225,275},EAPRatio=.75,MissileRange=750,castRangeDisplayOverride=475,
+ },
+}
+end)()
+return {
+    Ezreal={id='normal',qRange=D.EzrealQ.castRangeDisplayOverride,qBase=D.EzrealQ.BaseDamage,qAD=D.EzrealQ.BaseDamageADRatio,qAP=D.EzrealQ.BaseDamageAPRatio,
+        wRange=D.EzrealW.castRangeDisplayOverride,wSpeed=D.EzrealW.mSpeed,wRadius=D.EzrealW.mMissileWidth,wBase=D.EzrealW.BaseDamage,wAP=D.EzrealW.APRatio,wAD=1,rBase=D.EzrealR.BaseDamage,rAP=D.EzrealR.RAPRatio,rAD=1,marks=true,
+        e='EzrealE',eRange=D.EzrealE.castRangeDisplayOverride,eCast=.25,eBase=D.EzrealE.BaseDamage,eAD=.6,eAP=D.EzrealE.EAPRatio,eBolt=D.EzrealE.MissileRange,eBoltSpeed=2000,
         eSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Ezreal/Arcane_Shift 2026-10-08: blink, range 475, cast 0.25'},
-    Jade_Ezreal={id='classic',qRange=1100,qBase={40,65,90,115,140},qAD=1.1,qAP=0,
-        wRange=1050,wSpeed=1600,wRadius=100,wBase={80,130,180,230,280},wAP=.6,wAD=0,rBase={350,500,650},rAP=1,rAD=0,marks=false,
-        e='Jade_EzrealE',eRange=475,eCast=.25,eBase={75,125,175,225,275},eAD=0,eAP=.75,eBolt=750,eBoltSpeed=1000,
+    Jade_Ezreal={id='classic',qRange=1100,qBase=D.Jade_EzrealQ.BaseDamage,qAD=D.Jade_EzrealQ.BaseDamageADRatio,qAP=0,
+        wRange=D.Jade_EzrealW.castRange,wSpeed=D.Jade_EzrealW.mSpeed,wRadius=D.Jade_EzrealW.mMissileWidth,wBase=D.Jade_EzrealW.BaseDamage,wAP=D.Jade_EzrealW.APRatio,wAD=0,rBase=D.Jade_EzrealR.BaseDamage,rAP=D.Jade_EzrealR.RAPRatio,rAD=0,marks=false,
+        e='Jade_EzrealE',eRange=D.Jade_EzrealE.castRangeDisplayOverride,eCast=.25,eBase=D.Jade_EzrealE.BaseDamage,eAD=0,eAP=D.Jade_EzrealE.EAPRatio,eBolt=D.Jade_EzrealE.MissileRange,eBoltSpeed=1000,
         eSource='research/family-assets/Jade_Ezreal/spells.json (range 475, field 11704a2b 0.25) and https://wiki.leagueoflegends.com/en-us/League_Classic/Ezreal (cast 0.25) 2026-10-08'},
 }
 
@@ -9781,6 +10116,37 @@ factories['fiora']=function()
 --   ('fiora_vital_disagree'). A particle at the centre uses the mapping while the game has seen no disagreement;
 --   after one it needs learnAfter=3 agreements and agreements >= 4x disagreements. reach 30: a Q endpoint within this of the vital point counts its damage.
 --   Conservative engineering bounds, not measured numbers; 'fiora_vital' traces (dx/dz, basis, agrees) settle them.
+local D=(function()
+return {
+ FioraQ={
+  CDRefundPercent=.5,Damage={70,80,90,100,110},bADRatio={.9,.95,1,1.05,1.1},
+ },
+ FioraR={
+  HealDuration=5,HealPerSecond={80,105,130},HealRingRadius=600,MarkDuration=8,Ratio=.7,castRange=500,
+ },
+ FioraWMissile={
+  castRangeDisplayOverride=900,mMissileWidth=70,mSpeed=3200,
+ },
+ FioraW={
+  BaseDamage={110,150,190,230,270},ParryDuration=.75,
+ },
+ FioraE={
+  AttackTwoPercentTAD={1.6,1.7,1.8,1.9,2},BuffDuration=3,
+ },
+ Jade_FioraE={
+  BuffDuration=3,
+ },
+ Jade_FioraR={
+  AttackRadius=600,Damage={125,255,385},ExtraHitDmgAmount=.4,
+ },
+ Jade_FioraQ={
+  Damage={40,65,90,115,140},DashMovespeedBonus=1200,RecastWindow=4,castRange=600,
+ },
+ Jade_FioraW={
+  ParryDuration=1.5,
+ },
+}
+end)()
 local classicAttacks={
 	["Jade_Leona"] = {"Jade_LeonaShieldOfDaybreakAttack", "Jade_LeonaShieldOfDaybreak"},
 	["Jade_Blitzcrank"] = {"Jade_BlitzcrankPowerFistAttack", "Jade_BlitzcrankPowerFist"},
@@ -9815,16 +10181,16 @@ local normalAttacks={
 	Blitzcrank={'PowerFistAttack'},Garen={'GarenQAttack'},Leona={'LeonaShieldOfDaybreakAttack'},Nautilus={'NautilusRavageStrikeAttack'},
 	Renekton={'RenektonPreExecute','RenektonExecute','RenektonSuperExecute'},Volibear={'VolibearQAttack'},Vayne={'VayneCondemn'},Sett={'SettR'},
 }
-return {Jade_Fiora={classic=true,wAttacks=classicAttacks,q=600,r=400,qName='Jade_FioraQ',wName='Jade_FioraW',eName='Jade_FioraE',rName='Jade_FioraR',
- qBase={40,65,90,115,140},qAD={.6,.6,.6,.6,.6},qWindow=4,wDuration=1.5,eDuration=3,rBase={125,255,385},rAD=.85,rRepeat=.4,rRepeatFloor=.25,rStrikes=5,rBounce=600,
- qDash={established=false,speeds={1200},castDelays={0,.15},source='Jade_Fiora spells.json Jade_FioraQ castRange 600, DashMovespeedBonus 1200 (2026-10-08); speed semantics open, cast delay bracket 0-.15 unmeasured'}},
- Fiora={classic=false,q=400,r=500,qName='FioraQ',wName='FioraW',eName='FioraE',rName='FioraR',
+return {Jade_Fiora={classic=true,wAttacks=classicAttacks,q=D.Jade_FioraQ.castRange,r=400,qName='Jade_FioraQ',wName='Jade_FioraW',eName='Jade_FioraE',rName='Jade_FioraR',
+ qBase=D.Jade_FioraQ.Damage,qAD={.6,.6,.6,.6,.6},qWindow=D.Jade_FioraQ.RecastWindow,wDuration=D.Jade_FioraW.ParryDuration,eDuration=D.Jade_FioraE.BuffDuration,rBase=D.Jade_FioraR.Damage,rAD=.85,rRepeat=D.Jade_FioraR.ExtraHitDmgAmount,rRepeatFloor=.25,rStrikes=5,rBounce=D.Jade_FioraR.AttackRadius,
+ qDash={established=false,speeds={D.Jade_FioraQ.DashMovespeedBonus},castDelays={0,.15},source='Jade_Fiora spells.json Jade_FioraQ castRange 600, DashMovespeedBonus 1200 (2026-10-08); speed semantics open, cast delay bracket 0-.15 unmeasured'}},
+ Fiora={classic=false,q=400,r=D.FioraR.castRange,qName='FioraQ',wName='FioraW',eName='FioraE',rName='FioraR',
  qDash={speeds={850,1100,1600},castDelays={0},source='https://wiki.leagueoflegends.com/en-us/Template:Data_Fiora/Lunge 2026-10-08: range 50-400, cast none, speed 1100 + 300/350% bonus movement speed within 850-1600'},
  wAttacks=normalAttacks,
- qBase={70,80,90,100,110},qAD={.9,.95,1,1.05,1.1},qRefund=.5,wDuration=.75,wRange=900,wWidth=70,wSpeed=3200,wPoise=.5,wBase={110,150,190,230,270},wAP=1,
- stabRadius=420,stabPriority=252,rHorizon=4,eDuration=3,eTwo={1.6,1.7,1.8,1.9,2},
+ qBase=D.FioraQ.Damage,qAD=D.FioraQ.bADRatio,qRefund=D.FioraQ.CDRefundPercent,wDuration=D.FioraW.ParryDuration,wRange=D.FioraWMissile.castRangeDisplayOverride,wWidth=D.FioraWMissile.mMissileWidth,wSpeed=D.FioraWMissile.mSpeed,wPoise=.5,wBase=D.FioraW.BaseDamage,wAP=1,
+ stabRadius=420,stabPriority=252,rHorizon=4,eDuration=D.FioraE.BuffDuration,eTwo=D.FioraE.AttackTwoPercentTAD,
  vitals={sides={NE={0,1},NW={1,0},SE={-1,0},SW={0,-1}},ownerRadius=100,offset=50,offsetMin=25,agreeCos=.8,learnAfter=3,reach=30,reveal=1.75,rReveal=.5,scanLimit=400},
- markDuration=8,healDuration=5,healRadius=600,healBase={80,105,130},healAD=.7,vitalBase=.03,vitalAD=.0004}}
+ markDuration=D.FioraR.MarkDuration,healDuration=D.FioraR.HealDuration,healRadius=D.FioraR.HealRingRadius,healBase=D.FioraR.HealPerSecond,healAD=D.FioraR.Ratio,vitalBase=.03,vitalAD=.0004}}
 
 end
 factories['fizz']=function()
@@ -9843,19 +10209,50 @@ factories['fizz']=function()
 --  20 is a placeholder), so e2Speed stays unset and the slam horizon is the cast-frame lower bound; the dev trace
 --  fizz_e2_landing records seconds and hop length to settle it.
 -- Normal wReachBonus 50: the W-empowered attack gains 50 bonus range (wiki Seastone Trident, read 2026-10-10).
+local D=(function()
+return {
+ FizzE={
+  BaseDamage={80,130,180,230,280},SmallAoESize=225,
+ },
+ FizzW={
+  ActiveBaseDamage={50,75,100,125,150},ActiveDuration=4,ActiveRatio=.45,DoTBaseDamage={30,45,60,75,90},DoTRatio=.25,
+ },
+ FizzRMissile={
+  mSpeed=1300,
+ },
+ FizzR={
+  DetonationTime=2,LargeDamageMulti=1.5,MaxDistance=1300,MidDamageMulti=1.25,SmallAPRatio=.6,SmallDamage={180,300,420},
+ },
+ Jade_FizzR={
+  APRatio=1,BaseDamage={200,325,450},DetonationTime=1.5,castRangeDisplayOverride=1275,
+ },
+ Jade_FizzRMissile={
+  mSpeed=1350,
+ },
+ Jade_FizzW={
+  ActiveBaseDamage={10,15,20,25,30},ActiveDuration=5,ActiveRatio=.2,DoTBaseDamage={30,40,50,60,70},DoTRatio=.35,MaxHealthScaling={.04,.05,.06,.07,.08},
+ },
+ Jade_FizzE={
+  APRatio=.75,BaseDamage={70,120,170,220,270},
+ },
+ Jade_FizzQ={
+  APRatio=.4,BaseDamage={10,40,70,100,130},
+ },
+}
+end)()
 return {
  Fizz={id='normal',q='FizzQ',w='FizzW',e='FizzE',e2='FizzETwo',buffer='FizzEBuffer',r='FizzR',
   wBuff='FizzWActive',wAttack='FizzWBasicAttack',onHit='FizzOnHitBuff',bleed='FizzWDOT',fish='FizzRCling',
-  qBase={10,25,40,55,70},qAP=.55,wBase={50,75,100,125,150},wAP=.45,wDuration=4,
-  dotBase={30,45,60,75,90},dotAP=.25,eBase={80,130,180,230,280},eAP=.95,
-  rBase={180,300,420},rAP=.6,rRange=1300,rSpeed=1300,rDelay=2,rTiered=true,
-  rTiers={near=455,far=910,band=40,mid=1.25,large=1.5},eLanding=.75,
-  e2Radius=225,e2Cast=.15,wReachBonus=50},
+  qBase={10,25,40,55,70},qAP=.55,wBase=D.FizzW.ActiveBaseDamage,wAP=D.FizzW.ActiveRatio,wDuration=D.FizzW.ActiveDuration,
+  dotBase=D.FizzW.DoTBaseDamage,dotAP=D.FizzW.DoTRatio,eBase=D.FizzE.BaseDamage,eAP=.95,
+  rBase=D.FizzR.SmallDamage,rAP=D.FizzR.SmallAPRatio,rRange=D.FizzR.MaxDistance,rSpeed=D.FizzRMissile.mSpeed,rDelay=D.FizzR.DetonationTime,rTiered=true,
+  rTiers={near=455,far=910,band=40,mid=D.FizzR.MidDamageMulti,large=D.FizzR.LargeDamageMulti},eLanding=.75,
+  e2Radius=D.FizzE.SmallAoESize,e2Cast=.15,wReachBonus=50},
  Jade_Fizz={id='classic',q='Jade_FizzQ',w='Jade_FizzW',e='Jade_FizzE',e2='Jade_FizzETwo',buffer='Jade_FizzEBuffer',r='Jade_FizzR',
   wBuff='Jade_FizzWActive',bleed='Jade_FizzWDOT',fish='Jade_FizzRCling',
-  qBase={10,40,70,100,130},qAP=.4,wBase={10,15,20,25,30},wAP=.2,wDuration=5,
-  dotBase={30,40,50,60,70},dotAP=.35,dotMissing={.04,.05,.06,.07,.08},eBase={70,120,170,220,270},eAP=.75,
-  rBase={200,325,450},rAP=1,rRange=1275,rSpeed=1350,rDelay=1.5,rTiered=false,eLanding=.75},
+  qBase=D.Jade_FizzQ.BaseDamage,qAP=D.Jade_FizzQ.APRatio,wBase=D.Jade_FizzW.ActiveBaseDamage,wAP=D.Jade_FizzW.ActiveRatio,wDuration=D.Jade_FizzW.ActiveDuration,
+  dotBase=D.Jade_FizzW.DoTBaseDamage,dotAP=D.Jade_FizzW.DoTRatio,dotMissing=D.Jade_FizzW.MaxHealthScaling,eBase=D.Jade_FizzE.BaseDamage,eAP=D.Jade_FizzE.APRatio,
+  rBase=D.Jade_FizzR.BaseDamage,rAP=D.Jade_FizzR.APRatio,rRange=D.Jade_FizzR.castRangeDisplayOverride,rSpeed=D.Jade_FizzRMissile.mSpeed,rDelay=D.Jade_FizzR.DetonationTime,rTiered=false,eLanding=.75},
 }
 
 end
@@ -9864,28 +10261,173 @@ factories['graves']=function()
 -- Ranking pass 2026-10-10: Normal fullReload 2.08 s, the reload of both shells from empty
 -- (https://wiki.leagueoflegends.com/en-us/Graves/LoL, page V26.17, read 2026-10-10); bounds the
 -- observed-empty lease of the controller (Graves-1). Classic has no shells.
+-- Classic wRadius 300: Jade_GravesW SmokeRadius (16.21 ability table, 2026-10-28; Normal reads the same field,
+-- 200). The earlier 210 was the castRadius of the Jade_GravesW_Boom transport missile.
+local D=(function()
+return {
+ GravesChargeShot={
+  RBaseDamage={275,425,575},RFalloffDamage={200,320,440},RKnockbackDistance=400,
+ },
+ GravesQReturn={
+  mMissileWidth=100,mSpeed=1600,
+ },
+ GravesQLineMis={
+  mMissileWidth=40,mSpeed=3000,
+ },
+ GravesQLineSpell={
+  BaseDamage={50,75,100,125,150},BaseDetonationDamage={80,125,170,215,260},FirstADRatio=.55,TerrainCollisionDelay=.2,bADDetonationRatio={.45,.6,.75,.9,1.05},castFrameSeconds=.25,castRange=800,
+ },
+ GravesSmokeGrenade={
+  SmokeRadius=200,
+ },
+ GravesMove={
+  DashMaxDistance=375,DashMinDistance=275,DashSpeed=750,MaxStacks=8,
+ },
+ Jade_GravesR={
+  BulletADRatio=1.4,ConeADRatio=1,RBaseDamage={250,350,450},RFalloffDamage={140,230,320},
+ },
+ Jade_GravesQ_Attack={
+  mMissileWidth=50,mSpeed=2000,
+ },
+ Jade_GravesQ={
+  BaseDamage={60,95,130,165,200},FirstADRatio=.8,MultiHitPenalty=.35,castConeAngle=15.32,castFrameSeconds=.25,castRange=800,
+ },
+ Jade_GravesE={
+  DashMovespeed=850,MaxDistance=425,
+ },
+ Jade_GravesW={
+  SmokeRadius=300,
+ },
+}
+end)()
 return {
  Graves={id='normal',q='GravesQLineSpell',w='GravesSmokeGrenade',e='GravesMove',r='GravesChargeShot',
-  qBase={50,75,100,125,150},qAD=.55,returnBase={80,125,170,215,260},returnAD={.45,.6,.75,.9,1.05},
-  qRange=800,qSpeed=3000,qRadius=40,qDelay=.25,returnSpeed=1600,returnRadius=100,wallDelay=.2,endDelay=1,
-  wRadius=200,eMin=275,eRange=375,eSpeed=750,grit='GravesEGrit',maxGrit=8,
-  rBase={275,425,575},rCone={200,320,440},rAD=1.5,rConeAD=1.2,coneRange=735,recoil=400,fullReload=2.08},
+  qBase=D.GravesQLineSpell.BaseDamage,qAD=D.GravesQLineSpell.FirstADRatio,returnBase=D.GravesQLineSpell.BaseDetonationDamage,returnAD=D.GravesQLineSpell.bADDetonationRatio,
+  qRange=D.GravesQLineSpell.castRange,qSpeed=D.GravesQLineMis.mSpeed,qRadius=D.GravesQLineMis.mMissileWidth,qDelay=D.GravesQLineSpell.castFrameSeconds,returnSpeed=D.GravesQReturn.mSpeed,returnRadius=D.GravesQReturn.mMissileWidth,wallDelay=D.GravesQLineSpell.TerrainCollisionDelay,endDelay=1,
+  wRadius=D.GravesSmokeGrenade.SmokeRadius,eMin=D.GravesMove.DashMinDistance,eRange=D.GravesMove.DashMaxDistance,eSpeed=D.GravesMove.DashSpeed,grit='GravesEGrit',maxGrit=D.GravesMove.MaxStacks,
+  rBase=D.GravesChargeShot.RBaseDamage,rCone=D.GravesChargeShot.RFalloffDamage,rAD=1.5,rConeAD=1.2,coneRange=735,recoil=D.GravesChargeShot.RKnockbackDistance,fullReload=2.08},
  Jade_Graves={id='classic',q='Jade_GravesQ',w='Jade_GravesW',e='Jade_GravesMove',r='Jade_GravesChargeShot',
-  qBase={60,95,130,165,200},qAD=.8,qRange=800,qSpeed=2000,qRadius=50,qAngle=15.32,qPenalty=.35,qDelay=.25,
-  wRadius=210,eMin=0,eRange=425,eSpeed=850,grit='Jade_GravesPassive_Counter',maxGrit=10,eBuff='Jade_GravesE_Buff',
-  rBase={250,350,450},rCone={140,230,320},rAD=1.4,rConeAD=1,coneRange=800,recoil=0},
+  qBase=D.Jade_GravesQ.BaseDamage,qAD=D.Jade_GravesQ.FirstADRatio,qRange=D.Jade_GravesQ.castRange,qSpeed=D.Jade_GravesQ_Attack.mSpeed,qRadius=D.Jade_GravesQ_Attack.mMissileWidth,qAngle=D.Jade_GravesQ.castConeAngle,qPenalty=D.Jade_GravesQ.MultiHitPenalty,qDelay=D.Jade_GravesQ.castFrameSeconds,
+  wRadius=D.Jade_GravesW.SmokeRadius,eMin=0,eRange=D.Jade_GravesE.MaxDistance,eSpeed=D.Jade_GravesE.DashMovespeed,grit='Jade_GravesPassive_Counter',maxGrit=10,eBuff='Jade_GravesE_Buff',
+  rBase=D.Jade_GravesR.RBaseDamage,rCone=D.Jade_GravesR.RFalloffDamage,rAD=D.Jade_GravesR.BulletADRatio,rConeAD=D.Jade_GravesR.ConeADRatio,coneRange=800,recoil=0},
 }
+
+end
+factories['hecarim']=function()
+-- Hecarim Normal/Classic mechanics. Details and witnesses: CombatProfiles/hecarim-provenance.json.
+-- Normal: installed 16.21 asset data/characters/hecarim/hecarim.bin (Hecarim.wad.client 2026-10-21).
+-- Classic: the same client's data/characters/jade_hecarim/jade_hecarim.bin. No live recording of either yet.
+-- Ranks index asset arrays from 1. E holds its minimum damage; e.max and e.maxBonusAD apply after
+-- e.distance units of charge (rawModifier, options.travel).
+-- e.strike: shared knock-back spec, docs/ANGLED-STRIKES.md.
+local D=(function()
+return {
+ HecarimRamp={
+  BonusADRatio=.5,DistanceToMaxDamage=1200,Duration=4,MaxBaseDamage={60,90,120,150,180},MaxKnockback=350,MaxMoveSpeed=.65,MinBaseDamage={30,45,60,75,90},MinKnockback=150,MinMoveSpeed=.25,TimeToMaxMoveSpeed=2.5,
+ },
+ HecarimRapidSlash={
+  BaseDamage={60,90,120,150,180},BaseDamageBonusAD=.9,BuffDuration=8,MaxStacks=3,MinionDamageRatio=.6,castRadius=375,castRange=375,
+ },
+ HecarimUlt={
+  APRatio=1,BaseDamage={150,250,350},DashSpeed=1100,FearDurationMax=1.5,FearDurationMin=.75,MaxDashRange=1000,RangeForMaxFearDuration=950,
+  areaRadius=315,
+ },
+ HecarimW={
+  APRatio=.8,BuffDuration=4,Damage={80,120,160,200,240},ResistAmount={5,10,15,20,25},castRange=525,castRangeDisplayOverride=525,
+ },
+ Jade_HecarimR={
+  APRatio=1,BaseDamage={150,250,350},DashSpeed=1100,FearDuration=1,MaxDashRange=1000,RangeForMaxFearDuration=950,
+  areaRadius=315,
+ },
+ Jade_HecarimE={
+  BonusADRatio=.5,DistanceToMaxDamage=1200,Duration=4,Knockback=300,MaxBaseDamage={80,150,220,290,360},MaxMoveSpeed=.75,MinBaseDamage={40,75,110,145,180},MinMoveSpeed=.25,TimeToMaxMoveSpeed=2.5,
+ },
+ Jade_HecarimQ={
+  BaseDamage={60,95,130,165,200},BaseDamageBonusAD=.6,BuffDuration=6,MaxStacks=2,MinionDamageRatio=.66,castRadius=375,castRange=375,
+ },
+ Jade_HecarimW={
+  APRatio=.8,BuffDuration=4,Damage={80,120,160,200,240},castRange=525,castRangeDisplayOverride=525,
+ },
+}
+end)()
+local profiles={}
+profiles['Hecarim']=profiles['Hecarim']or {}
+profiles['Hecarim'].combat={id='normal',champion='Hecarim',names={{'HecarimRapidSlash'},{'HecarimW'},{'HecarimRamp'},{'HecarimUlt'}},
+  q={range=D.HecarimRapidSlash.castRange,radius=D.HecarimRapidSlash.castRadius,delay=0,type='physical',base=D.HecarimRapidSlash.BaseDamage,bonusAD=D.HecarimRapidSlash.BaseDamageBonusAD,minion=D.HecarimRapidSlash.MinionDamageRatio,stacks=D.HecarimRapidSlash.MaxStacks,stackDuration=D.HecarimRapidSlash.BuffDuration},
+  w={range=D.HecarimW.castRange,radius=D.HecarimW.castRangeDisplayOverride,duration=D.HecarimW.BuffDuration,type='magical',base=D.HecarimW.Damage,ap=D.HecarimW.APRatio,resist=D.HecarimW.ResistAmount},
+  e={range=0,duration=D.HecarimRamp.Duration,haste=D.HecarimRamp.MinMoveSpeed,maxHaste=D.HecarimRamp.MaxMoveSpeed,rampTime=D.HecarimRamp.TimeToMaxMoveSpeed,distance=D.HecarimRamp.DistanceToMaxDamage,type='physical',
+   base=D.HecarimRamp.MinBaseDamage,max=D.HecarimRamp.MaxBaseDamage,bonusAD=D.HecarimRamp.BonusADRatio,maxBonusAD=1,mobility=true,
+   strike={push='away',distance={D.HecarimRamp.MinKnockback,D.HecarimRamp.MaxKnockback},scale='travel',full=D.HecarimRamp.DistanceToMaxDamage,source='16.21 HecarimRamp MinKnockback, MaxKnockback; DistanceToMaxDamage is assumed for knock-back scaling'}},
+  -- R: dash up to 1000 at 1100, fear within 315 of the landing (Evade sheet, wiki; asset castRadius 300).
+  r={range=D.HecarimUlt.MaxDashRange,minimum=300,radius=D.HecarimUlt.areaRadius,speed=D.HecarimUlt.DashSpeed,delay=.25,type='magical',base=D.HecarimUlt.BaseDamage,ap=D.HecarimUlt.APRatio,fear={D.HecarimUlt.FearDurationMin,D.HecarimUlt.FearDurationMax},fearRange=D.HecarimUlt.RangeForMaxFearDuration,mobility=true},
+  eNames={'HecarimRamp'}}
+profiles['Jade_Hecarim']=profiles['Jade_Hecarim']or {}
+profiles['Jade_Hecarim'].combat={id='classic',champion='Hecarim',names={{'Jade_HecarimQ'},{'Jade_HecarimW'},{'Jade_HecarimE'},{'Jade_HecarimR'}},
+  q={range=D.Jade_HecarimQ.castRange,radius=D.Jade_HecarimQ.castRadius,delay=0,type='physical',base=D.Jade_HecarimQ.BaseDamage,bonusAD=D.Jade_HecarimQ.BaseDamageBonusAD,minion=D.Jade_HecarimQ.MinionDamageRatio,stacks=D.Jade_HecarimQ.MaxStacks,stackDuration=D.Jade_HecarimQ.BuffDuration},
+  w={range=D.Jade_HecarimW.castRange,radius=525,duration=D.Jade_HecarimW.BuffDuration,type='magical',base=D.Jade_HecarimW.Damage,ap=D.Jade_HecarimW.APRatio},
+  e={range=0,duration=D.Jade_HecarimE.Duration,haste=D.Jade_HecarimE.MinMoveSpeed,maxHaste=D.Jade_HecarimE.MaxMoveSpeed,rampTime=D.Jade_HecarimE.TimeToMaxMoveSpeed,distance=D.Jade_HecarimE.DistanceToMaxDamage,type='physical',
+   base=D.Jade_HecarimE.MinBaseDamage,max=D.Jade_HecarimE.MaxBaseDamage,bonusAD=D.Jade_HecarimE.BonusADRatio,maxBonusAD=1,mobility=true,
+   strike={push='away',distance={D.Jade_HecarimE.Knockback,D.Jade_HecarimE.Knockback},source='16.21 Jade_HecarimE Knockback'}},
+  r={range=D.Jade_HecarimR.MaxDashRange,minimum=300,radius=D.Jade_HecarimR.areaRadius,speed=D.Jade_HecarimR.DashSpeed,delay=.25,type='magical',base=D.Jade_HecarimR.BaseDamage,ap=D.Jade_HecarimR.APRatio,fear={D.Jade_HecarimR.FearDuration,D.Jade_HecarimR.FearDuration},fearRange=D.Jade_HecarimR.RangeForMaxFearDuration,mobility=true},
+  eNames={'Jade_HecarimE'}}
+local normal,classic=profiles.Hecarim.combat,profiles.Jade_Hecarim.combat
+-- Q: reduced against lane minions. E: the charge damage grows linearly with the
+-- distance travelled (options.travel) from the minimum to the maximum.
+local function modifier(p,raw,s,slot,rank,stats,target,options,finite)
+ if slot==0 and target and target.type~=stats.heroType and target.team~=300 then return raw*s.minion,s.type end
+ if slot==2 then
+  local share=options and finite(options.travel)and math.max(0,math.min(1,options.travel/s.distance))or 0
+  return s.base[rank]+(s.max[rank]-s.base[rank])*share+(s.bonusAD+(s.maxBonusAD-s.bonusAD)*share)*stats.bonusDamage,s.type
+ end
+ return raw,s.type
+end
+normal.rawModifier=modifier;classic.rawModifier=modifier
+return profiles
 
 end
 factories['irelia']=function()
 -- Shared Irelia Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+local D=(function()
+return {
+ IreliaR={
+  APRatio=1,BaseMissileDamage={125,200,275},castRange=1000,
+ },
+ IreliaPassive={
+  OnHitBaseDamage=10,
+ },
+ IreliaE={
+  BaseDamage={70,110,150,190,230},BuffDuration=3.5,MaxRange=775,RevTime=.35,
+ },
+ IreliaW={
+  MinDamage={10,20,30,40,50},
+ },
+ IreliaQ={
+  BaseDamage={5,25,45,65,85},castRange=600,
+ },
+ Jade_IreliaRSpell={
+  mSpeed=1600,
+ },
+ Jade_IreliaR={
+  BaseMissileDamage={80,120,160},ChampionHealPercent=25,MinionHealPercent=10,castRange=1200,mMissileWidth=120,
+ },
+ Jade_IreliaE={
+  APRatio=.5,BaseDamage={80,130,180,230,280},StunDuration={1,1.25,1.5,1.75,2},castRange=325,
+ },
+ Jade_IreliaQ={
+  BaseDamage={20,50,80,110,140},DashSpeedBonus=1400,ManaReturn=35,castRangeDisplayOverride=620,
+ },
+ Jade_IreliaW={
+  ActiveDuration=6,Damage={15,30,45,60,75},Health={5,7,9,11,13},HealthRestoreActive={10,14,18,22,26},
+ },
+}
+end)()
 local profiles=(function()
 -- Shared Irelia mechanics data. Values preserved from the maintained controller.
 return {Irelia={id='normal',q='IreliaQ',w='IreliaW',w2='IreliaW2',e='IreliaE',e2='IreliaE2',r='IreliaR',
  mark='IreliaMark',passive='IreliaPassiveStacks',passiveMax='IreliaPassiveStacksMax',defense='IreliaWDefense',
- qRange=600,qSpeed=1400,qBase={5,25,45,65,85},qAD=.8,qMinionBase=50,qMinionLevel=11,
- stacks=4,passiveBase=10,passiveLevel=3,passiveAD=.2,eRange=775,eDelay=.3,eRev=.35,eRadius=70,eDuration=3.5,eRecast=.25,
- eBase={70,110,150,190,230},eAP=1,wRange=775,wRadius=100,wMax=1.5,wFull=.75,wBase={10,20,30,40,50},wAD=.4,wAP=.5,wMaxBonus=2,
+ qRange=D.IreliaQ.castRange,qSpeed=1400,qBase=D.IreliaQ.BaseDamage,qAD=.8,qMinionBase=50,qMinionLevel=11,
+ stacks=4,passiveBase=10,passiveLevel=3,passiveAD=.2,eRange=D.IreliaE.MaxRange,eDelay=.3,eRev=D.IreliaE.RevTime,eRadius=70,eDuration=D.IreliaE.BuffDuration,eRecast=.25,
+ eBase=D.IreliaE.BaseDamage,eAP=1,wRange=775,wRadius=100,wMax=1.5,wFull=.75,wBase=D.IreliaW.MinDamage,wAD=.4,wAP=.5,wMaxBonus=2,
  wPhysicalDR={40,70},wDRAP=.08,wMagicDR=.5,
  -- 2026-10-10: W minimum +40% AD +50% AP (installed IreliaW calculation 368633251: .4 on stat 2 = AD, as Q's .8;
  -- .5 on the default stat = AP; wiki V26.17 agrees; the earlier .5 AD/.4 AP read the two terms swapped).
@@ -9895,21 +10437,24 @@ return {Irelia={id='normal',q='IreliaQ',w='IreliaW',w2='IreliaW2',e='IreliaE',e2
  -- used as a lower bound until development 'irelia_r' traces (marked champions per cast) settle it.
  -- qThrough: wiki V26.17 "dashes 100 units through the target"; unverified, used only as an extra Evade landing check.
  -- eRecast stays .25 (installed CDBetweenCast) where the wiki says .15: the conservative value.
- rRange=1000,rSpeed=2000,rDelay=.5,rRadius=160,rBurst=320,qThrough=100,rBase={125,200,275},rAP=1}}
+ rRange=D.IreliaR.castRange,rSpeed=2000,rDelay=.5,rRadius=160,rBurst=320,qThrough=100,rBase=D.IreliaR.BaseMissileDamage,rAP=D.IreliaR.APRatio}}
 
 end)()
 profiles['Irelia']=profiles['Irelia']or {}
 profiles['Irelia'].combat={id='normal',champion='Irelia',names={{'IreliaQ'},{'IreliaW','IreliaW2'},{'IreliaE','IreliaE2'},{'IreliaR'}},
-  q={range=600,type='physical',base={5,25,45,65,85},ad=.8,minionBase=50,minionLevel=11},
-  w={range=775,type='physical',base={10,20,30,40,50},ad=.4,ap=.5},
-  e={range=775,type='magical',base={70,110,150,190,230},ap=1},r={range=1000,type='magical',base={125,200,275},ap=1},passiveNames={'IreliaPassiveStacksMax'},passiveBase=10,passiveLevel=3,passiveAD=.2}
+  q={range=D.IreliaQ.castRange,type='physical',base=D.IreliaQ.BaseDamage,ad=.8,minionBase=50,minionLevel=11},
+  w={range=775,type='physical',base=D.IreliaW.MinDamage,ad=.4,ap=.5},
+  e={range=D.IreliaE.MaxRange,type='magical',base=D.IreliaE.BaseDamage,ap=1},r={range=D.IreliaR.castRange,type='magical',base=D.IreliaR.BaseMissileDamage,ap=D.IreliaR.APRatio},passiveNames={'IreliaPassiveStacksMax'},passiveBase=D.IreliaPassive.OnHitBaseDamage,passiveLevel=3,passiveAD=.2}
 profiles['Jade_Irelia']=profiles['Jade_Irelia']or {}
 profiles['Jade_Irelia'].combat={id='classic',champion='Irelia',names={{'Jade_IreliaQ'},{'Jade_IreliaW'},{'Jade_IreliaE'},{'Jade_IreliaR'}},
-  q={range=620,delay=.05,speed=1400,type='physical',base={20,50,80,110,140},ad=1},
-  w={range=0,type='true',base={15,30,45,60,75}},e={range=325,delay=.3,type='magical',base={80,130,180,230,280},ap=.5},
-  r={range=1200,radius=60,delay=.25,speed=1600,type='physical',base={80,120,160},bonusAD=.6,ap=.5},
-  wNames={'Jade_IreliaW_Buff'},wPassiveHeal={5,7,9,11,13},wActiveHeal={10,14,18,22,26},wDuration=6,qRefund=35,
-  eStun={1,1.25,1.5,1.75,2},rBlades=4,rChampionHeal=.25,rMinionHeal=.1,passiveRadius=1400,passiveTenacity={.1,.25,.4}}
+  q={range=D.Jade_IreliaQ.castRangeDisplayOverride,delay=.05,speed=D.Jade_IreliaQ.DashSpeedBonus,type='physical',base=D.Jade_IreliaQ.BaseDamage,ad=1},
+  w={range=0,type='true',base=D.Jade_IreliaW.Damage},e={range=D.Jade_IreliaE.castRange,delay=.3,type='magical',base=D.Jade_IreliaE.BaseDamage,ap=D.Jade_IreliaE.APRatio},
+  -- R: half width 120 (Jade_IreliaR own missile width 120; League_Classic/Irelia width 240). Speed 1600: the flying
+  -- blade Jade_IreliaRSpell flies 1600 and the Classic page states 1600; Jade_IreliaR's own 779 matches neither and
+  -- is unconfirmed until a live R trace (2026-10-28). The earlier half width 60 had no source.
+  r={range=D.Jade_IreliaR.castRange,radius=D.Jade_IreliaR.mMissileWidth,delay=.25,speed=D.Jade_IreliaRSpell.mSpeed,type='physical',base=D.Jade_IreliaR.BaseMissileDamage,bonusAD=.6,ap=.5},
+  wNames={'Jade_IreliaW_Buff'},wPassiveHeal=D.Jade_IreliaW.Health,wActiveHeal=D.Jade_IreliaW.HealthRestoreActive,wDuration=D.Jade_IreliaW.ActiveDuration,qRefund=D.Jade_IreliaQ.ManaReturn,
+  eStun=D.Jade_IreliaE.StunDuration,rBlades=4,rChampionHeal=D.Jade_IreliaR.ChampionHealPercent/100,rMinionHeal=D.Jade_IreliaR.MinionHealPercent/100,passiveRadius=1400,passiveTenacity={.1,.25,.4}}
 local normal,classic=profiles.Irelia.combat,profiles.Jade_Irelia.combat
 classic.q.mobility=true
 function normal.rawModifier(p,raw,s,slot,rank,stats,target,options,finite)
@@ -9928,31 +10473,62 @@ return profiles
 end
 factories['janna']=function()
 -- Shared Janna mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ ReapTheWhirlwind={
+  Duration=3,Range=700,
+ },
+ EyeOfTheStorm={
+  BaseShield={80,120,160,200,240},ShieldAPRatio=.55,ShieldDuration=4,castRange=800,
+ },
+ HowlingGale={
+  BaseRange=1100,MaxDuration=3,MissileTravelTime=1.25,
+ },
+ SowTheWind={
+  APRatio=.5,BaseDamage={55,85,115,145,175},mCastTime=.245,mSpeed=1600,
+ },
+ Jade_JannaReapTheWhirlwind={
+  APRatioPerSecond=.35,HealBasePerSecond={70,110,150},MaxChannelDuration=4,
+ },
+ Jade_JannaSowTheWind={
+  APRatio=.6,BaseDamage={60,115,170,225,280},mSpeed=1600,
+ },
+ Jade_JannaHowlingGaleSpell={
+  mSpeed=900,
+ },
+ Jade_JannaHowlingGale={
+  BaseRange=1100,MaxDuration=3,MissileTravelTime=1.25,
+ },
+ Jade_JannaEyeOfTheStorm={
+  BaseShield={80,120,160,200,240},ShieldAPRatio=.9,ShieldDuration=5,castRange=800,
+ },
+}
+end)()
 return {
     -- 2026-10-08: E shield, W missile and R area were read from the matching page of each profile (`source`).
     -- Both pages give Q speed 880-1408 and width 240 by charge; the controller keeps its asset speed and a
     -- radius of 100 as the prediction inset for the short charges it releases (not corrected: unmeasured).
     classic={id='classic',qBegin='Jade_JannaHowlingGale',qRelease='Jade_JannaHowlingGaleSpell',
-        rName='Jade_JannaReapTheWhirlwind',qSpeed=900,wBase={60,115,170,225,280},wAP=.6,wEdge=false,
-        wDelay=.25,wSpeed=1600,rRadius=700,eRange=800,eTurrets=true,
-        eShield={80,120,160,200,240},eShieldAP=.9,eDuration=5,eDelay=0,
+        rName='Jade_JannaReapTheWhirlwind',qSpeed=D.Jade_JannaHowlingGaleSpell.mSpeed,wBase=D.Jade_JannaSowTheWind.BaseDamage,wAP=D.Jade_JannaSowTheWind.APRatio,wEdge=false,
+        wDelay=.25,wSpeed=D.Jade_JannaSowTheWind.mSpeed,rRadius=700,eRange=D.Jade_JannaEyeOfTheStorm.castRange,eTurrets=true,
+        eShield=D.Jade_JannaEyeOfTheStorm.BaseShield,eShieldAP=D.Jade_JannaEyeOfTheStorm.ShieldAPRatio,eDuration=D.Jade_JannaEyeOfTheStorm.ShieldDuration,eDelay=0,
         source='research/family-assets/Jade_Janna/spells.json:1754-1817 (BaseShield, ShieldAPRatio .9, ShieldDuration 5) and https://wiki.leagueoflegends.com/en-us/League_Classic/Janna (read 2026-10-08)',
         -- 2026-10-10, https://wiki.leagueoflegends.com/en-us/League_Classic/Janna: Q range 1100 + 20 % per second of
         -- charge (1760 at 3 s), constant 1.25 s travel; R heals 70/110/150 (+35 % AP) per second for 4 s.
-        qBaseRange=1100,qChargeRate=220,qMaxCharge=3,qTravel=1.25,
-        rHeal={70,110,150},rHealAP=.35,rTick=1,rChannel=4},
+        qBaseRange=D.Jade_JannaHowlingGale.BaseRange,qChargeRate=220,qMaxCharge=D.Jade_JannaHowlingGale.MaxDuration,qTravel=D.Jade_JannaHowlingGale.MissileTravelTime,
+        rHeal=D.Jade_JannaReapTheWhirlwind.HealBasePerSecond,rHealAP=D.Jade_JannaReapTheWhirlwind.APRatioPerSecond,rTick=1,rChannel=D.Jade_JannaReapTheWhirlwind.MaxChannelDuration},
     normal={id='normal',qBegin='HowlingGale',qRelease='HowlingGaleSpell',
-        rName='ReapTheWhirlwind',qSpeed=667.666992,wBase={55,85,115,145,175},wAP=.5,wEdge=true,
-        wDelay=.245,wSpeed=1600,rRadius=700,eRange=800,eTurrets=true,
-        eShield={80,120,160,200,240},eShieldAP=.55,eDuration=4,eDelay=0,
+        rName='ReapTheWhirlwind',qSpeed=667.666992,wBase=D.SowTheWind.BaseDamage,wAP=D.SowTheWind.APRatio,wEdge=true,
+        wDelay=D.SowTheWind.mCastTime,wSpeed=D.SowTheWind.mSpeed,rRadius=D.ReapTheWhirlwind.Range,eRange=D.EyeOfTheStorm.castRange,eTurrets=true,
+        eShield=D.EyeOfTheStorm.BaseShield,eShieldAP=D.EyeOfTheStorm.ShieldAPRatio,eDuration=D.EyeOfTheStorm.ShieldDuration,eDelay=0,
         source='https://wiki.leagueoflegends.com/en-us/Janna and Template:Data_Janna/Eye_of_the_Storm (read 2026-10-08)',
         -- 2026-10-10, https://wiki.leagueoflegends.com/en-us/Janna and the installed HowlingGale record
         -- (BaseRange 1100, ChargeDistancePercent 20, MissileTravelTime 1.25, MaxDuration 3): range 1100-1760 by charge,
         -- constant 1.25 s travel. R heals 25/37.5/50 (+12.5 % AP) every 0.25 s for 3 s (asset 100/150/200 +.5 AP per s).
         -- Tailwind: W deals 30 % of bonus movement speed; base movement speed 315 (wiki; the host has no base field,
         -- janna_move_speed traces settle it).
-        qBaseRange=1100,qChargeRate=220,qMaxCharge=3,qTravel=1.25,
-        rHeal={25,37.5,50},rHealAP=.125,rTick=.25,rChannel=3,tailwind=.3,baseMoveSpeed=315},
+        qBaseRange=D.HowlingGale.BaseRange,qChargeRate=220,qMaxCharge=D.HowlingGale.MaxDuration,qTravel=D.HowlingGale.MissileTravelTime,
+        rHeal={25,37.5,50},rHealAP=.125,rTick=.25,rChannel=D.ReapTheWhirlwind.Duration,tailwind=.3,baseMoveSpeed=315},
 }
 
 end
@@ -9967,45 +10543,95 @@ factories['jarvaniv']=function()
 -- measured: 740 is the conservative value the controller has always used. The dev trace jarvan_eq_reach records
 -- flag distance and landing for every sequence, and for the player's own Q to an own flag (manual=true, any distance,
 -- the only way a flag beyond 740 is observed), until own play settles it. eRange 860 (both wikis).
+local D=(function()
+return {
+ JarvanIVDragonStrike={
+  BaseDamage={90,130,170,210,250},
+ },
+ JarvanIVCataclysm={
+  BaseDamage={200,325,450},castRange=650,
+ },
+ JarvanIVDemacianStandard={
+  APRatio=.8,castRangeDisplayOverride=860,
+ },
+ Jade_JarvanIVDemacianStandard={
+  APRatio=.8,BaseDamage={60,105,150,195,240},castRangeDisplayOverride=860,
+ },
+ Jade_JarvanIVGoldenAegis={
+  ShieldAmount={50,90,130,170,210},ShieldBonus={20,25,30,35,40},ShieldDuration=5,castRadius=400,
+ },
+ Jade_JarvanIVCataclysm={
+  BaseDamage={200,325,450},castRange=650,
+ },
+ Jade_JarvanIVDragonStrike={
+  BaseDamage={70,115,160,205,250},
+ },
+}
+end)()
 return {
  JarvanIV={id='normal',q='JarvanIVDragonStrike',w='JarvanIVGoldenAegis',e='JarvanIVDemacianStandard',r='JarvanIVCataclysm',
-  qBase={90,130,170,210,250},qAD=1.45,eBase={80,120,160,200,240},eAP=.8,rAD=1.8,wRange=600,flagName='jarvanivstandard',
-  qDelay=.4,eRadius=200,rBase={200,325,450},rRange=650,rArena=350,rLeap=.35,eqReach=740,eRange=860,
+  qBase=D.JarvanIVDragonStrike.BaseDamage,qAD=1.45,eBase={80,120,160,200,240},eAP=D.JarvanIVDemacianStandard.APRatio,rAD=1.8,wRange=600,flagName='jarvanivstandard',
+  qDelay=.4,eRadius=200,rBase=D.JarvanIVCataclysm.BaseDamage,rRange=D.JarvanIVCataclysm.castRange,rArena=350,rLeap=.35,eqReach=740,eRange=D.JarvanIVDemacianStandard.castRangeDisplayOverride,
   wShield={60,80,100,120,140},wShieldAD=.7,wShieldHealthPerChampion=.013,wDuration=4,wDelay=0,
   source='https://wiki.leagueoflegends.com/en-us/Jarvan_IV and Template:Data_Jarvan_IV/Golden_Aegis (read 2026-10-08)'},
  Jade_JarvanIV={id='classic',q='Jade_JarvanIVDragonStrike',w='Jade_JarvanIVGoldenAegis',e='Jade_JarvanIVDemacianStandard',r='Jade_JarvanIVCataclysm',
-  qBase={70,115,160,205,250},qAD=1.2,eBase={60,105,150,195,240},eAP=.8,rAD=1.5,wRange=400,wRangeWiki=600,
-  qDelay=.4,eRadius=200,rBase={200,325,450},rRange=650,rArena=350,rLeap=.35,eqReach=740,eRange=860,
-  wShield={50,90,130,170,210},wShieldPerChampion={20,25,30,35,40},wDuration=5,wDelay=0,
+  qBase=D.Jade_JarvanIVDragonStrike.BaseDamage,qAD=1.2,eBase=D.Jade_JarvanIVDemacianStandard.BaseDamage,eAP=D.Jade_JarvanIVDemacianStandard.APRatio,rAD=1.5,wRange=D.Jade_JarvanIVGoldenAegis.castRadius,wRangeWiki=600,
+  qDelay=.4,eRadius=200,rBase=D.Jade_JarvanIVCataclysm.BaseDamage,rRange=D.Jade_JarvanIVCataclysm.castRange,rArena=350,rLeap=.35,eqReach=740,eRange=D.Jade_JarvanIVDemacianStandard.castRangeDisplayOverride,
+  wShield=D.Jade_JarvanIVGoldenAegis.ShieldAmount,wShieldPerChampion=D.Jade_JarvanIVGoldenAegis.ShieldBonus,wDuration=D.Jade_JarvanIVGoldenAegis.ShieldDuration,wDelay=0,
   source='https://wiki.leagueoflegends.com/en-us/League_Classic/Jarvan_IV (read 2026-10-08); shield values also research/family-assets/Jade_JarvanIV/spells.json:774-813'},
 }
 
 end
 factories['jax']=function()
 -- Shared Jax mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ JaxW={
+  Damage={50,85,120,155,190},
+ },
+ JaxR={
+  AoESize=375,SwingDamageBase={100,175,250},mCastTime=.25,
+ },
+ JaxE={
+  APRatio=.7,BaseDamage={40,70,100,130,160},DodgeDuration=2,MaxDodgesForDamageIncrease=5,PercentHealthDamage=4,PercentIncreasedPerDodge=.2,
+ },
+ JaxQ={
+  Damage={65,105,145,185,225},
+ },
+ Jade_JaxE={
+  ADRatio=.5,BaseDamage={50,75,100,125,150},DodgeDuration=2,MaxDodgesForDamageIncrease=5,PercentIncreasedPerDodge=.2,
+ },
+ Jade_JaxW={
+  ADRatio=.2,APRatio=.2,BaseDamage={40,60,80,100,120},
+ },
+ Jade_JaxQ={
+  ADRatio=1,APRatio=.8,BaseDamage={50,75,100,125,150},
+ },
+}
+end)()
 return {
  Jax={id='normal',q={'JaxQ','JaxLeapStrike'},w='JaxW',e={'JaxE','JaxCounterStrike'},r='JaxR',
-  eBuff={'JaxCounterStrike','JaxE'},wBuff='JaxW',wBuffAliases={'JaxW','JaxEmpowerTwo'},wAttack='JaxWAttack',wBase={50,85,120,155,190},wAP=.6,wPrepare=.15,rKind='active_swing',
+  eBuff={'JaxCounterStrike','JaxE'},wBuff='JaxW',wBuffAliases={'JaxW','JaxEmpowerTwo'},wAttack='JaxWAttack',wBase=D.JaxW.Damage,wAP=.6,wPrepare=.15,rKind='active_swing',
   -- Q 65-225 (+100% bonus AD) physical; R swing 100/175/250 (+100% AP) magic, radius 375, cast 0.25 s.
-  qBase={65,105,145,185,225},qBonusAD=1,qAP=0,qKind='physical',rBase={100,175,250},rAP=1,rRadius=375,rCast=.25,
+  qBase=D.JaxQ.Damage,qBonusAD=1,qAP=0,qKind='physical',rBase=D.JaxR.SwingDamageBase,rAP=1,rRadius=D.JaxR.AoESize,rCast=D.JaxR.mCastTime,
   damageSource='https://wiki.leagueoflegends.com/en-us/Jax read 2026-10-08 (last changed V26.12)',
   -- Counter Strike recast: 40-160 (+70% AP) (+4% target max HP) magic, +20% per dodged attack up to 5 (2x);
   -- dodge window 2 s, no cast time; dodges every non-turret basic attack.
-  eBase={40,70,100,130,160},eAP=.7,eHP=.04,eBonusAD=0,eKind='magical',eDodgeBonus=.2,eMaxDodges=5,eDuration=2,eDelay=0,
+  eBase=D.JaxE.BaseDamage,eAP=D.JaxE.APRatio,eHP=D.JaxE.PercentHealthDamage/100,eBonusAD=0,eKind='magical',eDodgeBonus=D.JaxE.PercentIncreasedPerDodge,eMaxDodges=D.JaxE.MaxDodgesForDamageIncrease,eDuration=D.JaxE.DodgeDuration,eDelay=0,
   eSource='https://wiki.leagueoflegends.com/en-us/Jax read 2026-10-10 (last changed V26.12): E recast damage, 2 s dodge, cast time none'},
  Jade_Jax={id='classic',q={'Jade_JaxQ','Jade_JaxLeapStrike'},w='Jade_JaxW',e={'Jade_JaxE','Jade_JaxCounterStrike'},r='Jade_JaxR',
-  eBuff={'Jade_JaxE'},wBuff='Jade_JaxW',wAttack='Jade_JaxWAttack',wBase={40,60,80,100,120},wAP=.2,wPrepare=.55,rKind='passive_slot',
+  eBuff={'Jade_JaxE'},wBuff='Jade_JaxW',wAttack='Jade_JaxWAttack',wBase=D.Jade_JaxW.BaseDamage,wAP=D.Jade_JaxW.APRatio,wPrepare=.55,rKind='passive_slot',
   -- Q BaseDamage 50-150, ADRatio 1, APRatio .8 (asset); the wiki reads the AD part as bonus AD. Its damage
   -- type is not established (the wiki page contradicts itself), so qKind stays nil and the controller takes
   -- the lower of the physical and the magical result.
-  qBase={50,75,100,125,150},qBonusAD=1,qAP=.8,
+  qBase=D.Jade_JaxQ.BaseDamage,qBonusAD=D.Jade_JaxQ.ADRatio,qAP=D.Jade_JaxQ.APRatio,
   damageSource='research/family-assets/Jade_Jax/spells.json Jade_JaxLeapStrike DataValues; https://wiki.leagueoflegends.com/en-us/League_Classic/Jax read 2026-10-08',
   -- W ADRatio .2 (asset); the wiki reads it as bonus AD, the lower claim.
-  wBonusAD=.2,
+  wBonusAD=D.Jade_JaxW.ADRatio,
   -- Counter Strike recast (asset Jade_JaxE DataValues: BaseDamage 50-150, ADRatio .5, PercentIncreasedPerDodge .2,
   -- MaxDodgesForDamageIncrease 5, DodgeDuration 2; no cast-time field). The wiki reads the AD part as bonus AD and
   -- the damage as physical.
-  eBase={50,75,100,125,150},eAP=0,eHP=0,eBonusAD=.5,eKind='physical',eDodgeBonus=.2,eMaxDodges=5,eDuration=2,eDelay=0,
+  eBase=D.Jade_JaxE.BaseDamage,eAP=0,eHP=0,eBonusAD=D.Jade_JaxE.ADRatio,eKind='physical',eDodgeBonus=D.Jade_JaxE.PercentIncreasedPerDodge,eMaxDodges=D.Jade_JaxE.MaxDodgesForDamageIncrease,eDuration=D.Jade_JaxE.DodgeDuration,eDelay=0,
   eSource='research/family-assets/Jade_Jax/spells.json Jade_JaxE DataValues; https://wiki.leagueoflegends.com/en-us/League_Classic/Jax read 2026-10-10'},
 }
 
@@ -10016,49 +10642,133 @@ factories['jhin']=function()
 --  EFFECT RADIUS 450 carries "Centered range"; speed 1800 / 600, cast 0.25),
 --  https://wiki.leagueoflegends.com/en-us/Template:Data_Jhin/Dancing_Grenade. qRangeEdge=true tells the controller to
 --  add both gameplay radii for a centre-to-centre check. Live reach is not yet measured.
+local D=(function()
+return {
+ JhinE={
+  BaseDamage={20,80,140,200,260},ReducedDamagePercent=.65,TrapAoERadius=260,TrapArmTime=.75,TrapDetonationTime=2,TrapTriggerRadius=160,castRange=750,mCastTime=.25,
+ },
+ JhinETrap={
+  mSpeed=1600,
+ },
+ JhinPassive={
+  ReloadTime=2.5,
+ },
+ JhinR={
+  ADRatio=.25,Damage={64,128,192},FourthShotMultiplier=2,MInimumDelayBetweenShots=1,PercentMissingAmp=3,
+ },
+ JhinRShotMis={
+  mMissileWidth=80,mSpeed=5000,
+ },
+ JhinRShot={
+  castRangeDisplayOverride=3500,
+ },
+ JhinW={
+  BaseDamage={70,105,140,175,210},mCastTime=.75,mLineWidth=40,
+ },
+ JhinQ={
+  ADRatio={.44,.515,.59,.665,.74},BaseDamage={44,69,94,119,144},BounceRange=450,NumberOfBounces=3,PercentAmpOnKill=.35,castRange=550,
+ },
+}
+end)()
 return {Jhin={id='normal',q='JhinQ',w='JhinW',e='JhinE',r='JhinR',rShot='JhinRShot',
- qBase={44,69,94,119,144},qAD={.44,.515,.59,.665,.74},qAP=.6,qRange=550,qRangeEdge=true,qBounces=3,qBounce=450,qAmp=.35,
- wBase={70,105,140,175,210},wAD=.5,wRange=2500,wDelay=.75,wSpeed=5000,wRadius=40,mark='jhinespotteddebuff',
+ qBase=D.JhinQ.BaseDamage,qAD=D.JhinQ.ADRatio,qAP=.6,qRange=D.JhinQ.castRange,qRangeEdge=true,qBounces=D.JhinQ.NumberOfBounces,qBounce=D.JhinQ.BounceRange,qAmp=D.JhinQ.PercentAmpOnKill,
+ wBase=D.JhinW.BaseDamage,wAD=.5,wRange=2500,wDelay=D.JhinW.mCastTime,wSpeed=5000,wRadius=D.JhinW.mLineWidth,mark='jhinespotteddebuff',
  -- E arming: asset TrapArmTime .75 against the wiki's 1 s (V26.16). Until the dev trace jhin_trap_spawn settles it,
  -- the conservative 1 s is used (an enemy freed before the trap arms walks out); eArmAsset keeps the asset value.
  -- E damage 20/80/140/200/260 +120% AD +100% AP magic, 65% to minions (asset JhinE BaseDamage/ReducedDamagePercent).
- eRange=750,eArm=1,eArmAsset=.75,eDetonation=2,eRadius=260,eTrigger=160,eSpeed=1600,eCast=.25,
- eBase={20,80,140,200,260},eAD=1.2,eAP=1,eMinion=.65,
- rBase={64,128,192},rAD=.25,rMissing=3,rFourth=2,rRange=3500,rSpeed=5000,rRadius=80,rDelay=.25,rInterval=1,rHalfAngle=30.6,
- reload='JhinPassiveReload',passive='JhinPassiveAttackBuff',reloadTime=2.5}}
+ eRange=D.JhinE.castRange,eArm=1,eArmAsset=D.JhinE.TrapArmTime,eDetonation=D.JhinE.TrapDetonationTime,eRadius=D.JhinE.TrapAoERadius,eTrigger=D.JhinE.TrapTriggerRadius,eSpeed=D.JhinETrap.mSpeed,eCast=D.JhinE.mCastTime,
+ eBase=D.JhinE.BaseDamage,eAD=1.2,eAP=1,eMinion=D.JhinE.ReducedDamagePercent,
+ rBase=D.JhinR.Damage,rAD=D.JhinR.ADRatio,rMissing=D.JhinR.PercentMissingAmp,rFourth=D.JhinR.FourthShotMultiplier,rRange=D.JhinRShot.castRangeDisplayOverride,rSpeed=D.JhinRShotMis.mSpeed,rRadius=D.JhinRShotMis.mMissileWidth,rDelay=.25,rInterval=D.JhinR.MInimumDelayBetweenShots,rHalfAngle=30.6,
+ reload='JhinPassiveReload',passive='JhinPassiveAttackBuff',reloadTime=D.JhinPassive.ReloadTime}}
 
 end
 factories['jinx']=function()
 -- Shared Jinx mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ JinxWMissile={
+  mCastTime=.6,mMissileWidth=60,mSpeed=3300,
+ },
+ JinxW={
+  ADRatio=1.4,Damage={10,60,110,160,210},JinxLowEndWCastTime=.4,JinxWASpeedCastTimeScalarPerHundrethSecond=.08,castRangeDisplayOverride=1450,
+ },
+ JinxEHit={
+  mMissileWidth=120,
+ },
+ JinxE={
+  GrenadeArmTime=.5,GrenadeDuration=5,castRange=925,missileSpeed=1750,
+ },
+ JinxQ={
+  MinigunAttackSpeedDuration=2.5,MinigunAttackSpeedMax={30,55,80,105,130},MinigunAttackSpeedStacks=3,RocketAoERadius=250,RocketBonusRange={100,125,150,175,200},RocketTAD=1.1,
+ },
+ JinxR={
+  AoEDamageMult=.8,AoERadius=400,BaseDamage={20,35,50},MaxDamage={200,350,500},MonsterExecuteMax=1200,PercentDamage={25,30,35},castRange=25000,mCastTime=.6,mMissileWidth=140,mSpeed=1700,
+ },
+}
+end)()
 return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
- qRange={100,125,150,175,200},qSplash=250,qAD=1.1,qMana=20,qStacks=3,qStackLife=2.5,qAS={30,55,80,105,130},
- wBase={10,60,110,160,210},wAD=1.4,wRange=1450,wSpeed=3300,wRadius=60,wMin=.4,wBaseDelay=.6,wASScalar=.08,
+ qRange=D.JinxQ.RocketBonusRange,qSplash=D.JinxQ.RocketAoERadius,qAD=D.JinxQ.RocketTAD,qMana=20,qStacks=D.JinxQ.MinigunAttackSpeedStacks,qStackLife=D.JinxQ.MinigunAttackSpeedDuration,qAS=D.JinxQ.MinigunAttackSpeedMax,
+ wBase=D.JinxW.Damage,wAD=D.JinxW.ADRatio,wRange=D.JinxW.castRangeDisplayOverride,wSpeed=D.JinxWMissile.mSpeed,wRadius=D.JinxWMissile.mMissileWidth,wMin=D.JinxW.JinxLowEndWCastTime,wBaseDelay=D.JinxWMissile.mCastTime,wASScalar=D.JinxW.JinxWASpeedCastTimeScalarPerHundrethSecond,
  -- eEffect: chomper effect radius 225 (wiki Jinx V26.16, read 2026-10-10); land/arm timing stays the asset-based
  -- conservative 0.5 + d/1750 + 0.5 until the jinx_e_land trace measures it (wiki: no cast time, lands after 0.4 s).
- eRange=925,eArm=.5,eDuration=5,eSpeed=1750,eDelay=.5,eRadius=120,eEffect=225,
- rMin={20,35,50},rMax={200,350,500},rMinAD=.12,rMaxAD=1.2,rMissing={.25,.30,.35},rSplash=400,rSecondary=.8,
+ eRange=D.JinxE.castRange,eArm=D.JinxE.GrenadeArmTime,eDuration=D.JinxE.GrenadeDuration,eSpeed=D.JinxE.missileSpeed,eDelay=.5,eRadius=D.JinxEHit.mMissileWidth,eEffect=225,
+ rMin=D.JinxR.BaseDamage,rMax=D.JinxR.MaxDamage,rMinAD=.12,rMaxAD=1.2,rMissing={D.JinxR.PercentDamage[1]/100,D.JinxR.PercentDamage[2]/100,D.JinxR.PercentDamage[3]/100},rSplash=D.JinxR.AoERadius,rSecondary=D.JinxR.AoEDamageMult,
  -- rMonsterCap: missing-health part against monsters (spells.json JinxR MonsterExecuteMax 1200; wiki V26.16).
- rMonsterCap=1200,rRange=25000,rRadius=140,rDelay=.6,rSpeed=1700,rDamageDistance=1500}}
+ rMonsterCap=D.JinxR.MonsterExecuteMax,rRange=D.JinxR.castRange,rRadius=D.JinxR.mMissileWidth,rDelay=D.JinxR.mCastTime,rSpeed=D.JinxR.mSpeed,rDamageDistance=1500}}
 
 end
 factories['karma']=function()
 -- Shared Karma Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+local D=(function()
+return {
+ KarmaSolKimShield={
+  BaseShield={80,130,180,230,280},ShieldDuration=2.5,ShieldRatio=.6,castRange=800,
+ },
+ KarmaQMissile={
+  mMissileWidth=60,mSpeed=1700,
+ },
+ KarmaQMissileMantra={
+  castRange=950,mMissileWidth=80,
+ },
+ KarmaQ={
+  APRatio=.7,BaseDamage={60,110,160,210,260},castRangeDisplayOverride=950,
+ },
+ KarmaSpiritBind={
+  APRatio=.45,BaseDamage={40,65,90,115,140},LeashBreakRange=825,TetherDuration=2,castRange=675,mCastTime=.25,
+ },
+ KarmaMantra={
+  EBonusShield={45,85,125,165},EBonusShieldRatio=.45,QBonusAPRatio=.3,QBonusDamage={40,100,160,220},QDetonationAPRatio=.5,QDetonationDamage={40,130,220,310},RWBaseHeal=17,RWHealRatio=.01,
+ },
+ Jade_KarmaQ={
+  BaseHealingPercent=5,DamageAPRatio=.6,HealingAPRatio=.02,castConeAngle=33,
+ },
+ Jade_KarmaQMissileTemp={
+  castRange=650,
+ },
+ Jade_KarmaW={
+  APRatio=.7,Duration=5,LineDuration=3,MantraMultiplier=2,castRange=800,mCastTime=.25,
+ },
+ Jade_KarmaE={
+  AoERange=500,Duration=5,castRangeDisplayOverride=625,
+ },
+}
+end)()
 local profiles={}
 profiles['Karma']=profiles['Karma']or {}
 profiles['Karma'].combat={id='normal',champion='Karma',names={{'KarmaQ'},{'KarmaSpiritBind'},{'KarmaSolKimShield'},{'KarmaMantra'}},
   -- Q missile half-width 60, Mantra missile 80 (26.20 KarmaQMissile / KarmaQMissileMantra lineWidth; dossier
   -- 2026-10-10); Soulflare explodes at the end of its 950 range in a 280 radius (wiki Karma, V26.10, read 2026-10-10).
-  q={range=950,radius=60,delay=.25,speed=1700,collision=true,type='magical',base={60,110,160,210,260},ap=.7,splash=280,
-   mantra={range=950,radius=80,endBlast=280}},
-  w={range=675,delay=.25,type='magical',base={40,65,90,115,140},ap=.45,leash=825,duration=2},
-  e={range=800,type='shield',base={80,130,180,230,280},ap=.6,duration=2.5},r={range=0},
-  mantraNames={'KarmaMantra'},tetherNames={'KarmaSpiritBind'},rqBase={40,100,160,220},rqAP=.3,rqDelayed={40,130,220,310},rqDelayedAP=.5,rwMissingHeal=.17,rwHealAP=.0001,reBase={45,85,125,165},reAP=.45}
+  q={range=D.KarmaQ.castRangeDisplayOverride,radius=D.KarmaQMissile.mMissileWidth,delay=.25,speed=D.KarmaQMissile.mSpeed,collision=true,type='magical',base=D.KarmaQ.BaseDamage,ap=D.KarmaQ.APRatio,splash=280,
+   mantra={range=D.KarmaQMissileMantra.castRange,radius=D.KarmaQMissileMantra.mMissileWidth,endBlast=280}},
+  w={range=D.KarmaSpiritBind.castRange,delay=D.KarmaSpiritBind.mCastTime,type='magical',base=D.KarmaSpiritBind.BaseDamage,ap=D.KarmaSpiritBind.APRatio,leash=D.KarmaSpiritBind.LeashBreakRange,duration=D.KarmaSpiritBind.TetherDuration},
+  e={range=D.KarmaSolKimShield.castRange,type='shield',base=D.KarmaSolKimShield.BaseShield,ap=D.KarmaSolKimShield.ShieldRatio,duration=D.KarmaSolKimShield.ShieldDuration},r={range=0},
+  mantraNames={'KarmaMantra'},tetherNames={'KarmaSpiritBind'},rqBase=D.KarmaMantra.QBonusDamage,rqAP=D.KarmaMantra.QBonusAPRatio,rqDelayed=D.KarmaMantra.QDetonationDamage,rqDelayedAP=D.KarmaMantra.QDetonationAPRatio,rwMissingHeal=D.KarmaMantra.RWBaseHeal/100,rwHealAP=D.KarmaMantra.RWHealRatio/100,reBase=D.KarmaMantra.EBonusShield,reAP=D.KarmaMantra.EBonusShieldRatio}
 profiles['Jade_Karma']=profiles['Jade_Karma']or {}
 profiles['Jade_Karma'].combat={id='classic',champion='Karma',names={{'Jade_KarmaQ','Jade_KarmaQ_C'},{'Jade_KarmaW'},{'Jade_KarmaE','Jade_KarmaE_C'},{'Jade_KarmaR'}},
-  q={range=650,radius=100,cone=33,delay=.25,speed=math.huge,type='magical',base={70,110,150,190,230,270},ap=.6},
-  w={range=800,delay=.25,type='magical',base={80,125,170,215,260,305},ap=.7,duration=5,lineDuration=3},
-  e={range=625,type='shield',base={80,120,160,200,240,280},ap=.8,duration=5,area=500},r={range=0},
-  mantraNames={'Jade_KarmaR'},mantraChargeNames={'Jade_KarmaR_Charge'},rqHeal={35,55,75,95,115,135},rqMissing=.05,rqHealAP=.0002,rCharges=2,rRecharge={30,25,20},wSpeed={.1,.12,.14,.16,.18,.2},wMantra=2}
+  q={range=D.Jade_KarmaQMissileTemp.castRange,radius=100,cone=D.Jade_KarmaQ.castConeAngle,delay=.25,speed=math.huge,type='magical',base={85,125,165,205,245,285},ap=D.Jade_KarmaQ.DamageAPRatio},
+  w={range=D.Jade_KarmaW.castRange,delay=D.Jade_KarmaW.mCastTime,type='magical',base={100,140,180,220,260,300},ap=D.Jade_KarmaW.APRatio,duration=D.Jade_KarmaW.Duration,lineDuration=D.Jade_KarmaW.LineDuration},
+  e={range=D.Jade_KarmaE.castRangeDisplayOverride,type='shield',base={80,120,160,200,240,280},ap=.8,duration=D.Jade_KarmaE.Duration,area=D.Jade_KarmaE.AoERange},r={range=0},
+  mantraNames={'Jade_KarmaR'},mantraChargeNames={'Jade_KarmaR_Charge'},rqHeal={50,70,90,110,130,150},rqMissing=D.Jade_KarmaQ.BaseHealingPercent/100,rqHealAP=D.Jade_KarmaQ.HealingAPRatio/100,rCharges=2,rRecharge={30,25,20},wSpeed={.15,.16,.17,.18,.19,.2},wMantra=D.Jade_KarmaW.MantraMultiplier}
 local normal,classic=profiles.Karma.combat,profiles.Jade_Karma.combat
 normal.r.maxRank=4
 for _,slot in ipairs({'q','w','e'})do classic[slot].maxRank=6 end
@@ -10097,10 +10807,35 @@ return {
 end
 factories['kassadin']=function()
 -- Shared Kassadin mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ ForcePulse={
+  APRatio=.7,BaseDamage={70,100,130,160,190},
+ },
+ NullLance={
+  BaseDamage={65,95,125,155,185},ShieldAmount={80,110,140,170,200},ShieldDuration=1.5,mCastTime=.25,mSpeed=1400,
+ },
+ NetherBlade={
+  ActiveBaseDamage={50,75,100,125,150},PassiveBaseDamage=25,
+ },
+ RiftWalk={
+  APRatio=.5,APStackRatio=.07,CastRange=500,MaxStacks=4,RBaseCost=40,RBaseDamage={80,95,110},RManaRatio=2,RStackDuration=15,RStackManaRatio=1,StackDamage={35,45,55},castRadius=270,mCastTime=.25,
+ },
+ Jade_KassadinE={
+  APRatio=.7,Damage={80,130,180,230,280},
+ },
+ Jade_KassadinQ={
+  APRatio=.7,BaseDamage={80,130,180,230,280},mCastTime=.25,mSpeed=1400,
+ },
+ Jade_KassadinR={
+  APRatio=.8,AdditionalManaPerCast=100,BuffDuration=8,Damage={60,70,80},MaxDistance=700,MaxStacks=10,castRadius=270,mCastTime=.25,
+ },
+}
+end)()
 return {
  Kassadin={id='normal',q='NullLance',w='NetherBlade',e='ForcePulse',r='RiftWalk',wBuff='NetherBladeBuff',
-  rBuff='RiftWalk',rRange=500,rBaseCost=40,rCostKind='double',rMax=4,rDuration=15,
-  qBase={65,95,125,155,185},qAP=.8,qSpeed=1400,wKind='reset',wPassiveBase=25,wPassiveAP=.1,eBase={70,100,130,160,190},eAP=.7,
+  rBuff='RiftWalk',rRange=D.RiftWalk.CastRange,rBaseCost=D.RiftWalk.RBaseCost,rCostKind='double',rMax=D.RiftWalk.MaxStacks,rDuration=D.RiftWalk.RStackDuration,
+  qBase=D.NullLance.BaseDamage,qAP=.8,qSpeed=D.NullLance.mSpeed,wKind='reset',wPassiveBase=D.NetherBlade.PassiveBaseDamage,wPassiveAP=.1,eBase=D.ForcePulse.BaseDamage,eAP=D.ForcePulse.APRatio,
   -- 2026-10-08. R: blink, range 500, cast 0.25, damage radius 270, 80/95/110 (+50% AP) (+2% max mana).
   -- Q: 1.5 s magic-damage shield 80..200 (+30% AP); interrupts channels. W active 50..150 (+80% AP), resets the attack, +50 attack range.
   -- Sources: https://wiki.leagueoflegends.com/en-us/Kassadin and research/family-assets/Kassadin/spells.json (RiftWalk CastRange/RBaseDamage/APRatio/
@@ -10108,41 +10843,72 @@ return {
   -- mSpellCalculations coefficient (295c2889) confirms the wiki (2026-10-10), so the old d7141e61=0.4 conflict is closed.
   -- 2026-10-10. R stack bonus per current stack: 35/45/55 (+7% AP) (+1% max mana), spells.json RiftWalk StackDamage/APStackRatio/
   -- RStackManaRatio and wiki V26.18. Counted with the stacks held before the cast (the lower of the two readings until measured).
-  rCast=.25,rRadius=270,rBase={80,95,110},rAP=.5,rMana=.02,rSource='wiki Kassadin Riftwalk + family-assets/Kassadin/spells.json RiftWalk, 2026-10-08',
-  rStack={35,45,55},rStackAP=.07,rStackMana=.01,wRangeBonus=50,
-  qCast=.25,qInterrupts=true,qShield={80,110,140,170,200},qShieldAP=.3,qShieldDuration=1.5,
+  rCast=D.RiftWalk.mCastTime,rRadius=D.RiftWalk.castRadius,rBase=D.RiftWalk.RBaseDamage,rAP=D.RiftWalk.APRatio,rMana=D.RiftWalk.RManaRatio/100,rSource='wiki Kassadin Riftwalk + family-assets/Kassadin/spells.json RiftWalk, 2026-10-08',
+  rStack=D.RiftWalk.StackDamage,rStackAP=D.RiftWalk.APStackRatio,rStackMana=D.RiftWalk.RStackManaRatio/100,wRangeBonus=50,
+  qCast=D.NullLance.mCastTime,qInterrupts=true,qShield=D.NullLance.ShieldAmount,qShieldAP=.3,qShieldDuration=D.NullLance.ShieldDuration,
   qShieldSource='wiki Kassadin Null Sphere + family-assets/Kassadin/spells.json NullLance ShieldAmount/ShieldDuration, 2026-10-08',
-  wBase={50,75,100,125,150},wAP=.8},
+  wBase=D.NetherBlade.ActiveBaseDamage,wAP=.8},
  Jade_Kassadin={id='classic',q='Jade_KassadinQ',w='Jade_KassadinW',e='Jade_KassadinE',r='Jade_KassadinR',
   wBuff='Jade_KassadinW_Buff',eCounter='Jade_KassadinE_Counter',eAvailable='Jade_KassadinE_CanCast',
-  rBuff='Jade_KassadinR',rRange=700,rBaseCost=100,rCostKind='linear',rMax=10,rDuration=8,
-  qBase={60,105,150,195,240},qAP=.7,qSpeed=1400,wKind='sustained',eBase={80,130,180,230,280},eAP=.7,
-  -- 2026-10-08, research/family-assets/Jade_Kassadin/spells.json. R: MaxDistance 700, castRadius 270, Damage 60/70/80, APRatio 0.7. The cast
+  rBuff='Jade_KassadinR',rRange=D.Jade_KassadinR.MaxDistance,rBaseCost=D.Jade_KassadinR.AdditionalManaPerCast,rCostKind='linear',rMax=D.Jade_KassadinR.MaxStacks,rDuration=D.Jade_KassadinR.BuffDuration,
+  qBase=D.Jade_KassadinQ.BaseDamage,qAP=D.Jade_KassadinQ.APRatio,qSpeed=D.Jade_KassadinQ.mSpeed,wKind='sustained',eBase=D.Jade_KassadinE.Damage,eAP=D.Jade_KassadinE.APRatio,
+  -- 2026-10-08, research/family-assets/Jade_Kassadin/spells.json. R: MaxDistance 700, castRadius 270, Damage 60/70/80, current APRatio 0.8. The cast
   -- delay is not a named value: both undecoded timing fields (90fb0576, 11704a2b = 0.25) and castFrame 10.3 equal the Normal RiftWalk entry,
-  -- whose 0.25 s cast time the wiki confirms. Q silences (SilenceDuration 1..2 s), which ends a channel; it grants no shield.
-  rCast=.25,rRadius=270,rBase={60,70,80},rAP=.7,rSource='family-assets/Jade_Kassadin/spells.json Jade_KassadinR (cast delay by field parity with RiftWalk), 2026-10-08',
-  qCast=.25,qInterrupts=true},
+  -- whose 0.25 s cast time the wiki confirms. Q silences (current SilenceDuration 1..2.6 s), which ends a channel; it grants no shield.
+  rCast=D.Jade_KassadinR.mCastTime,rRadius=D.Jade_KassadinR.castRadius,rBase=D.Jade_KassadinR.Damage,rAP=D.Jade_KassadinR.APRatio,rSource='family-assets/Jade_Kassadin/spells.json Jade_KassadinR (cast delay by field parity with RiftWalk), 2026-10-08',
+  qCast=D.Jade_KassadinQ.mCastTime,qInterrupts=true},
 }
 
 end
 factories['kogmaw']=function()
 -- Shared KogMaw mechanics data. Values preserved from the maintained controller.
+local D=(function()
 return {
- KogMaw={id='normal',qRange=1175,qSpeed=1650,qBase={80,125,170,215,260},qAP=.9,
-  rBuff='kogmawlivingartillerycost',rRange={1300,1550,1800},
-  rBase={100,140,180},rAD=.75,rAP={.35,.40,.45},
+ KogMawLivingArtillery={
+  APRatio={.35,.4,.45},Damage={100,140,180},castFrameSeconds=.25,castRadius=240,castRange={1300,1550,1800},
+ },
+ KogMawQ={
+  APRatio=.9,BaseDamage={80,125,170,215,260},castRangeDisplayOverride=1175,
+ },
+ KogMawQMis={
+  mSpeed=1650,
+ },
+ KogMawVoidOozeMissile={
+  castRange=1360,mSpeed=1400,
+ },
+ KogMawIcathianSurprise={
+  TooltipPassiveDuration=4,
+ },
+ Jade_KogMawPassive={
+  passiveDuration=4,
+ },
+ Jade_KogMawQ={
+  APRatio=.7,BaseDamage={60,110,160,210,260},castRange=625,missileSpeed=1500,
+ },
+ Jade_KogMawR={
+  ADRatio=.5,AOERadius=240,APRatio=.3,castFrameSeconds=.25,castRange={1400,1700,2000},
+ },
+ Jade_KogMawEMissile={
+  castRange=1280,mSpeed=1400,
+ },
+}
+end)()
+return {
+ KogMaw={id='normal',qRange=D.KogMawQ.castRangeDisplayOverride,qSpeed=D.KogMawQMis.mSpeed,qBase=D.KogMawQ.BaseDamage,qAP=D.KogMawQ.APRatio,
+  rBuff='kogmawlivingartillerycost',rRange=D.KogMawLivingArtillery.castRange,
+  rBase=D.KogMawLivingArtillery.Damage,rAD=.75,rAP=D.KogMawLivingArtillery.APRatio,
   -- R timing: asset castFrame 7.5 (0.25 s) = wiki "CAST TIME: 0.25"; then "drops to the target location
   -- after 0.6 seconds" (https://wiki.leagueoflegends.com/en-us/Kog'Maw, read 2026-10-08). The wiki states a
   -- landing delay after the cast time (same convention as Xerath W, Cho'Gath Q), so the total is .85 s.
   -- Before 2026-10-08 this was an unsourced .6 s total; third-party leads say 1.0-1.15 s. Not live-measured:
   -- the development r_outcome rows are the check. Radius 240 = wiki "EFFECT RADIUS: 240".
-  rWindup=.25,rImpact=.6,rRadius=240,
+  rWindup=D.KogMawLivingArtillery.castFrameSeconds,rImpact=.6,rRadius=D.KogMawLivingArtillery.castRadius,
   -- E: wiki V26.16 (read 2026-10-10) range 1360, width 240, speed 1400; asset KogMawVoidOozeMissile castRange 1360.
-  eRange=1360,eSpeed=1400,
+  eRange=D.KogMawVoidOozeMissile.castRange,eSpeed=D.KogMawVoidOozeMissile.mSpeed,
   -- Icathian Surprise (death passive): asset KogMawIcathianDisplay TooltipPassiveDuration 4, TooltipPassiveMS .4,
   -- true damage ByCharLevelInterpolation 140 -> 650 (linear over levels 1..18); radius 400 from the wiki V26.16
   -- (read 2026-10-10). Buff name kogmawicathiansurprise (shared CannotDie list).
-  passive={buffs={kogmawicathiansurprise=true},duration=4,radius=400,damageStart=140,damageEnd=650}},
+  passive={buffs={kogmawicathiansurprise=true},duration=D.KogMawIcathianSurprise.TooltipPassiveDuration,radius=400,damageStart=140,damageEnd=650}},
  -- Classic Q is UNIT-TARGETED, range 625: installed asset research/family-assets/Jade_KogMaw/spells.json
  -- `Jade_KogMawQ` has castRange 625, missileSpeed 1500, the basic attack's targeted transport and no lineWidth
  -- block (the real skillshot `Jade_KogMawE` carries lineWidth 120), which is the Season 3 spell (patch history:
@@ -10150,9 +10916,9 @@ return {
  -- https://wiki.leagueoflegends.com/en-us/League_Classic/Kog'Maw (read 2026-10-08) says range 600 and
  -- "direction-targeted"; ClassicKogMaw.lua casts a 1000-range line (the V4.4 spell). A cast on the unit inside
  -- 625 is right under either reading; only reach beyond 625 would differ, and nothing supports that.
- Jade_KogMaw={id='classic',qRange=625,qSpeed=1500,qBase={60,110,160,210,260},qAP=.7,
-  rBuff='jade_kogmawrcost',rRange={1400,1700,2000},
-  rBase={180,270,360},rAD=.5,rAP={.3,.3,.3},
+ Jade_KogMaw={id='classic',qRange=D.Jade_KogMawQ.castRange,qSpeed=D.Jade_KogMawQ.missileSpeed,qBase=D.Jade_KogMawQ.BaseDamage,qAP=D.Jade_KogMawQ.APRatio,
+  rBuff='jade_kogmawrcost',rRange=D.Jade_KogMawR.castRange,
+  rBase={180,270,360},rAD=D.Jade_KogMawR.ADRatio,rAP={D.Jade_KogMawR.APRatio,D.Jade_KogMawR.APRatio,D.Jade_KogMawR.APRatio},
   -- R timing: windup .25 s = Jade_KogMawR castFrame 7.5 and live castEnd-castStart
   -- (session a1ed0e46). Impact remainder .85 s is an estimate (third-party evade
   -- totals 1.1-1.2 s from cast start); no Classic impact measurement exists yet,
@@ -10160,12 +10926,12 @@ return {
   -- The Classic wiki page (read 2026-10-08) says "lands after 0.6 seconds" (.85 s total with the cast) and
   -- "EFFECT RADIUS: 100"; both disagree with the asset/third-party values and are recorded only. E on that
   -- page: range 1280, speed 1350 (ours 1200 / 1400 from the asset's display range and child missile).
-  rWindup=.25,rImpact=.85,rRadius=240,
+  rWindup=D.Jade_KogMawR.castFrameSeconds,rImpact=.85,rRadius=D.Jade_KogMawR.AOERadius,
   -- E: asset Jade_KogMawEMissile castRange 1280 (Classic wiki 1280; its speed 1350 is recorded, the asset's 1400 used).
-  eRange=1280,eSpeed=1400,
+  eRange=D.Jade_KogMawEMissile.castRange,eSpeed=D.Jade_KogMawEMissile.mSpeed,
   -- Death passive: asset Jade_KogMawPassive passiveDuration 4, damage 125+25 per level; the explosion radius has no
   -- Classic source, so pursuit stays off for Classic (development trace kogmaw_passive settles duration and damage).
-  passive={buffs={jade_kogmawicathiansurprise=true,jade_kogmawpassivebuff=true},duration=4,radius=nil,unknown='classic_radius_unmeasured'}},
+  passive={buffs={jade_kogmawicathiansurprise=true,jade_kogmawpassivebuff=true},duration=D.Jade_KogMawPassive.passiveDuration,radius=nil,unknown='classic_radius_unmeasured'}},
 }
 
 end
@@ -10187,30 +10953,185 @@ factories['leona']=function()
 -- ArmorMRDuration): armor and magic resistance 20/27.5/35/42.5/50 (+20% bonus armor/MR) for 3 s, cast time none,
 -- plus a flat reduction 8-24 per hit (at most 50%). Offered to Evade as `resist` with the rank base only: the 20%
 -- scaling, the flat reduction and the 3 s extension on a hit are left out, so the offer is a lower bound.
+local D=(function()
 return {
- Leona={classic=false,q={10,35,60,85,110},e={50,90,130,170,210},r={150,225,300},width=70,
+ LeonaShieldOfDaybreak={
+  BaseDamage={10,35,60,85,110},
+ },
+ LeonaZenithBlade={
+  BaseDamage={50,90,130,170,210},mCastTime=.25,
+ },
+ LeonaZenithBladeMissile={
+  castRange=900,mMissileWidth=70,
+ },
+ LeonaSolarFlare={
+  CCDuration=1.75,ExplosionBaseDamage={150,225,300},
+ },
+ LeonaSolarBarrier={
+  ArmorMRDuration=3,MRBaseBonus={20,27.5,35,42.5,50},
+ },
+ Jade_LeonaZenithBladeMissile={
+  castRange=900,mMissileWidth=90,
+ },
+ Jade_LeonaZenithBlade={
+  BaseDamage={60,100,140,180,220},
+ },
+ Jade_LeonaSolarBarrier={
+  BonusARMR={30,40,50,60,70},BuffDuration=3,
+ },
+ Jade_LeonaShieldOfDaybreak={
+  Damage={40,70,100,130,160},
+ },
+ Jade_LeonaSolarFlare={
+  CCDuration=1.5,ExplosionBaseDamage={150,250,350},
+ },
+}
+end)()
+return {
+ Leona={classic=false,q=D.LeonaShieldOfDaybreak.BaseDamage,e=D.LeonaZenithBlade.BaseDamage,r=D.LeonaSolarFlare.ExplosionBaseDamage,width=D.LeonaZenithBladeMissile.mMissileWidth,
   qBuff='LeonaShieldOfDaybreak',eCast='LeonaZenithBlade',root='LeonaZenithBladeRoot',sunlight='LeonaSunlight',wBuff='LeonaSolarBarrier',
-  eRange=900,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=1.75,qBonusRange=50,
-  wResist={20,27.5,35,42.5,50},wDuration=3,w='LeonaSolarBarrier',
+  eRange=D.LeonaZenithBladeMissile.castRange,rCast=D.LeonaZenithBlade.mCastTime,rImpact=.625,rEpicenter=100,rArea=325,rStun=D.LeonaSolarFlare.CCDuration,qBonusRange=50,
+  wResist=D.LeonaSolarBarrier.MRBaseBonus,wDuration=D.LeonaSolarBarrier.ArmorMRDuration,w='LeonaSolarBarrier',
   wSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Leona/Eclipse (cast time none, armor/MR 20-50 for 3 s) + family-assets/Leona/spells.json LeonaSolarBarrier ArmorBaseBonus/MRBaseBonus/ArmorMRDuration, read 2026-10-10; rank base only (lower bound)'},
- Jade_Leona={classic=true,q={40,70,100,130,160},e={60,100,140,180,220},r={150,250,350},width=90,
+ Jade_Leona={classic=true,q=D.Jade_LeonaShieldOfDaybreak.Damage,e=D.Jade_LeonaZenithBlade.BaseDamage,r=D.Jade_LeonaSolarFlare.ExplosionBaseDamage,width=D.Jade_LeonaZenithBladeMissile.mMissileWidth,
   qBuff='Jade_LeonaShieldOfDaybreak',eCast='Jade_LeonaZenithBlade',root='Jade_LeonaZenithBladeRoot',sunlight='Jade_LeonaSunlight',wBuff='Jade_LeonaSolarBarrier',
-  eRange=900,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=1.5,qBonusRange=50,
-  wResist={30,40,50,60,70},wDuration=3,w='Jade_LeonaSolarBarrier',
+  eRange=D.Jade_LeonaZenithBladeMissile.castRange,rCast=.25,rImpact=.625,rEpicenter=100,rArea=325,rStun=D.Jade_LeonaSolarFlare.CCDuration,qBonusRange=50,
+  wResist=D.Jade_LeonaSolarBarrier.BonusARMR,wDuration=D.Jade_LeonaSolarBarrier.BuffDuration,w='Jade_LeonaSolarBarrier',
   wSource='family-assets/Jade_Leona/spells.json Jade_LeonaSolarBarrier BonusARMR/BuffDuration + wiki League_Classic/Leona, read 2026-10-10'}
 }
+
+end
+factories['lucian']=function()
+-- Lucian Normal/Classic mechanics. Details and witnesses: CombatProfiles/lucian-provenance.json.
+-- Normal: installed 16.21 asset data/characters/lucian/lucian.bin (Lucian.wad.client 2026-10-21).
+-- Classic: the same archive's data/characters/jade_lucian/jade_lucian.bin plus the live recording of an
+-- enemy Jade_Lucian on 2026-10-27 (FamilyTelemetry-v2-223..234): Q windup 0.35 at rank 3, W windup 0.30,
+-- W missile 1600 speed and 55 width over 1000 units, R missiles 2800 speed and 110 width over 1400 units.
+-- Ranks index asset arrays from 1. Per-shot R values; the shot count is in r.shots (nil when not established).
+local D=(function()
+return {
+ LucianRMissile={
+  castRange=1200,mMissileWidth=110,mSpeed=2800,
+ },
+ LucianR={
+  BaseDamage={15,30,45},DamageADRatio=.25,DamageAPRatio=.15,Duration=3,NumShots=22,PercentDamageAmpToMinions=200,
+ },
+ LucianW={
+  BaseDamage={75,110,145,180,215},castFrameSeconds=.3,castRangeDisplayOverride=900,
+ },
+ LucianWMissile={
+  mMissileWidth=55,mSpeed=1600,
+ },
+ LucianQ={
+  BaseDamage={90,130,170,210,250},BonusADRatio=1,Range=1000,castRange=500,mCastTime=.35,
+  pathWidth=120,
+ },
+ LucianE={
+  DashSpeed=1350,MaxDistance=425,MinDistance=200,
+ },
+ Jade_LucianE={
+  DashSpeed=1350,MaxDistance=425,MinDistance=200,
+ },
+ Jade_LucianRMissile={
+  castRange=1200,mMissileWidth=110,mSpeed=2800,
+ },
+ Jade_LucianR={
+  BaseDamage={40,50,60},DamageADRatio=.25,DamageAPRatio=.1,Duration=3,PercentDamageAmpToMinions=400,
+ },
+ Jade_LucianW={
+  ADRatio=.6,APRatio=.9,BaseDamage={60,100,140,180,220},castRangeDisplayOverride=1000,mCastTime=.3,
+ },
+ Jade_LucianWMissile={
+  mMissileWidth=55,mSpeed=1600,
+ },
+ Jade_LucianQ={
+  BaseDamage={80,110,140,170,200},BonusADRatio={.6,.75,.9,1.05,1.2},Range=1150,Width=100,castRange=500,mCastTime=.35,
+ },
+}
+end)()
+local profiles={}
+profiles['Lucian']=profiles['Lucian']or {}
+profiles['Lucian'].combat={id='normal',champion='Lucian',names={{'LucianQ'},{'LucianW'},{'LucianE'},{'LucianR'}},
+  q={range=D.LucianQ.castRange,beam=D.LucianQ.Range,radius=D.LucianQ.pathWidth/2,delay=D.LucianQ.mCastTime,type='physical',base=D.LucianQ.BaseDamage,bonusAD=D.LucianQ.BonusADRatio},
+  w={range=D.LucianW.castRangeDisplayOverride,radius=D.LucianWMissile.mMissileWidth,delay=D.LucianW.castFrameSeconds,speed=D.LucianWMissile.mSpeed,collision=true,type='magical',base=D.LucianW.BaseDamage,ap=.9},
+  e={range=D.LucianE.MaxDistance,minimum=D.LucianE.MinDistance,speed=D.LucianE.DashSpeed,mobility=true},
+  r={range=D.LucianRMissile.castRange,radius=D.LucianRMissile.mMissileWidth,speed=D.LucianRMissile.mSpeed,duration=D.LucianR.Duration,type='physical',base=D.LucianR.BaseDamage,ad=D.LucianR.DamageADRatio,ap=D.LucianR.DamageAPRatio,shots=D.LucianR.NumShots,minion=D.LucianR.PercentDamageAmpToMinions/100},
+  passiveNames={'LucianPassiveBuff'},channelNames={'LucianR'},
+  -- Lightslinger second shot: 50% AD, 55% from level 7, 60% from level 13 against champions; full AD otherwise.
+  passiveLevels={{1,.5},{7,.55},{13,.6}}}
+profiles['Jade_Lucian']=profiles['Jade_Lucian']or {}
+profiles['Jade_Lucian'].combat={id='classic',champion='Lucian',names={{'Jade_LucianQ'},{'Jade_LucianW'},{'Jade_LucianE'},{'Jade_LucianR'}},
+  q={range=D.Jade_LucianQ.castRange,beam=D.Jade_LucianQ.Range,radius=D.Jade_LucianQ.Width/2,delay=D.Jade_LucianQ.mCastTime,type='physical',base=D.Jade_LucianQ.BaseDamage,bonusAD=D.Jade_LucianQ.BonusADRatio},
+  w={range=D.Jade_LucianW.castRangeDisplayOverride,radius=D.Jade_LucianWMissile.mMissileWidth,delay=D.Jade_LucianW.mCastTime,speed=D.Jade_LucianWMissile.mSpeed,collision=true,type='magical',base=D.Jade_LucianW.BaseDamage,bonusAD=D.Jade_LucianW.ADRatio,ap=D.Jade_LucianW.APRatio},
+  e={range=D.Jade_LucianE.MaxDistance,minimum=D.Jade_LucianE.MinDistance,speed=D.Jade_LucianE.DashSpeed,mobility=true},
+  -- The Classic shot count scales with attack speed through values whose formula is not established: no count.
+  r={range=D.Jade_LucianRMissile.castRange,radius=D.Jade_LucianRMissile.mMissileWidth,speed=D.Jade_LucianRMissile.mSpeed,duration=D.Jade_LucianR.Duration,type='physical',base=D.Jade_LucianR.BaseDamage,bonusAD=D.Jade_LucianR.DamageADRatio,ap=D.Jade_LucianR.DamageAPRatio,minion=D.Jade_LucianR.PercentDamageAmpToMinions/100},
+  passiveNames={'Jade_LucianPassiveBuff'},channelNames={'Jade_LucianR'},
+  passiveLevels={{1,.5}}}
+local normal,classic=profiles.Lucian.combat,profiles.Jade_Lucian.combat
+-- R: P.Raw gives one shot; this answers every shot of the channel landing (an upper bound the caller scales).
+local function modifier(p,raw,s,slot,rank,stats,target,options,finite)
+ if slot==3 then
+  if not finite(s.shots)then return 0,'shot_count_unknown'end
+  if target and target.team~=nil and target.type~=stats.heroType then raw=raw*(s.minion or 1)end
+  return raw*s.shots,s.type
+ end
+ return raw,s.type
+end
+normal.rawModifier=modifier;classic.rawModifier=modifier
+local function passive(p,stats,target)
+ local ratio=1
+ if not target or target.type==stats.heroType then
+  ratio=p.passiveLevels[1][2]
+  for _,row in ipairs(p.passiveLevels)do if stats.level>=row[1]then ratio=row[2]end end
+ end
+ return ratio*stats.totalDamage,'physical'
+end
+normal.passive=passive;classic.passive=passive
+return profiles
 
 end
 factories['lulu']=function()
 -- Shared Lulu mechanics data. Values preserved from the maintained controller.
 -- shieldSource names where the E shield figures offered to Evade were read (2026-10-08).
+local D=(function()
 return {
- Lulu={id='normal',q='LuluQ',w='LuluW',e='LuluE',r='LuluR',qBase={60,95,130,165,200},qMinion=.7,
-  eBase={70,110,150,190,230},eAP=.5,shield={70,110,150,190,230},shieldAP=.5,shieldDuration=2.5,
+ LuluQ={
+  BaseDamage={60,95,130,165,200},MinionMod=.7,
+ },
+ LuluWTwo={
+  mCastTime=.2419,missileSpeed=2250,
+ },
+ LuluE={
+  BaseDamage={70,110,150,190,230},BaseShield={70,110,150,190,230},DamageAPRatio=.5,ShieldAPRatio=.5,ShieldDuration=2.5,
+ },
+ LuluR={
+  AoERadius=400,BonusHealth={275,425,575},BuffDuration=7,mCastTime=.25,
+ },
+ Jade_LuluW={
+  missileSpeed=2000,
+ },
+ Jade_LuluWTwo={
+  missileSpeed=2250,
+ },
+ Jade_LuluE={
+  BaseDamage={80,130,180,230,280},BaseShield={60,105,150,195,240},DamageAPRatio=.6,ShieldAPRatio=.4,ShieldDuration=6,
+ },
+ Jade_LuluQ={
+  BaseDamage={80,125,170,215,260},
+ },
+ Jade_LuluR={
+  AoERadius=400,BonusHealth={300,450,600},BuffDuration=7,mCastTime=.25,
+ },
+}
+end)()
+return {
+ Lulu={id='normal',q='LuluQ',w='LuluW',e='LuluE',r='LuluR',qBase=D.LuluQ.BaseDamage,qMinion=D.LuluQ.MinionMod,
+  eBase=D.LuluE.BaseDamage,eAP=D.LuluE.DamageAPRatio,shield=D.LuluE.BaseShield,shieldAP=D.LuluE.ShieldAPRatio,shieldDuration=D.LuluE.ShieldDuration,
    -- wDelay: the larger of the installed asset (.175) and the wiki W cast time (.2419, V25.16, read 2026-10-10)
    -- until the lulu_w_probe recorder settles it; a later landing only makes W interrupts stricter.
-   rHealth={275,425,575},rAP=.55,wAS=true,wSpeed=2250,wAllySpeed=math.huge,eDelay=.175,wDelay=.2419,rDelay=.25,rRadius=400,
-   shieldBuff='lulufaerieshield',pixEnemyBuff='luluevision',rDuration=7,rOfferAP=.55,
+   rHealth=D.LuluR.BonusHealth,rAP=.55,wAS=true,wSpeed=D.LuluWTwo.missileSpeed,wAllySpeed=math.huge,eDelay=.175,wDelay=D.LuluWTwo.mCastTime,rDelay=D.LuluR.mCastTime,rRadius=D.LuluR.AoERadius,
+   shieldBuff='lulufaerieshield',pixEnemyBuff='luluevision',rDuration=D.LuluR.BuffDuration,rOfferAP=.55,
    rSource='https://wiki.leagueoflegends.com/en-us/Lulu Wild Growth: +275/425/575 (+55% AP) health for 7 s, range 900, no cast time (read 2026-10-08); rDelay is the installed timing (later start = safe side)',
    shieldSource='https://wiki.leagueoflegends.com/en-us/Lulu Help, Pix!: 70-230 (+50% AP), 2.5 s, no cast time (read 2026-10-08); eDelay is the installed asset timing',
    -- Ally attack steroids W answers (native cast names, lower case): spell names in the installed assets
@@ -10219,10 +11140,10 @@ return {
    -- Engage states that are neither channels nor dashes (buff names, lower case; same asset spell names). Logged by
    -- the lulu_engage_state recorder; a name the host does not use never matches.
    wEngage={hecarimramp=true,powerball=true,highlander=true,kaisae=true,swainr=true,neekor=true}},
- Jade_Lulu={id='classic',q='Jade_LuluQ',w='Jade_LuluW',e='Jade_LuluE',r='Jade_LuluR',qBase={80,125,170,215,260},qMinion=1,
-  eBase={80,130,180,230,280},eAP=.6,shield={60,105,150,195,240},shieldAP=.4,shieldDuration=6,
-   rHealth={300,450,600},rAP=.5,wAS=false,wSpeed=2250,wAllySpeed=2000,eDelay=.175,wDelay=.175,rDelay=.25,rRadius=400,
-   shieldBuff='Jade_LuluFaerieShield',pixEnemyBuff='Jade_LuluFaerieBurn',rDuration=7,rOfferAP=0,
+ Jade_Lulu={id='classic',q='Jade_LuluQ',w='Jade_LuluW',e='Jade_LuluE',r='Jade_LuluR',qBase=D.Jade_LuluQ.BaseDamage,qMinion=1,
+  eBase=D.Jade_LuluE.BaseDamage,eAP=D.Jade_LuluE.DamageAPRatio,shield=D.Jade_LuluE.BaseShield,shieldAP=D.Jade_LuluE.ShieldAPRatio,shieldDuration=D.Jade_LuluE.ShieldDuration,
+   rHealth=D.Jade_LuluR.BonusHealth,rAP=.5,wAS=false,wSpeed=D.Jade_LuluWTwo.missileSpeed,wAllySpeed=D.Jade_LuluW.missileSpeed,eDelay=.175,wDelay=.175,rDelay=D.Jade_LuluR.mCastTime,rRadius=D.Jade_LuluR.AoERadius,
+   shieldBuff='Jade_LuluFaerieShield',pixEnemyBuff='Jade_LuluFaerieBurn',rDuration=D.Jade_LuluR.BuffDuration,rOfferAP=0,
    -- The asset holds no AP coefficient for BonusHealth; rAP=.5 above is the kept controller value, so the Evade offer counts the base only.
    rSource='research/family-assets/Jade_Lulu/spells.json:2456,2482 (BonusHealth 300/450/600, BuffDuration 7; 2026-10-08); AP share not in the asset: offer uses the base amount',
    shieldSource='research/family-assets/Jade_Lulu/spells.json:705,718,731 (60-240 +40% AP, 6 s; 2026-10-08); eDelay is the installed asset timing',
@@ -10236,63 +11157,137 @@ factories['lux']=function()
 -- Provenance: CombatProfiles/lux-provenance.json. Arrays are indexed by spell rank (passive: by champion level).
 -- Ranges are the maintained conservative values (display ranges); the wiki/asset maxima are recorded in the
 -- provenance file and are settled from the development trace lux_cast_reach before any range is widened.
+local D=(function()
+return {
+ LuxPrismaticWaveMissile={
+  mInitialSpeed=2200,mMissileWidth=110,
+ },
+ LuxPrismaticWave={
+  APRatio=.4,BaseShieldAmount={40,55,70,85,100},ShieldDuration=2.5,
+ },
+ LuxLightBindingMis={
+  castRangeDisplayOverride=1175,mMissileWidth=70,mSpeed=1200,
+ },
+ LuxLightBinding={
+  APRatio=.75,BaseDamage={80,120,160,200,240},RootDuration=2,castFrameSeconds=.25,
+ },
+ LuxIlluminationPassive={
+  APRatio=.35,DebuffDuration=6,
+ },
+ LuxLightStrikeKugel={
+  BaseDamage={65,115,165,215,265},SlowZoneDuration=5,castFrameSeconds=.25,castRadius=295,castRange=1100,missileSpeed=1300,
+ },
+ LuxR={
+  Damage={300,400,500},castRangeDisplayOverride=3340,
+ },
+ Jade_LuxLightBindingMis={
+  castRangeDisplayOverride=1175,mMissileWidth=70,mSpeed=1200,
+ },
+ Jade_LuxLightBinding={
+  APRatio=.7,BaseDamage={60,110,160,210,260},castFrameSeconds=.25,
+ },
+ Jade_LuxPrismaticWave={
+  APRatio=.35,BaseShieldAmount={80,105,130,155,180},ShieldDuration=3,
+ },
+ Jade_LuxPrismaticWaveMissile={
+  mMissileWidth=110,mSpeed=1400,
+ },
+ Jade_LuxR={
+  APRatio=.85,Damage={300,400,500},castRangeDisplayOverride=3340,
+ },
+ Jade_LuxLightStrikeKugel={
+  AOEradius=350,APRatio=.6,Damage={60,105,150,195,240},SlowZoneDuration=5,castFrameSeconds=.25,castRange=1000,mSpeed=1300,
+ },
+ Jade_LuxIlluminationPassive={
+  DebuffDuration=6,
+ },
+}
+end)()
 return {
  Lux={id='normal',qCast='LuxLightBinding',wCast='LuxPrismaticWave',eCast='LuxLightStrikeKugel',
   eToggle='LuxLightstrikeToggle',rCast='LuxR',mark={'LuxIlluminatingFraulein'},
   -- Q: 80-240 +75% AP; roots the first TWO enemies for 2 s, both at full damage (no second-target factor).
-  qBase={80,120,160,200,240},qAP=.75,qSecond=1,qRoot=2,qSecondRoot=2,qRange=1175,qSpeed=1200,qRadius=70,qDelay=.25,
+  qBase=D.LuxLightBinding.BaseDamage,qAP=D.LuxLightBinding.APRatio,qSecond=1,qRoot=D.LuxLightBinding.RootDuration,qSecondRoot=2,qRange=D.LuxLightBindingMis.castRangeDisplayOverride,qSpeed=D.LuxLightBindingMis.mSpeed,qRadius=D.LuxLightBindingMis.mMissileWidth,qDelay=D.LuxLightBinding.castFrameSeconds,
   -- W: 40-100 +40% AP for 2.5 s, out and back (a unit passed twice holds two shields; one is offered).
-  wBase={40,55,70,85,100},wAP=.4,wRange=1100,wSpeed=2200,wRadius=110,wDelay=.25,wDuration=2.5,
+  wBase=D.LuxPrismaticWave.BaseShieldAmount,wAP=D.LuxPrismaticWave.APRatio,wRange=1100,wSpeed=D.LuxPrismaticWaveMissile.mInitialSpeed,wRadius=D.LuxPrismaticWaveMissile.mMissileWidth,wDelay=.25,wDuration=D.LuxPrismaticWave.ShieldDuration,
   wSource='Normal W 40/55/70/85/100 +40% AP, 2.5 s, cast .25: research/family-assets/Lux/spells.json (LuxPrismaticWave BaseShieldAmount, APRatio, ShieldDuration) and https://wiki.leagueoflegends.com/en-us/Lux (read 2026-10-10, V26.04)',
   -- E: 65-265 +80% AP, asset radius 295 (wiki 310), range 1100, missile 1300, zone 5 s.
-  eBase={65,115,165,215,265},eAP=.8,eRange=1100,eSpeed=1300,eRadius=295,eDelay=.25,eZone=5,
+  eBase=D.LuxLightStrikeKugel.BaseDamage,eAP=.8,eRange=D.LuxLightStrikeKugel.castRange,eSpeed=D.LuxLightStrikeKugel.missileSpeed,eRadius=D.LuxLightStrikeKugel.castRadius,eDelay=D.LuxLightStrikeKugel.castFrameSeconds,eZone=D.LuxLightStrikeKugel.SlowZoneDuration,
   -- Normal Lux cannot recast during Final Spark's cast; only Classic 26.17 allows the detonation then.
   eDuringR=false,
   -- R: 300/400/500 +120% AP, 1 s cast, half-width 95 (asset lineWidth 190; wiki 200).
-  rBase={300,400,500},rAP=1.2,rRange=3340,rRadius=95,rDelay=1,
+  rBase=D.LuxR.Damage,rAP=1.2,rRange=D.LuxR.castRangeDisplayOverride,rRadius=95,rDelay=1,
   -- Illumination: 20 + 10 per level (+35% AP), mark 6 s, consumed by an attack or R.
-  pFlat=20,pLevel=10,pAP=.35,pMark=6},
+  pFlat=20,pLevel=10,pAP=D.LuxIlluminationPassive.APRatio,pMark=D.LuxIlluminationPassive.DebuffDuration},
  Jade_Lux={id='classic',qCast='Jade_LuxLightBinding',wCast='Jade_LuxPrismaticWave',eCast='Jade_LuxLightStrikeKugel',
   eToggle='Jade_LuxLightstrikeToggle',rCast='Jade_LuxR',mark={'Jade_LuxIlluminatingFraulein','LuxIlluminatingFraulein'},
   -- Q: 60-260 +70% AP; passes one unit, the second takes half damage and a 1 s root.
-  qBase={60,110,160,210,260},qAP=.7,qSecond=.5,qRoot=2,qSecondRoot=1,qRange=1175,qSpeed=1200,qRadius=70,qDelay=.25,
+  qBase=D.Jade_LuxLightBinding.BaseDamage,qAP=D.Jade_LuxLightBinding.APRatio,qSecond=.5,qRoot=2,qSecondRoot=1,qRange=D.Jade_LuxLightBindingMis.castRangeDisplayOverride,qSpeed=D.Jade_LuxLightBindingMis.mSpeed,qRadius=D.Jade_LuxLightBindingMis.mMissileWidth,qDelay=D.Jade_LuxLightBinding.castFrameSeconds,
   -- Shield numbers for the Evade offer. Lux herself is shielded when the cast starts (Classic Patch 2:
   -- "Shield now occurs at cast time instead of after cast time"); the offer still declares the full
   -- .25 s cast, so its window starts late rather than early. The wiki lists range 1175 and speed 2400
   -- and the asset shows display range 1150 / missile 1200: wRange and wSpeed are the maintained
   -- conservative values and only decide the ally reach, not the self shield.
-  wBase={80,105,130,155,180},wAP=.35,wRange=1100,wSpeed=1400,wRadius=110,wDelay=.25,wDuration=3,
+  wBase=D.Jade_LuxPrismaticWave.BaseShieldAmount,wAP=D.Jade_LuxPrismaticWave.APRatio,wRange=1100,wSpeed=D.Jade_LuxPrismaticWaveMissile.mSpeed,wRadius=D.Jade_LuxPrismaticWaveMissile.mMissileWidth,wDelay=.25,wDuration=D.Jade_LuxPrismaticWave.ShieldDuration,
   wSource='Classic W 80/105/130/155/180 +35% AP, 3 s, cast .25: research/family-assets/Jade_Lux/spells.json (BaseShieldAmount, APRatio, ShieldDuration) and https://wiki.leagueoflegends.com/en-us/League_Classic/Lux (2026-10-08)',
-  eBase={60,105,150,195,240},eAP=.6,eRange=1000,eSpeed=1300,eRadius=350,eDelay=.25,eZone=5,
+  eBase=D.Jade_LuxLightStrikeKugel.Damage,eAP=D.Jade_LuxLightStrikeKugel.APRatio,eRange=D.Jade_LuxLightStrikeKugel.castRange,eSpeed=D.Jade_LuxLightStrikeKugel.mSpeed,eRadius=D.Jade_LuxLightStrikeKugel.AOEradius,eDelay=D.Jade_LuxLightStrikeKugel.castFrameSeconds,eZone=D.Jade_LuxLightStrikeKugel.SlowZoneDuration,
   eDuringR=true,
-  rBase={300,400,500},rAP=.85,rRange=3340,rRadius=95,rDelay=1,
+  rBase=D.Jade_LuxR.Damage,rAP=D.Jade_LuxR.APRatio,rRange=D.Jade_LuxR.castRangeDisplayOverride,rRadius=95,rDelay=1,
   -- Illumination: 20 at level 1 to 190 at level 18, no AP (asset calc {20,190}, linear by level assumed).
-  pFlat=10,pLevel=10,pAP=0,pMark=6},
+  pFlat=10,pLevel=10,pAP=0,pMark=D.Jade_LuxIlluminationPassive.DebuffDuration},
 }
 
 end
 factories['malphite']=function()
 -- Shared Malphite mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ Obduracy={
+  ThunderclapBaseDamage={30,40,50,60,70},ThunderclapBaseDamageAPRatio=.2,ThunderclapBaseDamageArmorRatio=.15,ThunderclapBuffDuration=5,
+ },
+ UFSlash={
+  BaseDamage={200,300,400},KnockupDuration=1.5,castRadius=270,castRange=1000,
+ },
+ SeismicShard={
+  BaseDamage={70,120,170,220,270},
+ },
+ Landslide={
+  BaseDamage={60,95,130,165,200},
+ },
+ Jade_MalphiteLandslide={
+  APScaling_Jade=.2,ArmorScaling_Jade=.3,BaseDamage={60,100,140,180,220},
+ },
+ Jade_MalphiteUFSlash={
+  BaseDamage={200,300,400},KnockupDuration=1.5,castRadius=270,castRange=1000,
+ },
+ Jade_MalphiteObduracy={
+  ADBonus={.2,.25,.3,.35,.4},BuffDuration=6,
+ },
+ Jade_MalphiteSeismicShard={
+  BaseDamage={70,120,170,220,270},
+ },
+}
+end)()
 return {
  Malphite={id='normal',q='SeismicShard',w='Obduracy',e='Landslide',r='UFSlash',shield='MalphiteShield',
-   wKind='reset_splash',wDuration=5,qBase={70,120,170,220,270},qAP=.6,eBase={60,95,130,165,200},eAP=.6,eArmor=.4,
+   wKind='reset_splash',wDuration=D.Obduracy.ThunderclapBuffDuration,qBase=D.SeismicShard.BaseDamage,qAP=.6,eBase=D.Landslide.BaseDamage,eAP=.6,eArmor=.4,
    -- Unstoppable Force. The speed is 1500 + 100% movement speed (base 335 = 1835); a registration takes fixed
    -- numbers, so rSpeeds is a bracket whose slow end (a roughly 40% slowed Malphite) is the safety margin.
-   rBase={200,300,400},rAP=.9,rRange=1000,rSpeeds={1700,1835},rDelays={0},
+   rBase=D.UFSlash.BaseDamage,rAP=.9,rRange=D.UFSlash.castRange,rSpeeds={1700,1835},rDelays={0},
    rSource='https://wiki.leagueoflegends.com/en-us/Malphite Unstoppable Force: range 1000, no cast time, speed 1500 + 100% movement speed, 200/300/400 (+90% AP), base movement speed 335 (read 2026-10-08)',
    -- 2026-10-10 (wiki Malphite V26.09 read 2026-10-10; spells.json UFSlash KnockupDuration, Obduracy Thunderclap*).
    -- R prediction speed 1500 + current movement speed (rBaseSpeed), knock-up 1.5 s. Hit radius 270 (asset castRadius) is
    -- kept for counting; the wiki's 325 effect radius waits for the malphite_r_landing dev trace (rEffectRadius unused).
    -- W Thunderclap on-hit 30/40/50/60/70 (+20% AP) (+15% armor) physical while W is active.
-   rBaseSpeed=1500,rKnockup=1.5,rRadius=270,rEffectRadius=325,wOnHit={30,40,50,60,70},wOnHitAP=.2,wOnHitArmor=.15},
+   rBaseSpeed=1500,rKnockup=D.UFSlash.KnockupDuration,rRadius=D.UFSlash.castRadius,rEffectRadius=325,wOnHit=D.Obduracy.ThunderclapBaseDamage,wOnHitAP=D.Obduracy.ThunderclapBaseDamageAPRatio,wOnHitArmor=D.Obduracy.ThunderclapBaseDamageArmorRatio},
  Jade_Malphite={id='classic',q='Jade_MalphiteSeismicShard',w='Jade_MalphiteObduracy',e='Jade_MalphiteLandslide',r='Jade_MalphiteUFSlash',shield='Jade_MalphiteShield',
-   wBuff='Jade_MalphiteObduracyBuff',wKind='ad_armor_boost',wDuration=6,qBase={70,120,170,220,270},qAP=.6,eBase={60,100,140,180,220},eAP=.2,eArmor=.3,
+   wBuff='Jade_MalphiteObduracyBuff',wKind='ad_armor_boost',wDuration=D.Jade_MalphiteObduracy.BuffDuration,qBase=D.Jade_MalphiteSeismicShard.BaseDamage,qAP=.6,eBase=D.Jade_MalphiteLandslide.BaseDamage,eAP=D.Jade_MalphiteLandslide.APScaling_Jade,eArmor=D.Jade_MalphiteLandslide.ArmorScaling_Jade,
    -- The Classic page gives the same dash shape as Normal (the asset holds only castRange 1000, spells.json:496).
-   rBase={200,300,400},rAP=1,rRange=1000,rSpeeds={1700,1835},rDelays={0},
+   rBase=D.Jade_MalphiteUFSlash.BaseDamage,rAP=1,rRange=D.Jade_MalphiteUFSlash.castRange,rSpeeds={1700,1835},rDelays={0},
    rSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Malphite Unstoppable Force: range 1000, no cast time, speed 1500 + 100% movement speed, 200/300/400 (+100% AP), base movement speed 335 (read 2026-10-08)',
    -- 2026-10-10 (wiki League_Classic/Malphite edited 2026-09-22, read 2026-10-10; spells.json Jade_MalphiteUFSlash
    -- KnockupDuration, Jade_MalphiteObduracy ADBonus 0.20..0.40 for 6 s). Same dash model and counting radius as Normal.
-   rBaseSpeed=1500,rKnockup=1.5,rRadius=270,rEffectRadius=325,wAD={.2,.25,.3,.35,.4}},
+   rBaseSpeed=1500,rKnockup=D.Jade_MalphiteUFSlash.KnockupDuration,rRadius=D.Jade_MalphiteUFSlash.castRadius,rEffectRadius=325,wAD=D.Jade_MalphiteObduracy.ADBonus},
 }
 
 end
@@ -10317,16 +11312,47 @@ factories['masteryi']=function()
 -- Q first strike: castFrame 7.935 at 30 fps (.26 s, both assets), used as the LastHit rescue impact.
 -- Alpha Strike (Normal page): marks every 0.231 s, 4 marks, reappears after 0.165 s (1.087 s with 4 bounces). The
 --   controller keeps its conservative one-strike .25 s untargetable minimum; the Classic page states no duration.
+local D=(function()
 return {
-    normal={id='normal',wReset=true,q='AlphaStrike',w='Meditate',e='WujuStyle',r='Highlander',qType='physical',qBase={20,40,60,80,100},qAD=.7,qMonster={60,85,110,135,160},
-      eBase={20,25,30,35,40},eBonusAD=.35,eActive='WujuStyleSuperCharged',eDuration=5,rDuration=7,dsRatio=.5,dsCount=4,dsDuration=4,
-      qBounce=550,qImpact=.26,wDelay=3.25/30,wChannel=4,wInitialSeconds=.5,wInitial={.7,.7,.7,.7,.7},wReduction={.45,.475,.5,.525,.55},
+ MasterYiPassive={
+  AttackCount=4,StackDuration=4,
+ },
+ AlphaStrike={
+  AttackDamageRatio=.7,BaseDamage={20,40,60,80,100},BonusMonsterDamage={60,85,110,135,160},
+ },
+ Meditate={
+  DamageReduction={.45,.475,.5,.525,.55},HealDuration=4,InitialExtraDRDuration=.5,castFrame=3.25,
+ },
+ WujuStyle={
+  ADRatio=.35,BaseDamage={20,25,30,35,40},Duration=5,
+ },
+ Highlander={
+  RDuration=7,
+ },
+ Jade_MasterYiAlphaStrike={
+  APRatio=1,BaseDamage={100,150,200,250,300},TotalMonsterDamage={260,320,380,440,500},
+ },
+ Jade_MasterYiHighlander={
+  RDuration={8,10,12},
+ },
+ Jade_MasterYiWujuStyle={
+  Duration=10,PassiveAD={15,20,25,30,35},
+ },
+ Jade_MasterYiMeditate={
+  DefenseStat={100,150,200,250,300},Duration=5,castFrame=3.25,
+ },
+}
+end)()
+return {
+    normal={id='normal',wReset=true,q='AlphaStrike',w='Meditate',e='WujuStyle',r='Highlander',qType='physical',qBase=D.AlphaStrike.BaseDamage,qAD=D.AlphaStrike.AttackDamageRatio,qMonster=D.AlphaStrike.BonusMonsterDamage,
+      eBase=D.WujuStyle.BaseDamage,eBonusAD=D.WujuStyle.ADRatio,eActive='WujuStyleSuperCharged',eDuration=D.WujuStyle.Duration,rDuration=D.Highlander.RDuration,dsRatio=.5,dsCount=D.MasterYiPassive.AttackCount,dsDuration=D.MasterYiPassive.StackDuration,
+      qBounce=550,qImpact=.26,wDelay=D.Meditate.castFrame/30,wChannel=D.Meditate.HealDuration,wInitialSeconds=D.Meditate.InitialExtraDRDuration,wInitial={.7,.7,.7,.7,.7},wReduction=D.Meditate.DamageReduction,
       wSource='MasterYi spells.json Meditate castFrame 3.25, DamageReduction+InitialExtraDR (.5 s), HealDuration 4; wiki Master_Yi V26.19 read 2026-10-10'},
-    classic={id='classic',wReset=true,q='Jade_MasterYiAlphaStrike',w='Jade_MasterYiMeditate',e='Jade_MasterYiWujuStyle',r='Jade_MasterYiHighlander',qType='magical',qBase={100,150,200,250,300},
+    classic={id='classic',wReset=true,q='Jade_MasterYiAlphaStrike',w='Jade_MasterYiMeditate',e='Jade_MasterYiWujuStyle',r='Jade_MasterYiHighlander',qType='magical',qBase=D.Jade_MasterYiAlphaStrike.BaseDamage,
         -- research/family-assets/Jade_MasterYi/spells.json Jade_MasterYiAlphaStrike TotalMonsterDamage (rank 1-5)
         -- with MonsterDamageProcChance .5: a random proc, so farming never counts it as certain.
-        qMonster={260,320,380,440,500},qAP=1,eActive='Jade_MasterYiWujuStyleSuperCharged',eDuration=10,ePassive={15,20,25,30,35},rDuration={8,10,12},
-        qBounce=550,qImpact=.26,wDelay=3.25/30,wChannel=5,wResist={100,150,200,250,300},
+        qMonster=D.Jade_MasterYiAlphaStrike.TotalMonsterDamage,qAP=D.Jade_MasterYiAlphaStrike.APRatio,eActive='Jade_MasterYiWujuStyleSuperCharged',eDuration=D.Jade_MasterYiWujuStyle.Duration,ePassive=D.Jade_MasterYiWujuStyle.PassiveAD,rDuration=D.Jade_MasterYiHighlander.RDuration,
+        qBounce=550,qImpact=.26,wDelay=D.Jade_MasterYiMeditate.castFrame/30,wChannel=D.Jade_MasterYiMeditate.Duration,wResist=D.Jade_MasterYiMeditate.DefenseStat,
         wSource='Jade_MasterYi spells.json Jade_MasterYiMeditate castFrame 3.25, DefenseStat 100-300, Duration 5; wiki League_Classic/Master_Yi read 2026-10-10'},
 }
 
@@ -10343,7 +11369,7 @@ factories['missfortune']=function()
 --   (full angles, wiki); the order inside one tier is not published.
 -- Love Tap: .5 total AD, +.1 at levels 4/7/9/11/13/20/25/30 (asset MissFortunePassive calculation), halved on minions
 --   (wiki; Riot 11.20). Monsters and structures are not credited (no reviewed classification).
--- Normal E: 8.75/12.5/16.25/20/23.75 (+15% AP) magic per tick, every .25 s for 2 s (asset BaseDamagePerSecond/4,
+-- Normal E: 11.25/15/18.75/22.5/26.25 (+15% AP) magic per tick, every .25 s for 2 s (current BaseDamagePerSecond/4,
 --   APRatioPerSecond .6/4, TicksPerSecond 4, BaseDuration 2), slow 40% (+6% per 100 AP), cast delay .25.
 -- Classic E: asset BaseDamage 95/155/215/275/335 (+80% AP) read as the TOTAL over 2 s in 8 ticks (the smaller
 --   reading; the field could be per second), MoveSpeedMod -.20/-.28/-.36/-.44/-.52, Duration 2.
@@ -10353,34 +11379,69 @@ factories['missfortune']=function()
 --   (asset Jade_MissFortuneViciousStrikes: ASMod, Grievous; the Classic Strut is the uncastable passive).
 -- Normal R: 30 deg cone, 1450 effect radius (wiki; asset geometry 34 deg, the narrower is used for occupancy), first wave
 --   .066 s after the channel starts, waves .2036/.1781/.1583 s apart (wiki). Classic: no published cone or wave timing.
+local D=(function()
+return {
+ MissFortuneScattershot={
+  BaseSlowAmount=.4,CastDelay=.25,
+ },
+ MissFortuneViciousStrikes={
+  PassiveMaxMS={60,70,80,90,100},castFrame=8,
+ },
+ MissFortuneBullets={
+  castRange=1450,
+ },
+ Jade_MissFortuneRicochetShot={
+  castRangeDisplayOverride=650,
+ },
+ Jade_MissFortuneScattershot={
+  APRatio=.8,BaseDamage={95,155,215,275,335},mCastTime=.25,
+ },
+}
+end)()
 return {
  normal={id='normal',qReach='attack',qCrit=1.5,qCritIE=.15,ieItem=3031,
   loveTap={base=.5,step=.1,levels={4,7,9,11,13,20,25,30},minion=.5},
   tiers={{range=500,angle=20},{range=500,angle=40},{range=500,angle=110},{range=150,angle=160}},
-  eTick={8.75,12.5,16.25,20,23.75},eTickAP=.15,eTicks=8,eInterval=.25,eSlow=.4,eSlowAP=.0006,eDelay=.25,
-  wHaste={60,70,80,90,100},wHasteSeconds=2,wDelay=8/30,
+  eTick={11.25,15,18.75,22.5,26.25},eTickAP=.15,eTicks=8,eInterval=.25,eSlow=D.MissFortuneScattershot.BaseSlowAmount,eSlowAP=.0006,eDelay=D.MissFortuneScattershot.CastDelay,
+  wHaste=D.MissFortuneViciousStrikes.PassiveMaxMS,wHasteSeconds=2,wDelay=D.MissFortuneViciousStrikes.castFrame/30,
   wSource='MissFortune spells.json MissFortuneViciousStrikes PassiveMaxMS 60-100, castFrame 8; wiki Miss_Fortune Strut read 2026-10-10 (full Strut on cast); 2 s planning bound',
-  rAngle=30,rRange=1450,rFirstWave=.066,rInterval={.2036,.1781,.1583}},
- classic={id='classic',qReach=650,
-  eTotal={95,155,215,275,335},eAP=.8,eTicks=8,eInterval=.25,eSlowRank={.2,.28,.36,.44,.52},eDelay=.25,
+  rAngle=30,rRange=D.MissFortuneBullets.castRange,rFirstWave=.066,rInterval={.2036,.1781,.1583}},
+ classic={id='classic',qReach=D.Jade_MissFortuneRicochetShot.castRangeDisplayOverride,
+  eTotal=D.Jade_MissFortuneScattershot.BaseDamage,eAP=D.Jade_MissFortuneScattershot.APRatio,eTicks=8,eInterval=.25,eSlowRank={.2,.28,.36,.44,.52},eDelay=D.Jade_MissFortuneScattershot.mCastTime,
   rAngle=30,rRange=1400},
 }
 
 end
 factories['monkeyking']=function()
 -- Shared MonkeyKing mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ MonkeyKingNimbus={
+  BaseDamage={80,120,160,200,240},DashSpeed=1050,EndPointOffsetDistance=75,ExtraTargetRange=700,castRange=650,
+ },
+ MonkeyKingDecoy={
+  CloneDamageMod={.4,.45,.5,.55,.6},CloneDuration=4,DashSpeed=900,MinRange=100,RangeClamp=300,StealthDuration=1,
+ },
+ MonkeyKingPassive={
+  MaxStacks=5,
+ },
+ MonkeyKingDoubleAttack={
+  ADRatio=.5,AttackRangeBonus={135,145,155,165,175},BaseDamage={20,45,70,95,120},
+ },
+}
+end)()
 return {
  MonkeyKing={id='normal',q='MonkeyKingDoubleAttack',w='MonkeyKingDecoy',e='MonkeyKingNimbus',r='MonkeyKingSpinToWin',leave='MonkeyKingSpinToWinLeave',
-  qAttack='MonkeyKingQAttack',qBase={20,45,70,95,120},qBonusAD=.5,qTotalAD=1,qBonusRange={135,145,155,165,175},
-  eBase={80,120,160,200,240},eAP=1,eAD=0,eKind='magical',eExtra=700,eBuff='MonkeyKingNimbusAS',
-  stealth='MonkeyKingDecoyStealth',cloneDuration=4,stealthDuration=1,wRange=300,wMin=100,wSpeed=900,wDelay=.3,
-  cloneRatio={.4,.45,.5,.55,.6},rRecast='MonkeyKingSpinRecast',spinDuration=2,recastWindow=8,rLockout=1,rRadius=315,
-  passive='MonkeyKingPassiveStack',maxStacks=5,
+  qAttack='MonkeyKingQAttack',qBase=D.MonkeyKingDoubleAttack.BaseDamage,qBonusAD=D.MonkeyKingDoubleAttack.ADRatio,qTotalAD=1,qBonusRange=D.MonkeyKingDoubleAttack.AttackRangeBonus,
+  eBase=D.MonkeyKingNimbus.BaseDamage,eAP=1,eAD=0,eKind='magical',eExtra=D.MonkeyKingNimbus.ExtraTargetRange,eBuff='MonkeyKingNimbusAS',
+  stealth='MonkeyKingDecoyStealth',cloneDuration=D.MonkeyKingDecoy.CloneDuration,stealthDuration=D.MonkeyKingDecoy.StealthDuration,wRange=D.MonkeyKingDecoy.RangeClamp,wMin=D.MonkeyKingDecoy.MinRange,wSpeed=D.MonkeyKingDecoy.DashSpeed,wDelay=.3,
+  cloneRatio=D.MonkeyKingDecoy.CloneDamageMod,rRecast='MonkeyKingSpinRecast',spinDuration=2,recastWindow=8,rLockout=1,rRadius=315,
+  passive='MonkeyKingPassiveStack',maxStacks=D.MonkeyKingPassive.MaxStacks,
   -- The wiki gives no cast time; wDelay=.3 is the kept controller timing. Evade is given both and must be safe under either.
   -- Nimbus Strike: asset MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (read 2026-10-10,
   -- installed asset, not live-verified). Offered to Evade as a unit dash next to W (SDK.ChampionMobility alternatives);
   -- development own_dash records confirm the figures in play.
-  eDash={speed=1050,offset=75,range=650,source='research/family-assets/MonkeyKing/spells.json MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (2026-10-10)'},
+  eDash={speed=D.MonkeyKingNimbus.DashSpeed,offset=D.MonkeyKingNimbus.EndPointOffsetDistance,range=D.MonkeyKingNimbus.castRange,source='research/family-assets/MonkeyKing/spells.json MonkeyKingNimbus DashSpeed 1050, EndPointOffsetDistance 75, castRange 650 (2026-10-10)'},
   -- Cyclone (asset MonkeyKingSpinToWin, wiki Wukong read 2026-10-10): 4/6/8% max health (+137.5% AD) physical per second,
   -- ticks every .25 s for 2 s, knock-up .6 s, radius 315.
   rPctPerSec={.04,.06,.08},rADPerSec=1.375,rTick=.25,rTicks=8,rKnockupSeconds=.6,
@@ -10421,6 +11482,34 @@ factories['morgana']=function()
 --                 research/family-assets/<Champion>/spells.json. A name the host does not report never matches.
 -- W damage per counted second, amplified by the target's missing health (Normal) and against monsters.
 -- options.seconds (the time the target is expected inside the soil) multiplies the per-second figure.
+local D=(function()
+return {
+ MorganaQ={
+  Damage={80,135,190,245,300},RootDuration={2,2.25,2.5,2.75,3},castRange=1300,mCastTime=.25,mMissileWidth=70,mSpeed=1200,
+ },
+ MorganaR={
+  ChainDuration=3,Damage={200,275,350},HastePercent={20,40,60},SlowPercent=20,StunDuration={1.5,1.75,2},castRange=625,
+ },
+ MorganaW={
+  BaseAPRatio=.2,BaseDamage={18,31,44,57,70},CDRefundPercent=.05,MissingHealthAmpPercent=1,MonsterMod=170,TickRate=.5,WDuration=5,castRadius=280,castRange=900,mCastTime=.25,
+ },
+ MorganaE={
+  ShieldDuration=5,ShieldStrength={100,155,210,265,320},castRange=800,
+ },
+ Jade_MorganaR={
+  ChainDuration=3,Damage={175,250,325},StunDuration=1.5,castRange=625,
+ },
+ Jade_MorganaQ={
+  Damage={80,135,190,245,300},RootDuration={2,2.25,2.5,2.75,3},castRange=1300,castRangeDisplayOverride=1175,mCastTime=.25,mMissileWidth=70,mSpeed=1200,
+ },
+ Jade_MorganaE={
+  ShieldDuration=5,ShieldStrength={100,150,200,250,300},castRange=750,
+ },
+ Jade_MorganaW={
+  BaseAPRatio=.2,BaseDamage={25,40,55,70,85},Duration=5,castRadius=280,castRange=900,mCastTime=.25,
+ },
+}
+end)()
 local function soilDamage(p,raw,s,slot,rank,stats,target,options,finite)
  if slot~=1 then return raw,s.type end
  local scale=1
@@ -10435,18 +11524,18 @@ end
 local profiles={}
 profiles['Morgana']=profiles['Morgana']or {}
 profiles['Morgana'].combat={id='normal',champion='Morgana',names={{'MorganaQ'},{'MorganaW'},{'MorganaE'},{'MorganaR'}},rawModifier=soilDamage,
-  q={range=1300,reach=1175,radius=70,delay=.25,speed=1200,collision=true,type='magical',base={80,135,190,245,300},ap=.9,root={2,2.25,2.5,2.75,3}},
-  w={range=900,radius=280,circle=true,delay=.25,speed=math.huge,type='magical',base={18,31,44,57,70},ap=.2,duration=5,tick=.5,missingAmp=1,monster=1.7,refund=.05},
-  e={range=800,type='shield',base={100,155,210,265,320},ap=.7,duration=5},
-  r={range=625,cast=575,delay=.35,type='magical',base={200,275,350},ap=.8,tether=3,stun={1.5,1.75,2},slow=.2,haste={.2,.4,.6}},
+  q={range=D.MorganaQ.castRange,reach=1175,radius=D.MorganaQ.mMissileWidth,delay=D.MorganaQ.mCastTime,speed=D.MorganaQ.mSpeed,collision=true,type='magical',base=D.MorganaQ.Damage,ap=.9,root=D.MorganaQ.RootDuration},
+  w={range=D.MorganaW.castRange,radius=D.MorganaW.castRadius,circle=true,delay=D.MorganaW.mCastTime,speed=math.huge,type='magical',base=D.MorganaW.BaseDamage,ap=D.MorganaW.BaseAPRatio,duration=D.MorganaW.WDuration,tick=D.MorganaW.TickRate,missingAmp=D.MorganaW.MissingHealthAmpPercent,monster=D.MorganaW.MonsterMod/100,refund=D.MorganaW.CDRefundPercent},
+  e={range=D.MorganaE.castRange,type='shield',base=D.MorganaE.ShieldStrength,ap=.7,duration=D.MorganaE.ShieldDuration},
+  r={range=D.MorganaR.castRange,cast=575,delay=.35,type='magical',base=D.MorganaR.Damage,ap=.8,tether=D.MorganaR.ChainDuration,stun=D.MorganaR.StunDuration,slow=D.MorganaR.SlowPercent/100,haste={D.MorganaR.HastePercent[1]/100,D.MorganaR.HastePercent[2]/100,D.MorganaR.HastePercent[3]/100}},
   ccDashes={sejuaniq=true,gragase=true,viq=true,ufslash=true,leonazenithblade=true,headbutt=true,poppye=true,rakanw=true,
    ornne=true,galioe=true,shene=true,hecarimult=true,zace=true,camillee=true,rellw_dismount=true}}
 profiles['Jade_Morgana']=profiles['Jade_Morgana']or {}
 profiles['Jade_Morgana'].combat={id='classic',champion='Morgana',names={{'Jade_MorganaQ'},{'Jade_MorganaW'},{'Jade_MorganaE'},{'Jade_MorganaR'}},rawModifier=soilDamage,
-  q={range=1300,reach=1175,radius=70,delay=.25,speed=1200,collision=true,type='magical',base={80,135,190,245,300},ap=.9,root={2,2.25,2.5,2.75,3}},
-  w={range=900,radius=280,circle=true,delay=.25,speed=math.huge,type='magical',base={25,40,55,70,85},ap=.2,duration=5,mrShred={4,5,6,7,8}},
-  e={range=750,type='shield',base={100,150,200,250,300},ap=.7,duration=5},
-  r={range=625,cast=575,delay=.35,type='magical',base={175,250,325},ap=.7,tether=3,stun=1.5,slow=.2},
+  q={range=D.Jade_MorganaQ.castRange,reach=D.Jade_MorganaQ.castRangeDisplayOverride,radius=D.Jade_MorganaQ.mMissileWidth,delay=D.Jade_MorganaQ.mCastTime,speed=D.Jade_MorganaQ.mSpeed,collision=true,type='magical',base=D.Jade_MorganaQ.Damage,ap=.9,root=D.Jade_MorganaQ.RootDuration},
+  w={range=D.Jade_MorganaW.castRange,radius=D.Jade_MorganaW.castRadius,circle=true,delay=D.Jade_MorganaW.mCastTime,speed=math.huge,type='magical',base=D.Jade_MorganaW.BaseDamage,ap=D.Jade_MorganaW.BaseAPRatio,duration=D.Jade_MorganaW.Duration,mrShred={4,5,6,7,8}},
+  e={range=D.Jade_MorganaE.castRange,type='shield',base=D.Jade_MorganaE.ShieldStrength,ap=.7,duration=D.Jade_MorganaE.ShieldDuration},
+  r={range=D.Jade_MorganaR.castRange,cast=575,delay=.35,type='magical',base=D.Jade_MorganaR.Damage,ap=.7,tether=D.Jade_MorganaR.ChainDuration,stun=D.Jade_MorganaR.StunDuration,slow=.2},
   ccDashes={jade_alistarw=true,jade_poppye=true,jade_shene=true,jade_malphiteufslash=true,jade_leonazenithblade=true,jade_gragase=true,
    jade_rammusq=true,jade_jarvanivdragonstrike=true}}
 return profiles
@@ -10454,16 +11543,38 @@ return profiles
 end
 factories['nami']=function()
 -- Shared Nami mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ NamiW={
+  BaseHeal={55,80,105,130,155},HealAPRatio=.4,mCastTime=.25,
+ },
+ NamiQ={
+  BaseDamage={90,145,200,255,310},
+ },
+ NamiE={
+  BaseDamage={20,35,50,65,80},
+ },
+ Jade_NamiQ={
+  APRatio=.65,BaseDamage={75,130,185,240,295},
+ },
+ Jade_NamiE={
+  BaseDamage={25,40,55,70,85},
+ },
+ Jade_NamiW={
+  BaseHeal={65,95,125,155,185},HealAPRatio=.3,
+ },
+}
+end)()
 return {
  Nami={id='normal',q='NamiQ',w='NamiW',e='NamiE',r='NamiR',eBuff='NamiE',spellE=true,
-  qBase={90,145,200,255,310},qAP=.5,wDamage={60,95,130,165,200},wHeal={55,80,105,130,155},healAP=.4,
-  eBase={20,35,50,65,80},bounce=-.20,bounceAP=.0015,healBounce=nil,rAP=.6,
+  qBase=D.NamiQ.BaseDamage,qAP=.5,wDamage={60,95,130,165,200},wHeal=D.NamiW.BaseHeal,healAP=D.NamiW.HealAPRatio,
+  eBase=D.NamiE.BaseDamage,bounce=-.20,bounceAP=.0015,healBounce=nil,rAP=.6,
   -- Finisher timing (wiki https://wiki.leagueoflegends.com/en-us/Nami read 2026-10-10): Q lands .99 s after the cast
   -- starts, W cast .25 s and bolt speed 2500, R cast .5 s and wave speed 850.
-  qImpact=.99,wCast=.25,wSpeed=2500,rSpeed=850},
+  qImpact=.99,wCast=D.NamiW.mCastTime,wSpeed=2500,rSpeed=850},
  Jade_Nami={id='classic',q='Jade_NamiQ',w='Jade_NamiW',e='Jade_NamiE',r='Jade_NamiR',eBuff='Jade_NamiE',spellE=false,
-  qBase={75,130,185,240,295},qAP=.65,wDamage={70,110,150,190,230},wHeal={65,95,125,155,185},healAP=.3,
-  eBase={25,40,55,70,85},bounce=-.30,bounceAP=0,healBounce=-.15,
+  qBase=D.Jade_NamiQ.BaseDamage,qAP=D.Jade_NamiQ.APRatio,wDamage={70,110,150,190,230},wHeal=D.Jade_NamiW.BaseHeal,healAP=D.Jade_NamiW.HealAPRatio,
+  eBase=D.Jade_NamiE.BaseDamage,bounce=-.30,bounceAP=0,healBounce=-.15,
   -- rAP: https://wiki.leagueoflegends.com/en-us/League_Classic/Nami Tidal Wave 150/250/350 (+70% AP), read 2026-10-08 (was the Normal .6).
   -- Same page: Q radius 200 and R range 2750 / width 500; the controller keeps its narrower 155 / 2200 / 170 geometry (the safe side).
   rAP=.7,
@@ -10475,49 +11586,105 @@ return {
 end
 factories['nasus']=function()
 -- Shared Nasus mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ NasusQ={
+  BonusDamage={30,50,70,90,110},BonusRange=50,
+ },
+ NasusE={
+  DamagePerTick={10,16,22,28,34},Duration=5,InitialHitDamage={50,80,110,140,170},
+ },
+ NasusR={
+  Duration=15,
+ },
+ NasusW={
+  castRange=700,
+ },
+ Jade_NasusW={
+  castRange=700,
+ },
+ Jade_NasusQ={
+  BonusDamage={30,50,70,90,110},
+ },
+ Jade_NasusR={
+  Duration=15,
+ },
+ Jade_NasusE={
+  InitialDamages={55,95,135,175,215},TickDamage={11,19,27,35,43},TotalArmorShred={20,25,30,35,40},
+ },
+}
+end)()
 return {
  Nasus={id='normal',q={'NasusQ'},qBuff='NasusQ',stacks='NasusQStacks',qAttack='NasusQAttack',
-  w='NasusW',e='NasusE',r='NasusR',qBase={30,50,70,90,110},eBase={50,80,110,140,170},
-   qRangeBonus=50,stackSmall=4,stackLarge=10,eDelay=.25,eAP=.6,eArmorKind='percent',eArmor={30,35,40,45,50},
+  w='NasusW',e='NasusE',r='NasusR',qBase=D.NasusQ.BonusDamage,eBase=D.NasusE.InitialHitDamage,
+   qRangeBonus=D.NasusQ.BonusRange,stackSmall=4,stackLarge=10,eDelay=.25,eAP=.6,eArmorKind='percent',eArmor={30,35,40,45,50},
    -- Q 30..110 and E 50..170 (+60% AP) confirmed; area and burn from the same page.
-   eRadius=400,eTick={10,16,22,28,34},eTickAP=.12,eDuration=5,source='https://wiki.leagueoflegends.com/en-us/Nasus (read 2026-10-08)',
+   eRadius=400,eTick=D.NasusE.DamagePerTick,eTickAP=.12,eDuration=D.NasusE.Duration,source='https://wiki.leagueoflegends.com/en-us/Nasus (read 2026-10-08)',
    -- E initial hit lands 0.264 s after the cast; R bonus health, cast and duration; W range (wiki V26.19, read 2026-10-10).
-   eBurstDelay=.264,wRange=700,rHealth={300,450,600},rCast=.2,rDuration=15,
+   eBurstDelay=.264,wRange=D.NasusW.castRange,rHealth={300,450,600},rCast=.2,rDuration=D.NasusR.Duration,
    -- Wards give Q stacks. Damage of one melee hit on a ward is not measured: only a ward at 1 health counts as a sure kill.
    wardKillHealth=1,rSource='https://wiki.leagueoflegends.com/en-us/Nasus (V26.19, read 2026-10-10): R +300/450/600 health, cast 0.2 s, 15 s'},
  Jade_Nasus={id='classic',q={'Jade_NasusQ','Jade_NasusSiphoningStrike'},qBuff='Jade_NasusQ',
   stacks='Jade_NasusQStacks',qAttack='Jade_NasusSiphoningStrikeAttack',
-  w='Jade_NasusW',e='Jade_NasusE',r='Jade_NasusR',qBase={30,50,70,90,110},eBase={55,95,135,175,215},
-   qRangeBonus=0,stackSmall=3,stackLarge=6,eDelay=.325,eAP=.6,eArmorKind='flat',eArmor={20,25,30,35,40},
-   eRadius=400,eTick={11,19,27,35,43},eTickAP=.12,eDuration=5,source='https://wiki.leagueoflegends.com/en-us/League_Classic/Nasus (read 2026-10-08)',
+  w='Jade_NasusW',e='Jade_NasusE',r='Jade_NasusR',qBase=D.Jade_NasusQ.BonusDamage,eBase=D.Jade_NasusE.InitialDamages,
+   qRangeBonus=0,stackSmall=3,stackLarge=6,eDelay=.325,eAP=.6,eArmorKind='flat',eArmor=D.Jade_NasusE.TotalArmorShred,
+   eRadius=400,eTick=D.Jade_NasusE.TickDamage,eTickAP=.12,eDuration=5,source='https://wiki.leagueoflegends.com/en-us/League_Classic/Nasus (read 2026-10-08)',
    -- League_Classic/Nasus read 2026-10-10: E initial damage 0.264 s after the cast; R cast 0.2 s, 15 s, +300/450/600
    -- health kept after the duration (offered for the 15 s only); W range 700.
-   eBurstDelay=.264,wRange=700,rHealth={300,450,600},rCast=.2,rDuration=15,
+   eBurstDelay=.264,wRange=D.Jade_NasusW.castRange,rHealth={300,450,600},rCast=.2,rDuration=D.Jade_NasusR.Duration,
    wardKillHealth=1,rSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Nasus (read 2026-10-10): R +300/450/600 health, cast 0.2 s, 15 s'},
 }
 
 end
 factories['nautilus']=function()
 -- Shared Nautilus mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ NautilusSplashZone={
+  DamageBase={55,90,125,160,195},castRangeDisplayOverride=600,
+ },
+ NautilusAnchorDragMissile={
+  mCastTime=.25,mMissileWidth=90,mSpeed=2000,
+ },
+ NautilusAnchorDrag={
+  BaseDamage={85,125,165,205,245},
+ },
+ NautilusGrandLine={
+  PrimaryDamage={150,275,400},mCastTime=.46,
+ },
+ Jade_NautilusQ={
+  BaseDamage={60,105,150,195,240},
+ },
+ Jade_NautilusQ_Missile={
+  mCastTime=.25,mMissileWidth=90,mSpeed=2000,
+ },
+ Jade_NautilusR={
+  PrimaryDamage={200,325,450},mCastTime=.46,
+ },
+ Jade_NautilusE={
+  DamageBase={60,100,140,180,220},castRadius=400,castRangeDisplayOverride=550,
+ },
+}
+end)()
 return {
  Nautilus={id='normal',q='NautilusAnchorDrag',w='NautilusPiercingGaze',e='NautilusSplashZone',r='NautilusGrandLine',
   rCast='NautilusGrandLineStart',shield='NautilusPiercingGazeShield',passive='NautilusPassiveCheck',root='NautilusPassiveRoot',
-  qRoot='NautilusAnchorDragRoot',passiveCD=6,qBase={85,125,165,205,245},qAP=.9,eBase={55,90,125,160,195},eRange=600,eArea=600,
-   rBase={150,275,400},
+  qRoot='NautilusAnchorDragRoot',passiveCD=6,qBase=D.NautilusAnchorDrag.BaseDamage,qAP=.9,eBase=D.NautilusSplashZone.DamageBase,eRange=D.NautilusSplashZone.castRangeDisplayOverride,eArea=600,
+   rBase=D.NautilusGrandLine.PrimaryDamage,
    -- Wiki Nautilus read 2026-10-10: Q reach 1122 (asset display range 1150), radius 90, speed 2000, cast .25; R cast .46,
    -- homing charge 275 units/s accelerating by 466.67 units/s per second, eruption radius 225 (knock-back band 300);
    -- Q is a 1 s stun. qControl lists the own Q-control buff names E and R wait for (the stun's native name is
    -- unconfirmed: dev trace nautilus_hook_buffs records the hooked target's buffs).
-   qRange=1122,qRadius=90,qSpeed=2000,qCast=.25,rCast=.46,rSpeed=275,rAccel=466.67,rRadius=225,
+   qRange=1122,qRadius=D.NautilusAnchorDragMissile.mMissileWidth,qSpeed=D.NautilusAnchorDragMissile.mSpeed,qCast=D.NautilusAnchorDragMissile.mCastTime,rCast=D.NautilusGrandLine.mCastTime,rSpeed=275,rAccel=466.67,rRadius=225,
    qControl={'NautilusAnchorDragRoot'},
    geometrySource='https://wiki.leagueoflegends.com/en-us/Nautilus (read 2026-10-10)'},
  Jade_Nautilus={id='classic',q='Jade_NautilusQ',w='Jade_NautilusW',e='Jade_NautilusE',r='Jade_NautilusR',
   rCast='Jade_NautilusR_Start',shield='Jade_NautilusW_Shield',passive='Jade_NautilusPassive_Check',root='Jade_NautilusPassive_Root',
-  qRoot='Jade_NautilusQ_Root',passiveCD=9.75,qBase={60,105,150,195,240},qAP=.75,eBase={60,100,140,180,220},eRange=400,eArea=550,
-   rBase={200,325,450},
+  qRoot='Jade_NautilusQ_Root',passiveCD=9.75,qBase=D.Jade_NautilusQ.BaseDamage,qAP=.75,eBase=D.Jade_NautilusE.DamageBase,eRange=D.Jade_NautilusE.castRadius,eArea=D.Jade_NautilusE.castRangeDisplayOverride,
+   rBase=D.Jade_NautilusR.PrimaryDamage,
    -- League_Classic/Nautilus read 2026-10-10: same Q (1122, width 180, speed 2000) and R geometry/charge as Normal;
    -- R cast .46, speed 275 + 466.67 per second, radius 225/300 (Classic page). Q is a 1 s stun there too.
-   qRange=1122,qRadius=90,qSpeed=2000,qCast=.25,rCast=.46,rSpeed=275,rAccel=466.67,rRadius=225,
+   qRange=1122,qRadius=D.Jade_NautilusQ_Missile.mMissileWidth,qSpeed=D.Jade_NautilusQ_Missile.mSpeed,qCast=D.Jade_NautilusQ_Missile.mCastTime,rCast=D.Jade_NautilusR.mCastTime,rSpeed=275,rAccel=466.67,rRadius=225,
    qControl={'Jade_NautilusQ_Root'},
    geometrySource='https://wiki.leagueoflegends.com/en-us/League_Classic/Nautilus (read 2026-10-10)'},
 }
@@ -10525,19 +11692,50 @@ return {
 end
 factories['nidalee']=function()
 -- Shared Nidalee mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ Takedown={
+  TotalADRatio=.75,
+ },
+ JavelinToss={
+  SpearMinimumAPRatio=.5,mMissileWidth=40,
+ },
+ PrimalSurge={
+  BaseHeal={50,75,100,125,150},
+ },
+ AspectOfTheCougar={
+  PounceAPRatio=.3,SwipeADRatio=.7,SwipeAPRatio=.55,TakedownAPRatio=.4,
+ },
+ Bushwhack={
+  DotDuration=4,
+ },
+ Jade_NidaleeBushwhack={
+  DamageDuration=2.5,
+ },
+ Jade_NidaleePrimalSurge={
+  BaseHeal={50,85,120,155,190},castRangeDisplayOverride=575,
+ },
+ Jade_NidaleeJavelinToss={
+  APRatio=.65,mMissileWidth=60,
+ },
+ Jade_NidaleeAspectOfTheCougar={
+  PounceAPRatio=.4,SwipeAPRatio=.6,TakedownADRatio=1,
+ },
+}
+end)()
 return {
  Nidalee={id='normal',q='JavelinToss',w='Bushwhack',e='PrimalSurge',r='AspectOfTheCougar',
-  cougar={'Takedown','Pounce','Swipe'},ranks=4,healRange=900,heal={50,75,100,125,150},healAP=.35,
-  spear={70,90,110,130,150},spearAP=.5,spearMultiplier=3.25,spearRadius=40,hunt='nidaleepassivehunted',
-  swipe={70,130,190,250},swipeAP=.55,swipeBonusAD=.7,pounce={55,100,145,190},pounceAP=.3,
-  takedown={5,30,55,80},takedownAD=.75,takedownAP=.4,trapDuration=4,
+  cougar={'Takedown','Pounce','Swipe'},ranks=4,healRange=900,heal=D.PrimalSurge.BaseHeal,healAP=.35,
+  spear={70,90,110,130,150},spearAP=D.JavelinToss.SpearMinimumAPRatio,spearMultiplier=3.25,spearRadius=D.JavelinToss.mMissileWidth,hunt='nidaleepassivehunted',
+  swipe={70,130,190,250},swipeAP=D.AspectOfTheCougar.SwipeAPRatio,swipeBonusAD=D.AspectOfTheCougar.SwipeADRatio,pounce={50,90,130,170},pounceAP=D.AspectOfTheCougar.PounceAPRatio,
+  takedown={5,30,55,80},takedownAD=D.Takedown.TotalADRatio,takedownAP=D.AspectOfTheCougar.TakedownAPRatio,trapDuration=D.Bushwhack.DotDuration,
   -- Bushwhack arms 1.5 s after it lands (wiki https://wiki.leagueoflegends.com/en-us/Nidalee read 2026-10-10).
   trapArm=1.5},
  Jade_Nidalee={id='classic',q='Jade_NidaleeJavelinToss',w='Jade_NidaleeBushwhack',e='Jade_NidaleePrimalSurge',r='Jade_NidaleeAspectOfTheCougar',
-  cougar={'Jade_NidaleeTakedown','Jade_NidaleePounce','Jade_NidaleeSwipe'},ranks=3,healRange=575,heal={50,85,120,155,190},healAP=.7,
-  spear={55,95,140,185,230},spearAP=.65,spearMultiplier=2.5,spearRadius=60,
-  swipe={150,225,300},swipeAP=.6,pounce={125,175,225},pounceAP=.4,
-  takedown={40,70,100},takedownAD=1,takedownAP=0,trapDuration=2.5,
+  cougar={'Jade_NidaleeTakedown','Jade_NidaleePounce','Jade_NidaleeSwipe'},ranks=3,healRange=D.Jade_NidaleePrimalSurge.castRangeDisplayOverride,heal=D.Jade_NidaleePrimalSurge.BaseHeal,healAP=.7,
+  spear={55,95,140,185,230},spearAP=D.Jade_NidaleeJavelinToss.APRatio,spearMultiplier=2.5,spearRadius=D.Jade_NidaleeJavelinToss.mMissileWidth,
+  swipe={150,225,300},swipeAP=D.Jade_NidaleeAspectOfTheCougar.SwipeAPRatio,pounce={125,175,225},pounceAP=D.Jade_NidaleeAspectOfTheCougar.PounceAPRatio,
+  takedown={40,70,100},takedownAD=D.Jade_NidaleeAspectOfTheCougar.TakedownADRatio,takedownAP=0,trapDuration=D.Jade_NidaleeBushwhack.DamageDuration,
   -- No Classic arm time is published: the Normal 1.5 s is used only as a stricter placement bound (a trap thrown
   -- under shorter control was the earlier rule); it is not a Classic mechanic claim.
   trapArm=1.5,trapArmBound=true},
@@ -10547,6 +11745,16 @@ end
 factories['pantheon']=function()
 -- Pantheon numbers the shared row in CombatProfiles/abilities.lua (M.controllers.Pantheon, not edited by the
 -- champion work) does not carry. The controller overlays these on a private copy of that row.
+local D=(function()
+return {
+ PantheonQMissile={
+  mMissileWidth=55,mSpeed=2700,
+ },
+ PantheonE={
+  RecastLockout=.3,ShieldDuration=1.5,SpearStrikesRadius=525,
+ },
+}
+end)()
 return {
  -- https://wiki.leagueoflegends.com/en-us/Pantheon read 2026-10-10: Q cast 0.2 s (the shared geometry row says .25),
  -- hurl +50% AP (execute +100% AP), the thrust has no AP ratio, the 50% hurl reduction applies only beyond the first
@@ -10554,9 +11762,9 @@ return {
  -- curve assumed between the two ends); E channel 1.5 s, 60 degree cone, non-turret damage from the front blocked,
  -- strikes 1/12 of total AD every 0.125 s (100% AD over the channel), recast after 0.3 s or automatically at the end:
  -- slam 0.25 s cast, cone radius 525, 55-255 (+150% bonus AD).
- Pantheon={qCast=.2,qFlightSpeed=2700,qFlightRadius=55,qHurlAP=.5,qExecuteAP=1,wHPPerAP=.00015,
-  mortalWillMin=20,mortalWillMax=265.88,eBlockAngle=60,eBlockDuration=1.5,eStrikeAD=1/12,eStrikeInterval=.125,eStrikesMax=12,
-  eSlamRadius=525,eSlamCast=.25,eRecastAfter=.3,
+ Pantheon={qCast=.2,qFlightSpeed=D.PantheonQMissile.mSpeed,qFlightRadius=D.PantheonQMissile.mMissileWidth,qHurlAP=.5,qExecuteAP=1,wHPPerAP=.00015,
+  mortalWillMin=20,mortalWillMax=265.88,eBlockAngle=60,eBlockDuration=D.PantheonE.ShieldDuration,eStrikeAD=1/12,eStrikeInterval=.125,eStrikesMax=12,
+  eSlamRadius=D.PantheonE.SpearStrikesRadius,eSlamCast=.25,eRecastAfter=D.PantheonE.RecastLockout,
   source='https://wiki.leagueoflegends.com/en-us/Pantheon (read 2026-10-10)'},
  -- https://wiki.leagueoflegends.com/en-us/League_Classic/Pantheon read 2026-10-10: Heartseeker Strike channels 0.75 s
  -- with three strikes; the controller keeps its 400 / 32 degree cone until the wiki 600 / 80 is measured.
@@ -10572,18 +11780,46 @@ factories['quinn']=function()
 -- QuinnRFinale / Jade_QuinnRFinale castRadius), R stage names, E dash speeds 2500 then 850 and
 -- landing 525 (wiki Quinn), Classic Harrier 25 +10/level, +15/level from level 15 (asset
 -- Jade_QuinnPassive; wiki 25-215). Details: CombatProfiles/quinn-provenance.json.
+local D=(function()
+return {
+ QuinnW={
+  BuffDuration=2,castRangeDisplayOverride=2100,
+ },
+ QuinnR={
+  ADRatio=.35,BaseDamage={60,90,120},castRangeDisplayOverride=700,
+ },
+ QuinnPassive={
+  ADRatio=.4,
+ },
+ QuinnE={
+  BaseDamage={40,65,90,115,140},castRange=600,
+ },
+ QuinnQ={
+  ADRatio={.8,.85,.9,.95,1},BaseDamage={65,100,135,170,205},castRange=1050,mMissileWidth=60,mSpeed=1550,
+ },
+ Jade_QuinnQ={
+  ADRatio=.65,APRatio=.5,BaseDamage={70,110,150,190,230},castRangeDisplayOverride=1025,mCastTime=.25,mMissileWidth=80,mSpeed=1550,
+ },
+ Jade_QuinnE={
+  ADRatio=.2,BaseDamage={40,70,100,130,160},castRangeDisplayOverride=700,
+ },
+ Jade_QuinnR={
+  BaseDamage={100,150,200},BonusAttackRange=-400,TransformDuration=20,
+ },
+}
+end)()
 local profiles={}
 profiles['Quinn']=profiles['Quinn']or {}
 profiles['Quinn'].combat={id='normal',champion='Quinn',names={{'QuinnQ'},{'QuinnW'},{'QuinnE'},{'QuinnR','QuinnRChannel','QuinnRFinale','QuinnRReturnToQuinn'}},
-  q={range=1050,radius=60,delay=.25,speed=1550,collision=true,type='physical',base={65,100,135,170,205},bonusAD={.8,.85,.9,.95,1},ap=.5,monster=2,explosion=210},
-  w={range=2100,duration=2},e={range=600,type='physical',base={40,65,90,115,140},bonusAD=.2},r={range=700,margin=25,type='physical',base={60,90,120},bonusAD=.35},
+  q={range=D.QuinnQ.castRange,radius=D.QuinnQ.mMissileWidth,delay=.25,speed=D.QuinnQ.mSpeed,collision=true,type='physical',base=D.QuinnQ.BaseDamage,bonusAD=D.QuinnQ.ADRatio,ap=.5,monster=2,explosion=210},
+  w={range=D.QuinnW.castRangeDisplayOverride,duration=D.QuinnW.BuffDuration},e={range=D.QuinnE.castRange,type='physical',base=D.QuinnE.BaseDamage,bonusAD=.2},r={range=D.QuinnR.castRangeDisplayOverride,margin=25,type='physical',base=D.QuinnR.BaseDamage,bonusAD=D.QuinnR.ADRatio},
   flightName='QuinnRFinale',channelName='QuinnRReturnToQuinn',eSpeeds={2500,850},eLanding=525,
-  markNames={'QuinnW','QuinnPassive'},travelNames={'QuinnR'},passiveLevel={15,120},passiveAD=.4,passiveMonster=75,rChannel=2,rArrival=650}
+  markNames={'QuinnW','QuinnPassive'},travelNames={'QuinnR'},passiveLevel={15,120},passiveAD=D.QuinnPassive.ADRatio,passiveMonster=75,rChannel=2,rArrival=650}
 profiles['Jade_Quinn']=profiles['Jade_Quinn']or {}
 profiles['Jade_Quinn'].combat={id='classic',champion='Quinn',names={{'Jade_QuinnQ','Jade_QuinnQMelee'},{'Jade_QuinnW'},{'Jade_QuinnE'},{'Jade_QuinnR','Jade_QuinnRChannel','Jade_QuinnRFinale','Jade_QuinnRReturnToJade_Quinn'}},
-  q={range=1025,radius=80,delay=.25,speed=1550,collision=true,type='physical',base={70,110,150,190,230},bonusAD=.65,ap=.5,melee=300,explosion=210},
-  w={range=1950,duration=2},e={range=700,type='physical',base={40,70,100,130,160},bonusAD=.2},
-  r={range=700,margin=25,type='physical',base={100,150,200},bonusAD=.5},channelName='Jade_QuinnRReturnToJade_Quinn',eLanding=525,markNames={'Jade_QuinnPassive'},valorNames={'Jade_QuinnR'},valorQ='Jade_QuinnQMelee',valorDuration=20,valorAttackRange=-400,
+  q={range=D.Jade_QuinnQ.castRangeDisplayOverride,radius=D.Jade_QuinnQ.mMissileWidth,delay=D.Jade_QuinnQ.mCastTime,speed=D.Jade_QuinnQ.mSpeed,collision=true,type='physical',base=D.Jade_QuinnQ.BaseDamage,bonusAD=D.Jade_QuinnQ.ADRatio,ap=D.Jade_QuinnQ.APRatio,melee=300,explosion=210},
+  w={range=1950,duration=2},e={range=D.Jade_QuinnE.castRangeDisplayOverride,type='physical',base=D.Jade_QuinnE.BaseDamage,bonusAD=D.Jade_QuinnE.ADRatio},
+  r={range=700,margin=25,type='physical',base=D.Jade_QuinnR.BaseDamage,bonusAD=.5},channelName='Jade_QuinnRReturnToJade_Quinn',eLanding=525,markNames={'Jade_QuinnPassive'},valorNames={'Jade_QuinnR'},valorQ='Jade_QuinnQMelee',valorDuration=D.Jade_QuinnR.TransformDuration,valorAttackRange=D.Jade_QuinnR.BonusAttackRange,
   passiveBase=25,passivePerLevel=10,passiveLateLevel=15,passiveLatePerLevel=15,passiveAD=.5,rChannel=2,rMaximum=2,rMaximumHealth=.25}
 local normal,classic=profiles.Quinn.combat,profiles.Jade_Quinn.combat
 normal.e.mobility=true;classic.e.mobility=true
@@ -10616,26 +11852,51 @@ factories['rammus']=function()
 -- 2026-10-10 additions (ranking gaps Rammus-1/10/11): R damage, R prediction delay/speed and W resistances,
 -- each with its installed-asset field and the wiki page read that day (rSource/wSource). Normal and Classic
 -- are read from their own assets; nothing is borrowed across profiles.
+local D=(function()
+return {
+ DefensiveBallCurl={
+  BuffDuration=7,
+ },
+ PowerBall={
+  KnockbackDistance=125,QBaseDamage={80,120,160,200,240},RollDuration=6,
+ },
+ Tremors2={
+  APRatio=.6,BaseCastRange=800,InitialDamage={150,250,350},MinDashSpeed=900,
+ },
+ PuncturingTaunt={
+  APRatio=.7,MonsterDamage={80,100,120,140,160},
+ },
+ Jade_RammusQ={
+  AOEDamage={100,150,200,250,300},Duration=7,
+ },
+ Jade_RammusW={
+  Duration=6,
+ },
+ Jade_RammusR={
+  castRadius=375,
+ },
+}
+end)()
 return {
  Rammus={id='normal',q='PowerBall',qCancel='PowerBallCancel',w='DefensiveBallCurl',e='PuncturingTaunt',r='Tremors2',
-  qBuff='PowerBall',wBuff='DefensiveBallCurl',eBuff='PuncturingTaunt',qDuration=6,wDuration=7,rKind='landing',rRadius=400,
-  qBase={80,120,160,200,240},qAP=1,eMonster={80,100,120,140,160},eAP=.7,
+  qBuff='PowerBall',wBuff='DefensiveBallCurl',eBuff='PuncturingTaunt',qDuration=D.PowerBall.RollDuration,wDuration=D.DefensiveBallCurl.BuffDuration,rKind='landing',rRadius=400,
+  qBase=D.PowerBall.QBaseDamage,qAP=1,eMonster=D.PuncturingTaunt.MonsterDamage,eAP=D.PuncturingTaunt.APRatio,
   -- Soaring Slam landing damage and the prediction model. rDelay is the asset cast delay (the wiki says "no cast
   -- time"; the larger value is kept until the rammus_slam_flight trace settles it); rSpeed is the asset
   -- MinDashSpeed lower bound (the dash runs 900-2000). rRange is the base range; 150% of the average movement
   -- speed above 461.5 is not used until rammus_slam_flight records accepted landings beyond 800.
-  rBase={150,250,350},rAP=.6,rDelay=.25,rSpeed=900,rRange=800,qKnockback=125,
+  rBase=D.Tremors2.InitialDamage,rAP=D.Tremors2.APRatio,rDelay=.25,rSpeed=D.Tremors2.MinDashSpeed,rRange=D.Tremors2.BaseCastRange,qKnockback=D.PowerBall.KnockbackDistance,
   rSource='family-assets/Rammus/spells.json Tremors2 InitialDamage/APRatio/MinDashSpeed/BaseCastRange/11704a2b + wiki.leagueoflegends.com/en-us/Rammus (V26.01), read 2026-10-10',
   -- Defensive Ball Curl: flat plus a share of total armor / magic resistance.
-  wArmor={27,32,37,42,47},wArmorShare={.3,.375,.45,.525,.6},wMR={20,25,30,35,40},wMRShare={.3,.375,.45,.525,.6},wDelay=.25,
-  wSource='family-assets/Rammus/spells.json DefensiveBallCurl FlatBonusArmor/BonusArmorPercent/FlatBonusMR/BonusMRPercent/BuffDuration/11704a2b + wiki en-us/Rammus, read 2026-10-10'},
+  wArmor={25,30,35,40,45},wArmorShare={.3,.35,.4,.45,.5},wMR={20,25,30,35,40},wMRShare={.3,.35,.4,.45,.5},wDelay=.25,
+  wSource='Current installed DefensiveBallCurl FlatBonusArmor/BonusArmorPercent/FlatBonusMR/BonusMRPercent; implementation/family/current-patch.json'},
  Jade_Rammus={id='classic',q='Jade_RammusQ',w='Jade_RammusW',e='Jade_RammusE',r='Jade_RammusR',
   wAlias='Jade_Rammus_DefensiveBallCurl',eAlias='Jade_Rammus_PuncturingTaunt',rAlias='Jade_Rammus_Tremors2',
-  qBuff='Jade_RammusQ',wBuff='Jade_RammusW',eBuff='Jade_RammusE',qDuration=7,wDuration=6,rKind='tremors',
+  qBuff='Jade_RammusQ',wBuff='Jade_RammusW',eBuff='Jade_RammusE',qDuration=D.Jade_RammusQ.Duration,wDuration=D.Jade_RammusW.Duration,rKind='tremors',
   -- Installed asset castRadius 375; the Classic wiki page says 385. The smaller asset value is kept (it never
   -- counts an enemy the area misses); the rammus_tremors_hits trace records hit distances to settle it.
-  rRadius=375,
-  qBase={100,150,200,250,300},qAP=1,
+  rRadius=D.Jade_RammusR.castRadius,
+  qBase=D.Jade_RammusQ.AOEDamage,qAP=1,
   -- Tremors: one tick per second for 8 s. The delay of the first tick is unmeasured (rammus_tremors_tick trace),
   -- so no Classic R finisher is built on it.
   rTick={65,130,195},rAP=.3,
@@ -10648,18 +11909,37 @@ return {
 end
 factories['rell']=function()
 -- Shared Rell mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ RellW_Dismount={
+  CrashDownKnockupDuration=.4,CrashDownStunDuration=.8,FlipStunDuration=.6,castRangeDisplayOverride=450,
+ },
+ RellW_MountUp={
+  CrashDownTooltip={60,90,120,150,180},FlipAttackTooltip={10,25,40,55,70},ShieldBaseTooltip={20,40,60,80,100},
+ },
+ RellE={
+  Duration=3,ExplosionRadius=300,castRange=1200,
+ },
+ RellQ={
+  BaseDamage={60,100,140,180,220},StunDuration=.65,castRangeDisplayOverride=600,
+ },
+ RellR={
+  GravityRadius=375,
+ },
+}
+end)()
 return {Rell={id='normal',q='RellQ',w='RellW_Dismount',w2='RellW_MountUp',e='RellE',r='RellR',
- qBase={60,100,140,180,220},qAP=.6,qRange=600,qForward=520,qBehind=220,qStep=100,qRadius=75,qDelay=.4,qStun=.65,
+ qBase=D.RellQ.BaseDamage,qAP=.6,qRange=D.RellQ.castRangeDisplayOverride,qForward=520,qBehind=220,qStep=100,qRadius=75,qDelay=.4,qStun=D.RellQ.StunDuration,
  -- Crash Down reach, 2026-10-08: https://wiki.leagueoflegends.com/en-us/Rell "Target range 100 - 400", effect radius 180,
  -- cast 0.625, slide 320 over 0.5 s; patch 13.11 notes also give a 400 jump. The installed asset's
  -- castRangeDisplayOverride is 450 (kept as wDisplayRange, the drawn indicator); casts are planned inside 400.
  -- The leap itself has no published speed (the page describes it as happening over the cast time).
- wBase={60,90,120,150,180},wAP=.6,w2Base={10,25,40,55,70},w2AP=.4,wRange=400,wMinRange=100,wDisplayRange=450,wSlide=320,wRadius=180,wDelay=.625,
+ wBase=D.RellW_MountUp.CrashDownTooltip,wAP=.6,w2Base=D.RellW_MountUp.FlipAttackTooltip,w2AP=.4,wRange=400,wMinRange=100,wDisplayRange=D.RellW_Dismount.castRangeDisplayOverride,wSlide=320,wRadius=180,wDelay=.625,
  -- Mount Up empowers the next attack for 3.5 s with 100 bonus range (same page). The two buff names are leads from a
  -- reference script (zgRell), not live verified: a name that never appears simply never triggers its rule.
  wAttackWindow=3.5,wAttackRange=100,wAttackBuff='rellwempoweredattack',wKnockupBuff='rellw_knockup',
- shieldBase={20,40,60,80,100},shieldHP=.11,wResist=.15,wKnockup=.4,wStun=.8,w2Stun=.6,
- eRange=1200,ePct={.05,.055,.06,.065,.07},eAP=.0003,eDuration=3,eBuffer=2,eRadius=300,eFast=.3,eSlow=.15,
+ shieldBase=D.RellW_MountUp.ShieldBaseTooltip,shieldHP=.11,wResist=.15,wKnockup=D.RellW_Dismount.CrashDownKnockupDuration,wStun=D.RellW_Dismount.CrashDownStunDuration,w2Stun=D.RellW_Dismount.FlipStunDuration,
+ eRange=D.RellE.castRange,ePct={.05,.055,.06,.065,.07},eAP=.0003,eDuration=D.RellE.Duration,eBuffer=2,eRadius=D.RellE.ExplosionRadius,eFast=.3,eSlow=.15,
  -- Full Tilt monster/structure cap by level (Rell-5): installed asset RellE mSpellCalculations 1925773807 =
  -- level curve 150 -> 300 (read 2026-10-10). The wiki (V14.23) lists 150-317.65; the installed asset wins.
  eMonsterCap={150,300},
@@ -10667,7 +11947,7 @@ return {Rell={id='normal',q='RellQ',w='RellW_Dismount',w2='RellW_MountUp',e='Rel
  -- decay (calc 2803503575), wiki en-us/Rell "+30% decaying over 2 s", read 2026-10-10.
  mountHaste=.3,mountHasteDecay=2,
  mountSource='family-assets/Rell/spells.json RellW_Dismount MountUpSpeed + RellW_MountUp calc 2803503575 (2 s) + wiki en-us/Rell, read 2026-10-10',
- rDPS={75,125,175},rAP=.55,rDuration=2,rInitial=425,rRadius=375,rHorizon=225,rForce=300,
+ rDPS={75,125,175},rAP=.55,rDuration=2,rInitial=425,rRadius=D.RellR.GravityRadius,rHorizon=225,rForce=300,
  passive='rellp_debuff',maxStacks=5,passivePct=.03,passiveLife=5,refreshLife=3.5,
  mounted='rellw_mountedbuff',dismounted='rellw_dismountedbuff',shield='rellw_shield',eEmpower='relle_empowerself',storm='rellr'}}
 
@@ -10677,35 +11957,73 @@ factories['ryze']=function()
 -- (AbilityProfiles.controllers.Ryze and the geometry rows); this file holds only the numbers those rows lack.
 -- Every row names its installed-asset field and the wiki page read that day; Normal and Classic are read from
 -- their own assets (research/family-assets/Ryze, Jade_Ryze) and never borrowed. See ryze-provenance.json.
+local D=(function()
+return {
+ RyzeQWrapper={
+  MovementSpeedAmount={30,35,40,45,50},MovementSpeedDuration=2,RuneDuration=4,
+ },
+ RyzeR={
+  MinimumCastRange=1000,castRange=3000,
+ },
+ RyzeE={
+  BounceRadius=350,BounceRadiusLargeUnit=400,BounceRadiusQLargeUnit=500,BounceRadiusQSmallUnit=350,
+ },
+ Jade_RyzeR={
+  Duration={5,6,7},MovementSpeed={60,70,80},
+ },
+ Jade_RyzeE={
+  MaximumHits=5,ResistShred={12,15,18,21,24},
+ },
+ Jade_RyzeEMissile={
+  BounceRadius=350,BounceRadiusLargeUnit=400,
+ },
+}
+end)()
 return {
  Ryze={id='normal',
   -- Bonus mana (Q/W/E scale with it, 2%/3%/2%): base mana 300 + 70 per level on the standard growth curve.
   manaBase=300,manaGrowth=70,manaSource='wiki Template:Data_Ryze mp_base 300 / mp_lvl 70, read 2026-10-10',
-  -- Two Runes consumed by Q: +28..44% movement speed for 2 s; Runes last 4 s.
-  runeHaste={.28,.32,.36,.40,.44},runeHasteDuration=2,runeLife=4,
-  runeSource='family-assets/Ryze/spells.json RyzeQWrapper MovementSpeedAmount/MovementSpeedDuration/RuneDuration + wiki Overload, read 2026-10-10',
+  -- Two Runes consumed by Q use the current per-rank movement speed for 2 s; Runes last 4 s.
+  runeHaste={D.RyzeQWrapper.MovementSpeedAmount[1]/100,D.RyzeQWrapper.MovementSpeedAmount[2]/100,D.RyzeQWrapper.MovementSpeedAmount[3]/100,D.RyzeQWrapper.MovementSpeedAmount[4]/100,D.RyzeQWrapper.MovementSpeedAmount[5]/100},fluxBonus={.10,.40,.70,1},runeHasteDuration=D.RyzeQWrapper.MovementSpeedDuration,runeLife=D.RyzeQWrapper.RuneDuration,
+  runeSource='Current installed RyzeQWrapper MovementSpeedAmount/MovementSpeedDuration/RuneDuration; implementation/family/current-patch.json',
   -- E spread: 350 to small units, 400 to large ones (asset BounceRadius/BounceRadiusLargeUnit). Counting uses the
   -- smaller, collateral checks the larger. Q spread off a marked unit: 350 small / 500 large (BounceRadiusQ*).
-  eBounceMin=350,eBounceMax=400,qBounceSmall=350,qBounceLarge=500,
+  eBounceMin=D.RyzeE.BounceRadius,eBounceMax=D.RyzeE.BounceRadiusLargeUnit,qBounceSmall=D.RyzeE.BounceRadiusQSmallUnit,qBounceLarge=D.RyzeE.BounceRadiusQLargeUnit,
   bounceSource='family-assets/Ryze/spells.json RyzeE BounceRadius/BounceRadiusLargeUnit/BounceRadiusQSmallUnit/BounceRadiusQLargeUnit, read 2026-10-10',
   -- Realm Warp: 1000 minimum, 3000 maximum.
-  rMin=1000,rMax=3000,rRangeSource='family-assets/Ryze/spells.json RyzeR MinimumCastRange/castRange + wiki en-us/Ryze, read 2026-10-10'},
+  rMin=D.RyzeR.MinimumCastRange,rMax=D.RyzeR.castRange,rRangeSource='family-assets/Ryze/spells.json RyzeR MinimumCastRange/castRange + wiki en-us/Ryze, read 2026-10-10'},
  Jade_Ryze={id='classic',
   -- E bounces: 350 from the missile (small units), 400 on the spell and for large units; at most 5 hits.
-  eBounceMin=350,eBounceMax=400,eMaxHits=5,
+  eBounceMin=D.Jade_RyzeEMissile.BounceRadius,eBounceMax=D.Jade_RyzeEMissile.BounceRadiusLargeUnit,eMaxHits=D.Jade_RyzeE.MaximumHits,
   bounceSource='family-assets/Jade_Ryze/spells.json Jade_RyzeEMissile BounceRadius 350/BounceRadiusLargeUnit 400, Jade_RyzeE BounceRadius 400/MaximumHits 5, read 2026-10-10',
   -- E magic resistance reduction while marked (applied to the follow-up only once our mark is seen).
-  eShred={12,15,18,21,24},eShredSource='family-assets/Jade_Ryze/spells.json Jade_RyzeE ResistShred + wiki League_Classic/Ryze, read 2026-10-10',
+  eShred=D.Jade_RyzeE.ResistShred,eShredSource='family-assets/Jade_Ryze/spells.json Jade_RyzeE ResistShred + wiki League_Classic/Ryze, read 2026-10-10',
   -- Desperate Power: flat movement speed and duration by rank, no cast time.
-  rHaste={60,70,80},rDuration={5,6,7},rSource='family-assets/Jade_Ryze/spells.json Jade_RyzeR MovementSpeed/Duration + wiki League_Classic/Ryze, read 2026-10-10'},
+  rHaste=D.Jade_RyzeR.MovementSpeed,rDuration=D.Jade_RyzeR.Duration,rSource='family-assets/Jade_Ryze/spells.json Jade_RyzeR MovementSpeed/Duration + wiki League_Classic/Ryze, read 2026-10-10'},
 }
 
 end
 factories['seraphine']=function()
 -- Shared Normal Seraphine data; no Classic mechanics are inferred.
+local D=(function()
+return {
+ SeraphineW={
+  ShieldAPRatio=.2,ShieldDuration=2.5,ShieldStrength={60,80,100,120,140},WMissingHPBase={8,10,12,14,16},
+ },
+ SeraphineE={
+  APRatio=.5,BaseDamage={70,100,130,160,190},
+ },
+ SeraphineQ={
+  BaseDamage={60,85,110,135,160},
+ },
+ SeraphineR={
+  R1BaseDamage={150,200,250},
+ },
+}
+end)()
 return {
  Seraphine={id='normal',q='SeraphineQ',w='SeraphineW',e='SeraphineE',r='SeraphineR',
-  qBase={60,85,110,135,160},qAP=.4,eBase={70,100,130,160,190},eAP=.5,eMinion=.7,
+  qBase=D.SeraphineQ.BaseDamage,qAP=.4,eBase=D.SeraphineE.BaseDamage,eAP=D.SeraphineE.APRatio,eMinion=.7,
   -- High Note against champions and monsters: "the damage is increased by 0% - 75% (based on target's missing health)",
   -- maximum 105..280 (+70% AP) = base x1.75 (https://wiki.leagueoflegends.com/en-us/Template:Data_Seraphine/High_Note,
   -- read 2026-10-08). The page does not say at which missing health the maximum is reached. qMissingMax is therefore
@@ -10719,17 +12037,36 @@ return {
   echoSource='https://wiki.leagueoflegends.com/en-us/Seraphine (Stage Presence: additional cast after 0.033 s), read 2026-10-10',
   -- Surround Sound: shield 60/80/100/120/140 (+20% AP) for 2.5 s, cast time 0.25, radius 800
   -- (https://wiki.leagueoflegends.com/en-us/Template:Data_Seraphine/Surround_Sound, read 2026-10-08).
-  rBase={150,200,250},rAP=.4,shield={60,80,100,120,140},shieldAP=.2,shieldDuration=2.5,heal={8,10,12,14,16},
+  rBase=D.SeraphineR.R1BaseDamage,rAP=.4,shield=D.SeraphineW.ShieldStrength,shieldAP=D.SeraphineW.ShieldAPRatio,shieldDuration=D.SeraphineW.ShieldDuration,heal=D.SeraphineW.WMissingHPBase,
   shieldSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Seraphine/Surround_Sound (shield 60/80/100/120/140 +20% AP, 2.5 s, cast 0.25), read 2026-10-08; base ranks also in research/family-assets/Seraphine/spells.json SeraphineW ShieldStrength'}
 }
 
 end
 factories['shen']=function()
 -- Shared Shen mechanics data. Values preserved from the maintained controller.
+local D=(function()
 return {
- Shen={id='normal',q='ShenQ',w='ShenW',e='ShenE',r='ShenR',eRange=600,qKind='blade',
+ ShenQ={
+  MinionDamageCap={100,125,150,175,200},
+ },
+ ShenE={
+  castRangeDisplayOverride=600,
+ },
+ ShenW={
+  ZoneDuration=1.75,
+ },
+ Jade_ShenQ={
+  APRatio_Jade=.6,BaseDamage_Jade={60,100,140,180,220},castFrameSeconds=.42,castRange=475,mSpeed=1500,
+ },
+ Jade_ShenE={
+  MaximumDistance=575,
+ },
+}
+end)()
+return {
+ Shen={id='normal',q='ShenQ',w='ShenW',e='ShenE',r='ShenR',eRange=D.ShenE.castRangeDisplayOverride,qKind='blade',
   qBuff='ShenQBuff',qWeak='ShenQBuffWeak',qStrong='ShenQBuffStrong',wBuff='ShenWActive',rChannel='ShenRChannelBuffBar',
-  passive='ShenPassiveShield',wRadius=350,wDuration=1.75,qPercent={.02,.025,.03,.035,.04},qCap={100,125,150,175,200},
+  passive='ShenPassiveShield',wRadius=350,wDuration=D.ShenW.ZoneDuration,qPercent={.02,.025,.03,.035,.04},qCap=D.ShenQ.MinionDamageCap,
   -- Twilight Assault (https://wiki.leagueoflegends.com/en-us/Template:Data_Shen/Twilight_Assault, read 2026-10-10):
   -- bonus magic damage 10-40 "based on level" (+2-4% (+1.5% per 100 AP) max health); when the blade hits a champion
   -- 5/5.5/6/6.5/7% (+2% per 100 AP) and +50% attack speed. The champion-hit tier is used only while ShenQBuffStrong is seen.
@@ -10744,8 +12081,8 @@ return {
   -- numbers, so this is a bracket whose slow end (a roughly 40% slowed Shen) is the safety margin.
   eMin=300,eSpeeds={1000,1140},eDelays={0},
   eSource='https://wiki.leagueoflegends.com/en-us/Shen Shadow Dash: range 300-600, no cast time, speed 800 + 100% movement speed, base movement speed 340 (read 2026-10-08)'},
- Jade_Shen={id='classic',q='Jade_ShenQ',w='Jade_ShenW',e='Jade_ShenE',r='Jade_ShenR',eRange=575,qKind='target',
-  qRange=475,qBase={60,100,140,180,220},qAP=.6,qDelay=.42,qSpeed=1500,qMark='Jade_ShenQ_Heal',
+ Jade_Shen={id='classic',q='Jade_ShenQ',w='Jade_ShenW',e='Jade_ShenE',r='Jade_ShenR',eRange=D.Jade_ShenE.MaximumDistance,qKind='target',
+  qRange=D.Jade_ShenQ.castRange,qBase=D.Jade_ShenQ.BaseDamage_Jade,qAP=D.Jade_ShenQ.APRatio_Jade,qDelay=D.Jade_ShenQ.castFrameSeconds,qSpeed=D.Jade_ShenQ.mSpeed,qMark='Jade_ShenQ_Heal',
   passive='Jade_ShenPassive_Marker',passiveAttack='Jade_ShenPassive_Attack',wDuration=3,wBase={60,100,140,180,220},wAP=.6,
   wSource='research/family-assets/Jade_Shen/spells.json:1308,1321,1334 (Jade_ShenW BaseShieldAmount 60-220, APShieldMod .6, ShieldDuration 3; no cast-time field; 2026-10-08)',
   -- Same "bonus speed + movement speed" shape as Normal: DashBonusSpeed 800. The Classic base movement speed is not
@@ -10759,13 +12096,23 @@ end
 factories['sivir']=function()
 -- Sivir mechanics that are not in CombatProfiles/abilities.lua (M.controllers.Sivir keeps geometry and Q
 -- coefficients). Normal and Classic are separate; no value is borrowed across profiles.
+local D=(function()
+return {
+ SivirR={
+  UltDuration={8,10,12},
+ },
+ Jade_SivirR={
+  UltDuration=15,
+ },
+}
+end)()
 return {
  Sivir={id='normal',
   -- Boomerang Blade deals physical damage (https://wiki.leagueoflegends.com/en-us/Sivir, read 2026-10-10).
   qType='physical',qTypeSource='https://wiki.leagueoflegends.com/en-us/Sivir (Boomerang Blade: physical damage), read 2026-10-10',
   -- On the Hunt: 8/10/12 s, bonus movement speed 20-30% for Sivir and nearby allies (wiki read 2026-10-10).
   -- Used only as a chase tool in Combo (switch off by default).
-  rKind='speed',rDuration={8,10,12},
+  rKind='speed',rDuration=D.SivirR.UltDuration,
   rSource='https://wiki.leagueoflegends.com/en-us/Sivir (On The Hunt: 8-12 s, +20-30% movement speed), read 2026-10-10'},
  Jade_Sivir={id='classic',
   -- Classic Boomerang Blade is magic damage: own Classic asset tooltip Spell_SivirQ_Jade_Tooltip "deals
@@ -10775,7 +12122,7 @@ return {
   qType='magical',qTypeSource='Classic asset tooltip Spell_SivirQ_Jade_Tooltip (magic damage), research/evade/classic-localization-evidence.json; wiki League_Classic/Sivir read 2026-10-10',
   -- Classic On The Hunt: 15 s, +25/45/65% attack speed and +25% movement speed, allies half (wiki League_Classic/Sivir,
   -- read 2026-10-10): a fight steroid, used in Combo while Sivir attacks the target.
-  rKind='attack_speed',rDuration={15,15,15},
+  rKind='attack_speed',rDuration={D.Jade_SivirR.UltDuration,D.Jade_SivirR.UltDuration,D.Jade_SivirR.UltDuration},
   rSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Sivir (On The Hunt: 15 s, +25/45/65% attack speed), read 2026-10-10'},
 }
 
@@ -10783,37 +12130,72 @@ end
 factories['skarner']=function()
 -- Skarner numbers the shared row in CombatProfiles/abilities.lua (M.controllers.Skarner, not edited by the
 -- champion work) does not carry. The controller overlays these on a private copy of that row.
+local D=(function()
+return {
+ SkarnerQ={
+  AttackRange=25,
+ },
+ Jade_SkarnerR={
+  BaseDamage={100,150,200},mCastTime=.25,
+ },
+ Jade_SkarnerW={
+  MSBonus={.15,.17,.19,.21,.23},
+ },
+}
+end)()
 return {
  -- https://wiki.leagueoflegends.com/en-us/Skarner read 2026-10-10: Shattered Earth empowers the next three attacks
  -- (+25 attack range) within the qHold window of the shared row; throwing Upheaval ends Shattered Earth. The buff that
  -- carries the window is not confirmed by an asset or a live record: qBuff names the candidate from the installed asset
  -- index (entries.json 'SkarnerQ'); without it the controller times the window from its own observation of the stage.
  -- Impale cast time 0.75 s (shared geometry row).
- Skarner={qEmpowerRange=25,qLapseMargin=.5,qBuff='SkarnerQ',rInterruptDelay=.75,
+ Skarner={qEmpowerRange=D.SkarnerQ.AttackRange,qLapseMargin=.5,qBuff='SkarnerQ',rInterruptDelay=.75,
   source='https://wiki.leagueoflegends.com/en-us/Skarner (read 2026-10-10)'},
  -- research/family-assets/Jade_Skarner/spells.json (installed 16.20 assets): Jade_SkarnerR castFrame 7.5 (0.25 s at 30
  -- frames per second), BaseDamage 100/150/200 at ranks 1-3, suppression 1.75 s; Jade_SkarnerW MSBonus .15/.17/.19/.21/.23.
  -- https://wiki.leagueoflegends.com/en-us/League_Classic/Skarner read 2026-10-10: Impale +50% AP; the same damage again when
  -- the suppression ends (not counted: the player may cancel the drag).
- Jade_Skarner={rCast=.25,rBase={100,150,200},rAP=.5,wSpeed={.15,.17,.19,.21,.23},
+ Jade_Skarner={rCast=D.Jade_SkarnerR.mCastTime,rBase=D.Jade_SkarnerR.BaseDamage,rAP=.5,wSpeed=D.Jade_SkarnerW.MSBonus,
   source='research/family-assets/Jade_Skarner/spells.json; https://wiki.leagueoflegends.com/en-us/League_Classic/Skarner (read 2026-10-10)'},
 }
 
 end
 factories['sona']=function()
 -- Shared Sona mechanics data. Values preserved from the maintained controller.
+local D=(function()
 return {
- Sona={id='normal',q='SonaQ',w='SonaW',e='SonaE',r='SonaR',qBase={50,85,120,155,190},qAP=.4,
-   healBase={30,45,60,75,90},healAP=.3,healRange=1000,shieldBase={25,45,65,85,105},shieldAP=.25,auraRange=400,rRadius=140,rBase={150,250,350},rAP=.5,
+ SonaW={
+  AuraRange=400,BaseHeal={30,45,60,75,90},BaseShield={25,45,65,85,105},HealRange=1000,HealRatio=.3,ShieldDuration=1.5,ShieldRatio=.25,
+ },
+ SonaQ={
+  BaseDamage={50,85,120,155,190},
+ },
+ SonaR={
+  BaseDamage={150,250,350},mMissileWidth=140,
+ },
+ Jade_SonaR={
+  APRatio=.7,BaseDamage={150,250,350},mLineWidth=140,mMissileWidth=170,
+ },
+ Jade_SonaW={
+  APRatio=.5,Heal={30,55,80,105,130},
+ },
+ Jade_SonaQ={
+  DamageMissile={60,110,160,210,260},
+ },
+}
+end)()
+return {
+ Sona={id='normal',q='SonaQ',w='SonaW',e='SonaE',r='SonaR',qBase=D.SonaQ.BaseDamage,qAP=.4,
+   healBase=D.SonaW.BaseHeal,healAP=D.SonaW.HealRatio,healRange=D.SonaW.HealRange,shieldBase=D.SonaW.BaseShield,shieldAP=D.SonaW.ShieldRatio,auraRange=D.SonaW.AuraRange,rRadius=D.SonaR.mMissileWidth,rBase=D.SonaR.BaseDamage,rAP=.5,
   auras={{'SonaQ'},{'SonaW'},{'SonaE'}},chords={{'SonaQPassiveAttack'},{'SonaWPassiveAttack'},{'SonaEPassiveAttack'}},
-  count='SonaPassive',accelerando='SonaPassiveAccelerandoCount',shield='SonaWShield',hasShield=true,shieldDuration=1.5,wDelay=0,
+  count='SonaPassive',accelerando='SonaPassiveAccelerandoCount',shield='SonaWShield',hasShield=true,shieldDuration=D.SonaW.ShieldDuration,wDelay=0,
   shieldSource='https://wiki.leagueoflegends.com/en-us/Sona Aria of Perseverance: shield 25/45/65/85/105 (+25% AP) for 1.5 s, no cast time (read 2026-10-08)',
   -- Song of Celerity self haste offered to Evade: research/family-assets/Sona/spells.json SonaE SelfBaseMovementSpeed .20 for
   -- SelfMovementSpeedDurationMin 3 s (up to 7 s while undamaged; the 3 s floor is offered), no cast time (wiki read 2026-10-10).
   eHaste={.2,.2,.2,.2,.2},eHasteDuration=3,eHasteBuff='SonaESelfHaste',
   eHasteSource='research/family-assets/Sona/spells.json SonaE SelfBaseMovementSpeed/SelfMovementSpeedDurationMin; https://wiki.leagueoflegends.com/en-us/Sona (read 2026-10-10)'},
- Jade_Sona={id='classic',q='Jade_SonaQ',w='Jade_SonaW',e='Jade_SonaE',r='Jade_SonaR',qBase={60,110,160,210,260},qAP=.5,
-   healBase={30,55,80,105,130},healAP=.5,healRange=1000,auraRange=1000,rRadius=140,assetRRadius=170,rBase={150,250,350},rAP=.7,
+ Jade_Sona={id='classic',q='Jade_SonaQ',w='Jade_SonaW',e='Jade_SonaE',r='Jade_SonaR',qBase=D.Jade_SonaQ.DamageMissile,qAP=.5,
+   healBase=D.Jade_SonaW.Heal,healAP=D.Jade_SonaW.APRatio,healRange=1000,auraRange=1000,rRadius=D.Jade_SonaR.mLineWidth,assetRRadius=D.Jade_SonaR.mMissileWidth,rBase=D.Jade_SonaR.BaseDamage,rAP=D.Jade_SonaR.APRatio,
   auras={{'Jade_SonaQ_Aura','Jade_SonaQ_AuraB'},{'Jade_SonaW_Aura','Jade_SonaW_AuraB'},{'Jade_SonaE_Aura','Jade_SonaE_AuraB'}},
   chords={{'Jade_SonaQ_AttackUpgrade','Jade_SonaQ_Attack'},{'Jade_SonaW_AttackUpgrade','Jade_SonaW_Attack'},{'Jade_SonaE_AttackUpgrade','Jade_SonaE_Attack'}},
   count='Jade_SonaPassive_Count',hasShield=false,
@@ -10846,14 +12228,30 @@ return {
 end
 factories['thresh']=function()
 -- Shared Normal Thresh data; no Classic mechanics are inferred.
+local D=(function()
 return {
- Thresh={id='normal',q='ThreshQ',q2='ThreshQLeap',w='ThreshW',e='ThreshE',r='ThreshRPenta',hook='threshq',
- qBase={100,150,200,250,300},qAP=.9,eBase={65,110,155,200,245},eAP=.6,rBase={250,400,550},shield={50,70,90,110,130},
+ ThreshQ={
+  APRatio=.9,BaseDamage={100,150,200,250,300},
+ },
+ ThreshW={
+  BaseShieldValue={50,70,90,110,130},ShieldDuration=4,castRadius=350,
+ },
+ ThreshE={
+  APRatio=.6,ActiveBaseDamage={65,110,155,200,245},
+ },
+ ThreshRPenta={
+  Damage={250,400,550},mCastTime=.45,
+ },
+}
+end)()
+return {
+ Thresh={id='normal',q='ThreshQ',qNative='ThreshQInternal',q2='ThreshQLeap',w='ThreshW',e='ThreshE',r='ThreshRPenta',hook='threshq',
+ qBase=D.ThreshQ.BaseDamage,qAP=D.ThreshQ.APRatio,eBase=D.ThreshE.ActiveBaseDamage,eAP=D.ThreshE.APRatio,rBase=D.ThreshRPenta.Damage,shield=D.ThreshW.BaseShieldValue,
  -- Lantern numbers for the Evade shield offer and the far throw. leapHold: the fly-in waits until this much of the hook mark is left.
- shieldPerSoul=2,shieldDuration=4,lanternTravel=.5,lanternRadius=350,lanternFar=1450,leapHold=.4,
+ shieldPerSoul=2,shieldDuration=D.ThreshW.ShieldDuration,lanternTravel=.5,lanternRadius=D.ThreshW.castRadius,lanternFar=1450,leapHold=.4,
  -- Cast times for the finishers and the Flash-Box: Flay 0.389 s, The Box 0.45 s (https://wiki.leagueoflegends.com/en-us/Thresh,
  -- read 2026-10-10). rBase above is the first wall a champion breaks (250/400/550 +100% AP).
- eCast=.389,rCast=.45,
+ eCast=.389,rCast=D.ThreshRPenta.mCastTime,
  shieldSource='Thresh W: installed asset research/family-assets/Thresh/spells.json (BaseShieldValue 50..130, ShieldPerSoul 2, ShieldDuration 4, castRadius 350) and https://wiki.leagueoflegends.com/en-us/Template:Data_Thresh/Dark_Passage ("throws his lantern to the target location over 0.5 seconds", "Thresh and the first allied champion to come near the lantern are granted a shield for 4 seconds", effect radius 350), read 2026-10-08. lanternFar 1450 and leapHold are play rules, not kit numbers (hook mark 1.5 s: Template:Data_Thresh/Death_Sentence)'}
 }
 
@@ -10880,16 +12278,44 @@ factories['tristana']=function()
 --  Q (Rapid Fire) lasts 7 s on both profiles: asset DataValues BuffDuration 7.0 (research/family-assets/Tristana and
 --   Jade_Tristana spells.json, read 2026-10-10); Normal also https://wiki.leagueoflegends.com/en-us/Tristana 2026-10-10.
 --   Only the drawn Q timer reads it.
+local D=(function()
 return {
- Tristana={id='normal',q='TristanaQ',w='TristanaW',e='TristanaE',r='TristanaR',eKind='charge',qDuration=7,
-  eBuff='tristanaecharge',eBase={60,85,110,135,160},eAD=.8,eAP=.5,eAmp=.25,eMax=4,eCrit=.4,eCritIE=.12,eCritItem=3031,eDuration=4,eSpeed=2400,eRadius=300,
-  rBase={225,275,325},rAD=.7,rAP=1,rSpeed=2000,wRange=900,
-  wDelay=.25,wSpeed=1100,wBase={70,105,140,175,210},wAD=1,wAP=.5,
+ TristanaE={
+  APRatio=.5,ActiveBADRatio=.8,ActiveBaseDamage={60,85,110,135,160},PassiveRadius=300,mSpeed=2400,
+ },
+ TristanaR={
+  APRatio=1,BaseDamage={225,275,325},mSpeed=2000,
+ },
+ TristanaQ={
+  BuffDuration=7,
+ },
+ TristanaW={
+  BaseDamage={70,105,140,175,210},castRangeDisplayOverride=900,
+ },
+ Jade_TristanaQ={
+  BuffDuration=7,
+ },
+ Jade_TristanaE={
+  ActiveAPRatio=1,ActiveDot={110,150,190,230,270},mSpeed=1400,
+ },
+ Jade_TristanaR={
+  BaseDamage={300,400,500},mSpeed=1600,
+ },
+ Jade_TristanaW={
+  APRatio=.8,BaseDamage={70,115,160,205,250},castRangeDisplayOverride=900,
+ },
+}
+end)()
+return {
+ Tristana={id='normal',q='TristanaQ',w='TristanaW',e='TristanaE',r='TristanaR',eKind='charge',qDuration=D.TristanaQ.BuffDuration,
+  eBuff='tristanaecharge',eBase=D.TristanaE.ActiveBaseDamage,eAD=D.TristanaE.ActiveBADRatio,eAP=D.TristanaE.APRatio,eAmp=.25,eMax=4,eCrit=.4,eCritIE=.12,eCritItem=3031,eDuration=4,eSpeed=D.TristanaE.mSpeed,eRadius=D.TristanaE.PassiveRadius,
+  rBase=D.TristanaR.BaseDamage,rAD=.7,rAP=D.TristanaR.APRatio,rSpeed=D.TristanaR.mSpeed,wRange=D.TristanaW.castRangeDisplayOverride,
+  wDelay=.25,wSpeed=1100,wBase=D.TristanaW.BaseDamage,wAD=1,wAP=.5,
   wSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Tristana/Rocket_Jump 2026-10-08: range 900, cast 0.25, speed 1100'},
- Jade_Tristana={id='classic',q='Jade_TristanaQ',w='Jade_TristanaW',e='Jade_TristanaE',r='Jade_TristanaR',eKind='dot',qDuration=7,
-  eBuff='Jade_TristanaE_Debuff',eBase={110,150,190,230,270},eAD=0,eAP=1,eDuration=5,eTicks=5,eSpeed=1400,
-  rBase={300,400,500},rAD=0,rAP=1.5,rSpeed=1600,rRange=550,wRange=900,
-  wDelay=.25,wSpeed=1100,wBase={70,115,160,205,250},wAD=0,wAP=.8,
+ Jade_Tristana={id='classic',q='Jade_TristanaQ',w='Jade_TristanaW',e='Jade_TristanaE',r='Jade_TristanaR',eKind='dot',qDuration=D.Jade_TristanaQ.BuffDuration,
+  eBuff='Jade_TristanaE_Debuff',eBase=D.Jade_TristanaE.ActiveDot,eAD=0,eAP=D.Jade_TristanaE.ActiveAPRatio,eDuration=5,eTicks=5,eSpeed=D.Jade_TristanaE.mSpeed,
+  rBase=D.Jade_TristanaR.BaseDamage,rAD=0,rAP=1.5,rSpeed=D.Jade_TristanaR.mSpeed,rRange=550,wRange=D.Jade_TristanaW.castRangeDisplayOverride,
+  wDelay=.25,wSpeed=1100,wBase=D.Jade_TristanaW.BaseDamage,wAD=0,wAP=D.Jade_TristanaW.APRatio,
   wSource='research/family-assets/Jade_Tristana/spells.json (range 900, cast 0.25) and https://wiki.leagueoflegends.com/en-us/League_Classic/Tristana (speed 1100) 2026-10-08'},
 }
 
@@ -10905,9 +12331,19 @@ factories['twitch']=function()
 --  dashLate: W is still worth casting at a dash end it reaches no later than this after the dash ends (controller
 --   choice; W radius 300/275 covers the first steps after landing).
 --  steal: epic monster names (Baron, Dragon, Herald, Atakhan; CombatProfiles/world.lua P.category), SRU_BaronSpawn excluded.
+local D=(function()
 return {
- Twitch={id='normal',rBonusRange=300,rDuration=6,rBonusAD={30,45,60},rMarginSpeed=4000,rWindow=3,dashLate=.3},
- Jade_Twitch={id='classic',rBonusRange=300,rDuration=7,rBonusAD={20,28,36},rMarginSpeed=4000,rWindow=3,dashLate=.3},
+ TwitchFullAutomatic={
+  BonusAD={30,45,60},BonusRange=300,Duration=6,
+ },
+ Jade_TwitchR={
+  BonusAD={20,28,36},BonusRange=300,Duration=7,
+ },
+}
+end)()
+return {
+ Twitch={id='normal',rBonusRange=D.TwitchFullAutomatic.BonusRange,rDuration=D.TwitchFullAutomatic.Duration,rBonusAD=D.TwitchFullAutomatic.BonusAD,rMarginSpeed=4000,rWindow=3,dashLate=.3},
+ Jade_Twitch={id='classic',rBonusRange=D.Jade_TwitchR.BonusRange,rDuration=D.Jade_TwitchR.Duration,rBonusAD=D.Jade_TwitchR.BonusAD,rMarginSpeed=4000,rWindow=3,dashLate=.3},
 }
 
 end
@@ -10919,50 +12355,98 @@ factories['vayne']=function()
 -- 0.5 bonus AD each. Classic Q under R: Jade_VayneQ scalingDamageUlt .40..60 (ScalingDamage .30..50 otherwise).
 -- stealth: alias lists from the installed assets (InquisitionStealth and the Q fade buff); which one the host
 -- shows after Q under R is recorded by the vayne_stealth_buffs development trace (not live-verified).
+local D=(function()
 return {
- Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qRatio={.30,.35,.40,.45,.50},qRatioUlt={.40,.45,.50,.55,.60},qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=550,eKnockback=475,
-  eBase={45,80,115,150,185},eAD=.5,eTerrain={45,80,115,150,185},eTerrainAD=.5},
- Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qRatio={.75,.85,.95,1.05,1.15},qAP=.5,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=550,eKnockback=475,
-  eBase={50,85,120,155,190},eAD=.5,eTerrain={75,127.5,180,232.5,285},eTerrainAD=.75},
+ VayneCondemnMissile={
+  mSpeed=2200,
+ },
+ VayneCondemn={
+  Damage={50,85,120,155,190},KnockbackDistance=475,castRange=550,
+ },
+ VayneTumble={
+  APRatio=.5,TotalADRatio={.75,.85,.95,1.05,1.15},
+ },
+ Jade_VayneE={
+  FirstHitDamage={45,80,115,150,185},SecondHitDamage={45,80,115,150,185},castRange=550,
+ },
+ Jade_VayneQ_Bonus={
+  ScalingDamage={.3,.35,.4,.45,.5},scalingDamageUlt={.4,.45,.5,.55,.6},
+ },
+}
+end)()
+-- Condemn's stationary cast time is declared to the shared cast-time gate.
+return {
+ Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
+  eBase=D.Jade_VayneE.FirstHitDamage,eAD=.5,eTerrain=D.Jade_VayneE.SecondHitDamage,eTerrainAD=.5,eCastTime=.25},
+ Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qRatio=D.VayneTumble.TotalADRatio,qAP=D.VayneTumble.APRatio,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=D.VayneCondemn.castRange,eKnockback=D.VayneCondemn.KnockbackDistance,
+  eBase=D.VayneCondemn.Damage,eAD=.5,eTerrain={75,127.5,180,232.5,285},eTerrainAD=.75,eCastTime=.25},
 }
 
 end
 factories['viktor']=function()
 -- Shared Viktor mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ ViktorE={
+  AftershockAPRatio=.8,BaseDamageLaser={70,110,150,190,230},Delay=1,LaserAPRatio=.5,missileSpeed=1050,
+ },
+ ViktorW={
+  Size=275,StunDuration=1.5,castFrameSeconds=.3,castRange=800,
+ },
+ ViktorR={
+  InitialBurstBaseDamage={100,175,250},StormRadius=325,SubsequentBurstAPRaio=.35,
+ },
+ ViktorQ={
+  BuffDuration=2.5,MissileDamage={60,75,90,105,120},ShieldAPRatio=.2,castRange=600,mSpeed=2000,
+ },
+}
+end)()
 return {Viktor={id='normal',q='ViktorQ',w='ViktorW',e='ViktorE',r='ViktorR',r2='ViktorRGuide',
- qBase={60,75,90,105,120},qAP=.4,qHit={20,45,70,95,120},qHitAP=.5,qRange=600,qSpeed=2000,qDelay=.25,qLife=2.5,
- shieldMin=40,shieldMax=140,shieldAP=.25,shieldAug=1.6,qMS=.3,
- -- Q shield offered to Evade. Amount "40 - 140 (based on level) (+ 25% AP)" for 2.5 seconds, cast time 0.25, target
- -- range 600, augment "+60%" (64 - 224 +40% AP): https://wiki.leagueoflegends.com/en-us/Template:Data_Viktor/Siphon_Power
- -- and https://wiki.leagueoflegends.com/en-us/Viktor, read 2026-10-08; the installed asset agrees (ShieldAPRatio .25,
- -- AugmentShieldBonus, BuffDuration 2.5, level calculation 40..140). The page words the shield as part of the cast
- -- ("throws a draining device at the target enemy ... grants himself a shield") and only the augment's movement speed
- -- as "after the device hits", so the shield is taken as granted when the 0.25 s cast completes. No per-level table is
- -- published: the offer promises the level-1 amount (40 + 25% AP, x1.6 augmented), a lower bound at every level.
- shieldDuration=2.5,
- shieldSource='Viktor Q: https://wiki.leagueoflegends.com/en-us/Template:Data_Viktor/Siphon_Power and https://wiki.leagueoflegends.com/en-us/Viktor read 2026-10-08 (shield 40 - 140 by level + 25% AP for 2.5 seconds, cast time 0.25, target range 600, augmented +60%) and installed asset research/family-assets/Viktor/spells.json (ShieldAPRatio, AugmentShieldBonus, BuffDuration, shield calculation 40..140); offered amount is the level-1 lower bound; shield taken as granted at the end of the cast',
+ qBase=D.ViktorQ.MissileDamage,qAP=.4,qHit={20,45,70,95,120},qHitAP=.5,qRange=D.ViktorQ.castRange,qSpeed=D.ViktorQ.mSpeed,qDelay=.25,qLife=2.5,
+ shieldMin=30,shieldMax=130,shieldAP=D.ViktorQ.ShieldAPRatio,shieldAug=1.6,qMS=.3,
+ -- Current installed Q shield: 30..130 by level plus 20% AP, lasting 2.5 s.
+ -- The offer uses the level-1 lower bound and the existing 60% augment multiplier.
+ -- Current source pins and patch notes are in implementation/family/current-patch.json.
+ shieldDuration=D.ViktorQ.BuffDuration,
+ shieldSource='Current installed ViktorQ ShieldAPRatio, AugmentShieldBonus, BuffDuration and level calculation; implementation/family/current-patch.json. Offered amount is the level-1 lower bound, granted at cast completion.',
  -- Wiki figures that differ from the installed asset (asset kept, it is the matching profile; not measured live):
  -- E width 90 and "range 500" (asset: missile radius 80, LaserRange 700), W effect radius 340, cast 0.25, arms after
  -- 0.75 s (asset: Size 275; the 0.3 delay below is a prediction candidate), read 2026-10-08.
- eBase={70,110,150,190,230},eAP=.5,eAfter={20,50,80,110,140},eAfterAP=.8,eAfterDelay=1,eMinion=.5,
- eStart=525,eLength=700,eRadius=80,eSpeed=1050,eDelay=0,
- wRange=800,wRadius=275,wDelay=.3,wDwell=1.25,wStun=1.5,wLife=4,wAugSlow=.2,
+ eBase=D.ViktorE.BaseDamageLaser,eAP=D.ViktorE.LaserAPRatio,eAfter={20,50,80,110,140},eAfterAP=D.ViktorE.AftershockAPRatio,eAfterDelay=D.ViktorE.Delay,eMinion=.5,
+ eStart=525,eLength=700,eRadius=80,eSpeed=D.ViktorE.missileSpeed,eDelay=0,
+ wRange=D.ViktorW.castRange,wRadius=D.ViktorW.Size,wDelay=D.ViktorW.castFrameSeconds,wDwell=1.25,wStun=D.ViktorW.StunDuration,wLife=4,wAugSlow=.2,
  -- Ranking 2026-10-10 (dossier Viktor-9/12, wiki Viktor V26.16 read 2026-10-10):
  --  wArm: W cast 0.25 + activation 0.75; the field is predicted where the target is once it is active (the old
  --   wDelay .3 predicted long before). The wiki radius 340 is not used for counting until the viktor_w_field dev trace
  --   settles it against the asset Size 275 (275 is the conservative of the two).
  --  qHitAD: Q discharge 20-120 (+100% AD) (+50% AP) magic; the asset row lacks the AD term.
  wArm=1,qHitAD=1,
- rBase={100,175,250},rAP=.5,rTick={65,105,145},rTickAP=.35,rRange=700,rGuide=20000,rRadius=325,rLife=6.5,rCadence=1,rMaxTicks=6,
+ rBase=D.ViktorR.InitialBurstBaseDamage,rAP=.5,rTick={65,105,145},rTickAP=D.ViktorR.SubsequentBurstAPRaio,rRange=700,rGuide=20000,rRadius=D.ViktorR.StormRadius,rLife=6.5,rCadence=1,rMaxTicks=6,
  rGrow=.4,rMaxGrowth=6,rExtension=3,rFast=275,rSlow=200,
  fragments='viktorpassivecount',qEmpower='viktorqbuff',qReturn='viktorqreturn',rTimer='viktorrtimer',rMark='viktorrguide'}}
 
 end
 factories['xerath']=function()
 -- Shared Normal Xerath data; no Classic mechanics are inferred.
+local D=(function()
+return {
+ XerathLocusOfPower2={
+  BaseDamage={170,220,270},
+ },
+ XerathArcanopulseChargeUp={
+  BaseDamage={70,110,150,190,230},
+ },
+ XerathMageSpear={
+  BaseDamage={70,100,130,160,190},
+ },
+ XerathArcaneBarrage2={
+  BaseDamage={50,85,120,155,190},
+ },
+}
+end)()
 return {
  Xerath={id='normal',q='XerathArcanopulseChargeUp',q2='XerathArcanopulse2',w='XerathArcaneBarrage2',e='XerathMageSpear',r='XerathLocusOfPower2',shot='XerathRMissileWrapper',pulse='XerathLocusPulse',
- qBase={70,110,150,190,230},wBase={50,85,120,155,190},eBase={70,100,130,160,190},rBase={170,220,270},shots={4,5,6},
+ qBase=D.XerathArcanopulseChargeUp.BaseDamage,wBase=D.XerathArcaneBarrage2.BaseDamage,eBase=D.XerathMageSpear.BaseDamage,rBase=D.XerathLocusOfPower2.BaseDamage,shots={4,5,6},
  -- Peel distance for E on an enemy standing next to Xerath: a controller choice (reference lead zgXerath:150-153), not a game value.
  peelRange=350,
  -- Q charge, conservative side of a conflict (xerath-provenance.json q.conflict): asset/ddragon 750->1500 over 1.5 s
@@ -10985,12 +12469,25 @@ return {
 end
 factories['yone']=function()
 -- Shared Normal Yone data; no Classic mechanics are inferred.
+local D=(function()
 return {
- Yone={id='normal',q='YoneQ',q3='YoneQ3',w='YoneW',e='YoneE',r='YoneR',qBase={25,50,75,100,125},wBase={10,20,30,40,50},wHealth={.08,.09,.10,.11,.12},rBase={200,400,600},
+ YoneQ={
+  ADRatio=1.05,BaseDamage={25,50,75,100,125},Q3DashSpeed=1500,Q3KnockupDuration=.75,QBaseCastTime=.35,
+ },
+ YoneR={
+  ADRatio=.8,BaseDamage={200,400,600},
+ },
+ YoneW={
+  BaseDamage={10,20,30,40,50},ShieldDuration=1.5,ShieldbADRatio=.65,castConeDistance=600,
+ },
+}
+end)()
+return {
+ Yone={id='normal',q='YoneQ',q3='YoneQ3',w='YoneW',e='YoneE',r='YoneR',qAD=D.YoneQ.ADRatio,qBase=D.YoneQ.BaseDamage,wBase=D.YoneW.BaseDamage,wHealth={.08,.09,.10,.11,.12},rBase=D.YoneR.BaseDamage,
  -- W reach 600: https://wiki.leagueoflegends.com/en-us/Template:Data_Yone/Spirit_Cleave ("EFFECT RADIUS: 600", angle 80), read 2026-10-08.
  -- The installed asset lists YoneW castRange 700 (a cast range, what the controller used before); the cone itself is
  -- 600 on the wiki and in the reference script. The shorter value only refuses casts between 600 and 700.
- wRange=600,
+ wRange=D.YoneW.castConeDistance,
  -- W against monsters: the same page gives "a maximum threshold of 150 - 340 (based on level) against monsters" with no
  -- per-level table, so only the level-1 end is used: a lower bound of the damage at every level. The minion "minimum
  -- threshold of 40 - 490 (based on level)" is NOT applied: the page does not say whether it replaces the 25% minion
@@ -11009,7 +12506,7 @@ return {
  -- half physical half magic, cast 0.75, range 1000, width 225, blink 200 beyond the last champion, knock-up 0.75 s.
  -- yone-provenance.json recorded the asset ratio as "total_ad_ratio 0.8"; the wiki and the reference script both say bonus
  -- AD, which is also the lower figure, so kill estimates use bonus AD.
- rBonusAD=.8,
+ rBonusAD=D.YoneR.ADRatio,
  -- Q3: knock-up 0.75 s (Template:Data_Yone/Mortal_Steel, read 2026-10-08). q3Reach 950 is the installed asset's
  -- YoneQ3Missile castRange (the distance the whirlwind's centre travels; yone-provenance.json q3.projectile_range).
  -- q3ReachUpper 1050 is the same asset's YoneQ3 targeter line length (the drawn indicator, with a 100-unit locator
@@ -11021,9 +12518,9 @@ return {
  q3Reach=950,q3ReachUpper=1050,
  -- q3Knockup is the buff name the reference script reads; not confirmed live, so the controller also accepts any
  -- knock-up or other hard crowd control read from the buff type.
- q3KnockupTime=.75,q3Knockup='yoneq3knockup',
+ q3KnockupTime=D.YoneQ.Q3KnockupDuration,q3Knockup='yoneq3knockup',
  -- Q3 dash offered to Evade: fixed 450 at 1500, cast 0.35 at no bonus attack speed (the longest cast).
- q3Dash=450,q3DashSpeed=1500,q3Cast=.35,
+ q3Dash=450,q3DashSpeed=D.YoneQ.Q3DashSpeed,q3Cast=D.YoneQ.QBaseCastTime,
  -- E: https://wiki.leagueoflegends.com/en-us/Template:Data_Yone/Soul_Unbound (revision 2026-08-05, read 2026-10-10):
  -- the return repeats 25/27.5/30/32.5/35% of the post-mitigation damage Yone's attacks and abilities dealt to the
  -- marked champion as true damage; damage to shields is not stored; spirit 5 s, recast after 0.5 s.
@@ -11031,7 +12528,7 @@ return {
  -- W shield: wiki Yone V26.19 (read 2026-10-10): 40 - 95.88 by level (+65% bonus AD) for 1.5 s; no per-level table, so
  -- the level-1 end is the lower bound. W cast 0.5 at no bonus attack speed, 0.25 at the 50% cap this controller uses.
  -- Not verified on the host (yone-provenance shield_gate: installed .75 override, hit attribution): no Evade offer yet.
- wShieldBase=40,wShieldBonusAD=.65,wShieldDuration=1.5,wCastLong=.5,wCastShort=.25,wShieldVerified=false,
+ wShieldBase=40,wShieldBonusAD=D.YoneW.ShieldbADRatio,wShieldDuration=D.YoneW.ShieldDuration,wCastLong=.5,wCastShort=.25,wShieldVerified=false,
  wShieldSource='Yone W shield: https://wiki.leagueoflegends.com/en-us/Yone (V26.19, read 2026-10-10) 40 - 95.88 by level (+65% bonus AD), 1.5 s; level-1 base used as the lower bound',
  mobilitySource='Yone Q3 dash: installed asset research/family-assets/Yone (yone-provenance.json q3.dash_distance 450, q3.dash_speed 1500, q.base_windup_seconds 0.35); the wiki page Template:Data_Yone/Mortal_Steel confirms cast 0.35 - 0.175 and "dashes a fixed distance" but states neither the distance nor the dash speed (read 2026-10-08)'}
 }
@@ -11039,8 +12536,24 @@ return {
 end
 factories['zed']=function()
 -- Shared Zed mechanics data. Values preserved from the maintained controller.
+local D=(function()
+return {
+ ZedW={
+  RecastRange=2000,SwapTimeLimit=5.25,castRangeDisplayOverride=650,
+ },
+ ZedR={
+  RDeathMarkDuration=3,RShadowDurationDisplayed=7.5,castRange=625,
+ },
+ ZedQ={
+  BaseDamage={80,120,160,200,240},BonusADRatio=1,castRangeDisplayOverride=900,mLineWidth=45,
+ },
+ ZedE={
+  ADRatio=.7,BaseDamage={70,92.5,115,137.5,160},ShadowRadius=290,
+ },
+}
+end)()
 return {Zed={id='normal',q='ZedQ',w='ZedW',w2='ZedW2',e='ZedE',r='ZedR',r2='ZedR2',mark='ZedRDeathMark',wBuff='ZedWHandlerBuffName',rBuff='ZedR2',passiveCD='ZedPassiveCD',
- qRange=900,qRadius=45,qBlockRadius=50,qSpeed=1700,qDelay=.25,qBase={80,120,160,200,240},qAD=1,qPass=.6,
+ qRange=D.ZedQ.castRangeDisplayOverride,qRadius=D.ZedQ.mLineWidth,qBlockRadius=50,qSpeed=1700,qDelay=.25,qBase=D.ZedQ.BaseDamage,qAD=D.ZedQ.BonusADRatio,qPass=.6,
  -- Death Mark as offered to Evade: untargetable from the cast (no cast time) through a 0.6 s delay and a 0.35 s dash, then
  -- Zed stands 125 units beyond the target (Template:Data_Zed/Death_Mark, read 2026-10-08). The sum .95 s is ours.
  rUntargetable=.95,rBehind=125,rCast=0,rEvadeSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Zed/Death_Mark target range 625, no cast time, untargetable 0.6 s delay + 0.35 s dash, lands 125 beyond the target; read 2026-10-08',
@@ -11053,9 +12566,9 @@ return {Zed={id='normal',q='ZedQ',w='ZedW',w2='ZedW2',e='ZedE',r='ZedR',r2='ZedR
  -- time; wCast .07 is a conservative bound from the asset animation (ZedW castFrame 1.98 at 30 fps = .066 s).
  -- wObserve .15 is the bound of our own shadow discovery job (35 ms interval, 150 ms maximum delay), not a game number.
  wCast=.07,wObserve=.15,wPlaceSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Zed/Living_Shadow range 650 (minimum 325), cast time none, recast none; asset ZedWMissile missileSpeed 2500 and ZedW castFrame 1.98 (bound .07 s); read 2026-10-10',
- wMin=325,wSpeed=2500,wRange=650,wSwapRange=2000,wDuration=5.25,rRange=625,rDuration=7.5,rRecast=.5,markDuration=3,rAmp={.25,.4,.55},rAD=1,
+ wMin=325,wSpeed=2500,wRange=D.ZedW.castRangeDisplayOverride,wSwapRange=D.ZedW.RecastRange,wDuration=D.ZedW.SwapTimeLimit,rRange=D.ZedR.castRange,rDuration=D.ZedR.RShadowDurationDisplayed,rRecast=.5,markDuration=D.ZedR.RDeathMarkDuration,rAmp={.25,.4,.55},rAD=1,
  -- E: asset ZedE castRadius 290, wiki lists 315 and 290; the caster uses 290 until the zed_e_reach trace measures it.
- eRadius=290,eShadowRadius=290,eBase={70,92.5,115,137.5,160},eAD=.7,
+ eRadius=D.ZedE.ShadowRadius,eShadowRadius=D.ZedE.ShadowRadius,eBase=D.ZedE.BaseDamage,eAD=D.ZedE.ADRatio,
  passiveThreshold=.5,passiveLevels={1,7,17},passiveRatios={.05,.075,.10},monsterMod=.75,monsterCap=175,passiveDuration=10}}
 
 end
@@ -12266,7 +13779,14 @@ return function(input, clock, selectCandidate)
         input.ResolutionPass=(input.ResolutionPass or 0)+1
         local ok,err=pcall(function()
             self:Prune()
-            if not input:Available() or input.Uncertain then return end
+            -- waitBlock: the last reason a queued action was not dispatched (diagnostics only).
+            if not input:Available() or input.Uncertain then
+                if #self.queue>0 then
+                    local why=input.Uncertain and 'input_uncertain' or input:UnavailableReason() or 'input_unavailable'
+                    for _,a in ipairs(self.queue) do a.record.waitBlock=why end
+                end
+                return
+            end
             local candidates={}
             for _,a in ipairs(self.queue) do
                 local s=self.scopes[a.scope]
@@ -12291,6 +13811,8 @@ return function(input, clock, selectCandidate)
                     and (not ready or not dependency or blocked) then
                     deferHandoff(previous,'waiting without cursor reservation')
                 end
+                a.record.waitBlock=not ready and 'not_ready' or not dependency and 'dependency' or retryBlocked and 'retry_backoff'
+                    or blocked and 'keys_or_position_backoff' or a.effective<(minimum or 1) and 'urgent_pass' or 'not_selected'
                 if not a.cancelled and ready and dependency and not blocked and a.effective>=(minimum or 1) then a.selectionLast=s.last;candidates[#candidates+1]=a end
             end
             local function pollPrepared()
@@ -12304,7 +13826,7 @@ return function(input, clock, selectCandidate)
             local a,index=selectCandidate(candidates)
             candidates[index]=candidates[#candidates];candidates[#candidates]=nil
             local r=a.record;local previous=input.Active
-            if previous and previous.followup==r and clock()<(previous.holdUntil or 0) then return end
+            if previous and previous.followup==r and clock()<(previous.holdUntil or 0) then r.waitBlock='predecessor_hold';return end
             local chain=previous and a.type~='move' and a.handoff and a.dependency==previous.id and (previous.owner==r.owner
                     or a.dependencyGrant and dependencyGrantValid(a.dependencyGrant,a.scope,a.dependency,a.owner))
                 and (not previous.followup or previous.followup==r) and (previous.chainDepth or 0)<1
@@ -12319,16 +13841,18 @@ return function(input, clock, selectCandidate)
                 if not previous.sentAt and a.effective>(running and running.effective or 2) then
                     input:release('preempted before send');if running then abort(running,'preempted') end
                 else pollPrepared() end
+                r.waitBlock='input_active'
                 return
             end
-            if not chain and input.Step>0 then return end
-            if clock()<input.NotBefore and not chain then return end
-            if input:InputsBlocked(r) then return end
+            if not chain and input.Step>0 then r.waitBlock='cursor_step';return end
+            if clock()<input.NotBefore and not chain then r.waitBlock='not_before';return end
+            if input:InputsBlocked(r) then r.waitBlock='keys_held';return end
             if chain then
                 r.returnTarget=copy(previous.returnTarget or previous.playerScreen);r.rootAt=previous.rootAt
                 -- Budget is assigned at handoff in dispatch (own positioning window).
                 r.budgetEnd=nil;r.predecessorID=previous.id;r.chainDepth=(previous.chainDepth or 0)+1
             end
+            r.waitBlock=nil
             self.turn=self.turn+1;self.scopes[a.scope].last=self.turn;a.dispatched=true
             local worked,result=pcall(function()
                 if a.type=='attack' then
@@ -13047,6 +14571,21 @@ if self.gates[token]then self.gates[token]=nil;return true end;return false end
         -- ready/dependencies retain their separate waiting semantics below.
         local permitted,refusal=self:ContextValid(q)
         if not permitted then return nil,refusal end
+        -- Own cast time (`castTime`, seconds the cast keeps the hero in place): a cooperating client waits
+        -- while Evade forecasts that standing for it turns the current route into a lethal or hard-control
+        -- hit that walking avoids (Evade:CastAllowed). Waiting, never a cancellation: the action keeps its
+        -- deadline and `evadeHeld` names the reason. Evade's own answers (evadeCompatible) are not asked.
+        if self.evadePolicy and not q.evadeCompatible and type(q.castTime)=='number'and q.castTime>0 and q.castTime<=2.5 then
+            local prior=q.ready
+            q.ready=function()
+                if prior and not call(prior)then return false end
+                local evade=sdk.Evade
+                if not evade or type(evade.CastAllowed)~='function'then q.evadeHeld=nil;return true end
+                local ok,allowed,why=pcall(evade.CastAllowed,evade,q.castTime,q.owner,q.key,q.id)
+                if not ok or allowed~=false then q.evadeHeld=nil;return true end
+                q.evadeHeld=why or 'evade_cast_time';return false
+            end
+        end
         if q.group then
             local group=self.groups[q.group]
             if not group or group.owner~=q.owner or group.expires<=self:Now()then return nil,'invalid_group'end
@@ -13151,7 +14690,7 @@ if self.gates[token]then self.gates[token]=nil;return true end;return false end
                 local ready=q.dependencyState=='mechanical' and p.mechanical or q.dependencyState=='effect' and p.effect or not q.dependencyState and p.sentAt or q.dependencyState=='sent' and p.sentAt
                 if not ready then return false,'dependency_waiting'end
             end
-            if q.ready and not call(q.ready)then return false,'not_ready'end
+            if q.ready and not call(q.ready)then return false,q.evadeHeld or 'not_ready'end
             return call(mechanical,resolved)
         end
         if sdk.ChampionCore and sdk.ChampionCore.active then sdk.ChampionCore.active:Invalidate()end
@@ -14260,6 +15799,7 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
  local function finite(v)return type(v)=='number'and v==v and math.abs(v)<math.huge end
  local function clamp(v,a,b)return math.max(a,math.min(b,v))end
  local function live(fn)local ok,v=pcall(fn);return ok and v==true end
+ local function project(x,y,z)return g.Vector(x,y,z):To2D()end
  local function overlap(a,b)return a.x<b.x+b.w and b.x<a.x+a.w and a.y<b.y+b.h and b.y<a.y+a.h end
  -- Frame bookkeeping is reused between frames; comparators are hoisted so a
  -- frame does not allocate closures or lists that only live for that frame.
@@ -14369,6 +15909,30 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
    end
   end
   return ax+dx*lo,ay+dy*lo,ax+dx*hi,ay+dy*hi
+ end
+ -- False only when a native world circle (any width up to 2 px) is provably
+ -- outside the viewport. A circle whose centre projects on screen is visible;
+ -- otherwise the circle lies in its world bounding square, which projects
+ -- inside the hull of its four projected corners. Radii above 1000 are never
+ -- culled: a corner that far out could fall behind the camera, where the
+ -- projection mirrors.
+ local function screen(x,y,z)
+  local ok,q=pcall(project,x,y,z)
+  if ok and q and finite(q.x)and finite(q.y)and math.abs(q.x)<1000000 and math.abs(q.y)<1000000 then return q.x,q.y end
+ end
+ function O:CircleVisible(x,y,z,r)
+  if not finite(x)or not finite(z)or not finite(r)then return false end
+  local w,h=self:Viewport();local metrics=self.metrics
+  metrics.projections=metrics.projections+1
+  local cx,cy=screen(x,y,z)
+  if not cx or cx>=0 and cy>=0 and cx<w and cy<h or r>1000 then return true end
+  local lx,ly,hx,hy=cx,cy,cx,cy
+  for i=1,4 do
+   metrics.projections=metrics.projections+1
+   local px,py=screen(i<=2 and x-r or x+r,y,(i==1 or i==3)and z-r or z+r);if not px then return true end
+   if px<lx then lx=px end;if px>hx then hx=px end;if py<ly then ly=py end;if py>hy then hy=py end
+  end
+  return hx>=-2 and hy>=-2 and lx<=w+1 and ly<=h+1
  end
  function O:Reserve(id,x,y,w,h)
   local list=self.reservations;local n=#list
@@ -15008,7 +16572,7 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
  function O:Dispatch(command,ranges,checkedScopes)
    local a=command.args;local draw=checkedScopes[command.scope]and not command.scope.closed and self.scopes[command.scope.owner]==command.scope
    if command.kind=='Line'then local x,y,bx,by=self:Clip(a[1],a[2],a[3],a[4]);if x then a[1],a[2],a[3],a[4]=x,y,bx,by else draw=false end
-   elseif command.kind=='Circle'then local p=a[1];if p and finite(p.x)and finite(p.z)and finite(a[2])then
+   elseif command.kind=='Circle'then local p=a[1];if p and finite(p.x)and finite(p.z)and finite(a[2])and self:CircleVisible(p.x,p.y or 0,p.z,a[2])then
     local x,z,radius=tenth(p.x),tenth(p.z),tenth(a[2]);local n=ranges.n
     for i=1,n,3 do if ranges[i]==x and ranges[i+1]==z and ranges[i+2]==radius then draw=false;break end end
     if draw then ranges[n+1]=x;ranges[n+2]=z;ranges[n+3]=radius;ranges.n=n+3 end

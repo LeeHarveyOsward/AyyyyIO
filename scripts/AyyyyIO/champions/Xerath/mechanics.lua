@@ -1,9 +1,25 @@
 return function(require)
 return function()
 -- Shared Normal Xerath data; no Classic mechanics are inferred.
+local D=(function()
+return {
+ XerathLocusOfPower2={
+  BaseDamage={170,220,270},
+ },
+ XerathArcanopulseChargeUp={
+  BaseDamage={70,110,150,190,230},
+ },
+ XerathMageSpear={
+  BaseDamage={70,100,130,160,190},
+ },
+ XerathArcaneBarrage2={
+  BaseDamage={50,85,120,155,190},
+ },
+}
+end)()
 return {
  Xerath={id='normal',q='XerathArcanopulseChargeUp',q2='XerathArcanopulse2',w='XerathArcaneBarrage2',e='XerathMageSpear',r='XerathLocusOfPower2',shot='XerathRMissileWrapper',pulse='XerathLocusPulse',
- qBase={70,110,150,190,230},wBase={50,85,120,155,190},eBase={70,100,130,160,190},rBase={170,220,270},shots={4,5,6},
+ qBase=D.XerathArcanopulseChargeUp.BaseDamage,wBase=D.XerathArcaneBarrage2.BaseDamage,eBase=D.XerathMageSpear.BaseDamage,rBase=D.XerathLocusOfPower2.BaseDamage,shots={4,5,6},
  -- Peel distance for E on an enemy standing next to Xerath: a controller choice (reference lead zgXerath:150-153), not a game value.
  peelRange=350,
  -- Q charge, conservative side of a conflict (xerath-provenance.json q.conflict): asset/ddragon 750->1500 over 1.5 s

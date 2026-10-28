@@ -2,9 +2,15 @@ return function(require)
 -- World x/z, distances in game units, times in seconds. No host calls.
 local G={}
 local ProjectileMotion=require('CombatProfiles.projectile_motion')
-local sqrt,abs,min,max=math.sqrt,math.abs,math.min,math.max
-function G.finite(n)return type(n)=='number' and n==n and abs(n)<math.huge end
-function G.point(p)return p and G.finite(p.x) and G.finite(p.z) and (p.y==nil or G.finite(p.y))end
+local sqrt,abs,min,max,cos,sin,huge=math.sqrt,math.abs,math.min,math.max,math.cos,math.sin,math.huge
+-- Called for every interval, route and sample check: a local function over local upvalues.
+local function finite(n)return type(n)=='number' and n==n and abs(n)<huge end
+G.finite=finite
+-- Scratch route point for distance samples that are consumed at once (G.distance keeps no reference).
+local probe={x=0,y=0,z=0}
+local function probeAt(a,b,t)probe.x=a.x+(b.x-a.x)*t;probe.y=a.y or 0;probe.z=a.z+(b.z-a.z)*t;return probe end
+G.probe=probeAt
+function G.point(p)return p and finite(p.x) and finite(p.z) and (p.y==nil or finite(p.y))end
 function G.copy(p)return p and {x=p.x,y=p.y or 0,z=p.z}end
 function G.dist(a,b)return sqrt((a.x-b.x)^2+(a.z-b.z)^2)end
 function G.lerp(a,b,t)return {x=a.x+(b.x-a.x)*t,y=a.y or 0,z=a.z+(b.z-a.z)*t}end
@@ -15,13 +21,28 @@ function G.segment(p,a,b)
     return sqrt(qx*qx+qz*qz),t
 end
 function G.direction(a,b)
-    local d=G.dist(a,b);if d<.00001 then return 1,0 end
+    local d=sqrt((a.x-b.x)^2+(a.z-b.z)^2);if d<.00001 then return 1,0 end
     return (b.x-a.x)/d,(b.z-a.z)/d
 end
+-- A speed step (`s.speedStep={at=units from the origin,speed=later speed}`) splits one
+-- constant-speed flight in two constant-speed phases (catalogue `speedStep`).
+local function stepTime(s)local step=s.speedStep;return step and step.at/s.speed end
+G.stepTime=stepTime
 function G.travel(s,dt)
+    local step=s.speedStep
+    if step then
+        dt=max(0,dt);local first=step.at/s.speed
+        if dt<=first then return s.speed*dt end
+        return step.at+step.speed*(dt-first)
+    end
     return ProjectileMotion.Travel(s,dt)
 end
 function G.travelTime(s,distance)
+    local step=s.speedStep
+    if step then
+        if distance<=step.at then return max(0,distance)/s.speed end
+        return step.at/s.speed+(distance-step.at)/step.speed
+    end
     return ProjectileMotion.Time(s,distance)
 end
 function G.travelBounds(s,dt)
@@ -106,7 +127,7 @@ function G.distance(s,p,t)
             length=min(length,max(0,(t-s.emissionStart)*s.emissionSpeed))
             inner=max(0,(t-s.emissionEnd)*s.emissionSpeed)
         end
-        local c,si=math.cos(half),math.sin(half)
+        local c,si=cos(half),sin(half)
   -- Reflect onto the positive side of the axis. Of the symmetric radial
   -- edges, that side is always at least as close; no endpoint tables needed.
   local projection=max(0,min(length,forward*c+side*si))
@@ -133,15 +154,22 @@ function G.distance(s,p,t)
 end
 local shapes={circle=true,missile=true,line=true,rectangle=true,cone=true,ring=true,arc=true}
 function G.valid(s)
-    if type(s)~='table' or not G.finite(s.starts) or not G.finite(s.ends) or s.ends<s.starts then return false,'invalid_time' end
+    if type(s)~='table' or not finite(s.starts) or not finite(s.ends) or s.ends<s.starts then return false,'invalid_time' end
     if s.radiusTransition~=nil then
         local r=s.radiusTransition
         if type(r)~='table'or s.shape~='circle'or s.speed or s.acceleration
-            or not G.finite(r.initial)or r.initial<0 or not G.finite(r.final)or r.final<0
-            or not G.finite(r.starts)or not G.finite(r.ends)or r.ends<=r.starts
-            or not G.finite(r.ends-r.starts)or s.radius~=max(r.initial,r.final)
-            or not G.finite((r.final-r.initial)/(r.ends-r.starts))then
+            or not finite(r.initial)or r.initial<0 or not finite(r.final)or r.final<0
+            or not finite(r.starts)or not finite(r.ends)or r.ends<=r.starts
+            or not finite(r.ends-r.starts)or s.radius~=max(r.initial,r.final)
+            or not finite((r.final-r.initial)/(r.ends-r.starts))then
             return false,'invalid_radius_transition'
+        end
+    end
+    if s.speedStep~=nil then
+        local step=s.speedStep
+        if type(step)~='table'or s.shape~='missile'or s.motion or s.speedUncertain or(s.acceleration or 0)~=0
+            or not finite(s.speed)or s.speed<=0 or not finite(step.at)or step.at<0 or not finite(step.speed)or step.speed<=0 then
+            return false,'invalid_speed_step'
         end
     end
     if s.contactPossible~=nil and(s.contactPossible~=true or s.shape~='circle'or not s.radiusTransition)then
@@ -152,10 +180,10 @@ function G.valid(s)
         or s.damage~=nil or s.repeatInterval~=nil then return false,'invalid_potential_emissions'end
     end
     if s.emissionSpeed~=nil or s.emissionStart~=nil or s.emissionEnd~=nil then
-        if s.shape~='cone'or s.motion or s.speed or not G.finite(s.length)or s.length<=0
-            or not G.finite(s.halfAngle)or s.halfAngle<=0 or s.halfAngle>=math.pi/2
-            or not G.finite(s.emissionSpeed)or s.emissionSpeed<=0
-            or not G.finite(s.emissionStart)or not G.finite(s.emissionEnd)
+        if s.shape~='cone'or s.motion or s.speed or not finite(s.length)or s.length<=0
+            or not finite(s.halfAngle)or s.halfAngle<=0 or s.halfAngle>=math.pi/2
+            or not finite(s.emissionSpeed)or s.emissionSpeed<=0
+            or not finite(s.emissionStart)or not finite(s.emissionEnd)
             or s.emissionEnd<s.emissionStart or s.starts~=s.emissionStart
             or math.abs(s.ends-(s.emissionEnd+s.length/s.emissionSpeed))>1e-6 then
             return false,'invalid_emission_envelope'
@@ -165,8 +193,8 @@ function G.valid(s)
         local origin=s.origin or s.a;local launch=s.launch or s.starts
         if s.speedUncertain~=true or s.shape~='missile' or s.motion or s.motionUnknown
             or s.acceleration~=nil or not G.point(origin)or not G.point(s.b)
-            or not G.finite(s.minSpeed)or not G.finite(s.maxSpeed)
-            or s.minSpeed<=0 or s.maxSpeed<s.minSpeed or not G.finite(launch)
+            or not finite(s.minSpeed)or not finite(s.maxSpeed)
+            or s.minSpeed<=0 or s.maxSpeed<s.minSpeed or not finite(launch)
             or s.starts<launch
             or s.ends>launch+G.dist(origin,s.b)/s.minSpeed+1e-6
             or s.persistent or s.repeatInterval or s.potentialDamage then
@@ -174,7 +202,7 @@ function G.valid(s)
         end
     end
     if s.shape=='targeted' then
-        if s.impactLatest~=nil and (not G.finite(s.impactLatest)or s.impactLatest<s.starts or s.impactLatest>s.ends)then
+        if s.impactLatest~=nil and (not finite(s.impactLatest)or s.impactLatest<s.starts or s.impactLatest>s.ends)then
             return false,'invalid_impact_interval'
         end
         return s.targetID~=nil,'missing_target'
@@ -187,25 +215,25 @@ function G.valid(s)
     if not G.point(s.origin or s.a) then return false,'invalid_origin'end
        if not shapes[s.shape] then return false,'unknown_shape'end
     if s.motionUnknown and s.shape~='missile'then return false,'invalid_uncertain_motion'end
-    if not G.finite(s.radius) or s.radius<0 then return false,'invalid_radius'end
+    if not finite(s.radius) or s.radius<0 then return false,'invalid_radius'end
     if s.shape~='circle' and s.shape~='ring' and not G.point(s.b) then return false,'invalid_endpoint'end
     if (s.shape=='cone'or s.shape=='rectangle')and s.length~=nil
-  and (not G.finite(s.length)or s.length<0)then return false,'invalid_length'end
+  and (not finite(s.length)or s.length<0)then return false,'invalid_length'end
  if s.shape=='cone' or s.shape=='arc' then
-        if not G.finite(s.halfAngle) or s.halfAngle<=0 or s.halfAngle>math.pi then return false,'invalid_angle'end
+        if not finite(s.halfAngle) or s.halfAngle<=0 or s.halfAngle>math.pi then return false,'invalid_angle'end
     end
-    if s.shape=='arc' and (not G.finite(s.arcRadius) or s.arcRadius<0)then return false,'invalid_arc'end
-    if s.shape=='ring' and (not G.finite(s.innerRadius) or s.innerRadius<0 or s.innerRadius>s.radius)then return false,'invalid_ring'end
-    if s.speed~=nil and (not G.finite(s.speed) or s.speed<0)then return false,'invalid_speed'end
-    if s.acceleration~=nil and not G.finite(s.acceleration) then return false,'invalid_acceleration'end
-    if s.minSpeed~=nil and (not G.finite(s.minSpeed)or s.minSpeed<0)then return false,'invalid_min_speed'end
-    if s.maxSpeed~=nil and (not G.finite(s.maxSpeed)or s.maxSpeed<(s.minSpeed or 0))then return false,'invalid_max_speed'end
+    if s.shape=='arc' and (not finite(s.arcRadius) or s.arcRadius<0)then return false,'invalid_arc'end
+    if s.shape=='ring' and (not finite(s.innerRadius) or s.innerRadius<0 or s.innerRadius>s.radius)then return false,'invalid_ring'end
+    if s.speed~=nil and (not finite(s.speed) or s.speed<0)then return false,'invalid_speed'end
+    if s.acceleration~=nil and not finite(s.acceleration) then return false,'invalid_acceleration'end
+    if s.minSpeed~=nil and (not finite(s.minSpeed)or s.minSpeed<0)then return false,'invalid_min_speed'end
+    if s.maxSpeed~=nil and (not finite(s.maxSpeed)or s.maxSpeed<(s.minSpeed or 0))then return false,'invalid_max_speed'end
     if s.speed and (s.minSpeed and s.speed<s.minSpeed or s.maxSpeed and s.speed>s.maxSpeed)then return false,'speed_outside_bounds'end
-    if s.launch~=nil and not G.finite(s.launch)then return false,'invalid_launch'end
+    if s.launch~=nil and not finite(s.launch)then return false,'invalid_launch'end
     if s.motion then
         if #s.motion<2 or #s.motion>32 then return false,'invalid_motion'end
         for i,n in ipairs(s.motion)do
-            if not G.point(n.pos) or not G.finite(n.at) or i>1 and n.at<=s.motion[i-1].at then return false,'invalid_motion'end
+            if not G.point(n.pos) or not finite(n.at) or i>1 and n.at<=s.motion[i-1].at then return false,'invalid_motion'end
         end
     end
     return true
@@ -223,6 +251,7 @@ function G.motionBound(s)
     if s.emissionSpeed then return s.emissionSpeed end
     local v=(s.speed or 0)+abs(s.acceleration or 0)*max(0,s.ends-(s.launch or s.starts))
     if s.maxSpeed then v=min(v,s.maxSpeed)end
+    if s.speedStep then v=max(v,s.speedStep.speed)end
     for i=2,#(s.motion or {})do local a,b=s.motion[i-1],s.motion[i];v=max(v,G.dist(a.pos,b.pos)/(b.at-a.at))end
     v=v+growth
     for _,part in ipairs(s.parts or {})do local bound=G.motionBound(part);if not bound then return nil end;v=max(v,bound)end
@@ -356,9 +385,12 @@ local function linearCircle(s,a,b,t0,t1,lo,hi,radius,budget)
     -- Fixed-speed missiles stop at their endpoint. Splitting there keeps each
     -- relative-motion interval linear; it must not extrapolate past that point.
     local launch=s.launch or s.starts
-    local arrival=s.speed and s.speed>0 and s.b and launch+G.dist(s.origin or s.a,s.b)/s.speed
+    local arrival=s.speed and s.speed>0 and s.b and launch+G.travelTime(s,G.dist(s.origin or s.a,s.b))
+    -- A speed step is a third breakpoint: each phase is linear on its own.
+    local step=s.speedStep and arrival and launch+stepTime(s)
     local from=lo
     if launch>from and launch<hi then local hit,at=circleInterval(s,a,b,t0,t1,from,launch,radius,budget);if hit~=false then return hit,at end;from=launch end
+    if step and step>from and step<hi and step<arrival then local hit,at=circleInterval(s,a,b,t0,t1,from,step,radius,budget);if hit~=false then return hit,at end;from=step end
     if arrival and arrival>from and arrival<hi then local hit,at=circleInterval(s,a,b,t0,t1,from,arrival,radius,budget);if hit~=false then return hit,at end;from=arrival end
     return circleInterval(s,a,b,t0,t1,from,hi,radius,budget)
 end
@@ -380,7 +412,7 @@ end
 local function acceleratedIntervals(s,a,b,t0,t1,lo,hi,radius,budget,add,firstOnly)
     local total=t1-t0;local first,reason
     local r=s.radius+radius+.001;local rr=r*r
-    if not G.finite(rr)then return false,'geometry_numeric'end
+    if not finite(rr)then return false,'geometry_numeric'end
     local function emit(l,h)
         first=first or l;if add then add(l,h)end
     end
@@ -397,7 +429,7 @@ local function acceleratedIntervals(s,a,b,t0,t1,lo,hi,radius,budget,add,firstOnl
         local cx,cz=x0+u*dx,z0+u*dz
         local bx,bz=x1-(x0+x2)*.5,z1-(z0+z2)*.5
         local bow=.5*sqrt(bx*bx+bz*bz)
-        if not G.finite(dd)or not G.finite(bow)then reason='geometry_numeric';return false end
+        if not finite(dd)or not finite(bow)then reason='geometry_numeric';return false end
         if cx*cx+cz*cz>(r+bow)*(r+bow)then return true end
         if max(x0*x0+z0*z0,x1*x1+z1*z1,x2*x2+z2*z2)<=rr
             or depth>=14 or h-l<=.001 then emit(l,h);return true end
@@ -430,8 +462,8 @@ local function acceleratedIntervals(s,a,b,t0,t1,lo,hi,radius,budget,add,firstOnl
             local x2,z2=a.x+(b.x-a.x)*v-d.x,a.z+(b.z-a.z)*v-d.z
             local xm,zm=a.x+(b.x-a.x)*(u+v)*.5-m.x,a.z+(b.z-a.z)*(u+v)*.5-m.z
             local x1,z1=2*xm-(x0+x2)*.5,2*zm-(z0+z2)*.5
-            if not G.finite(x0)or not G.finite(z0)or not G.finite(x1)or not G.finite(z1)
-                or not G.finite(x2)or not G.finite(z2)then return false,'geometry_numeric'end
+            if not finite(x0)or not finite(z0)or not finite(x1)or not finite(z1)
+                or not finite(x2)or not finite(z2)then return false,'geometry_numeric'end
             if not visit(x0,z0,x1,z1,x2,z2,from,finish,0)then return false,reason end
         end
         if firstOnly and first then return true,nil,first end
@@ -484,8 +516,8 @@ local function speedEnvelopeIntervals(s,a,b,t0,t1,lo,hi,radius,budget,emit,first
         local front=min(length,s.maxSpeed*max(0,from-launch))
         local vr=min(length,s.minSpeed*max(0,finish-launch))-rear
         local vf=min(length,s.maxSpeed*max(0,finish-launch))-front
-        if not G.finite(x)or not G.finite(z)or not G.finite(vx)or not G.finite(vz)
-            or not G.finite(rear)or not G.finite(front)or not G.finite(vr)or not G.finite(vf)then
+        if not finite(x)or not finite(z)or not finite(vx)or not finite(vz)
+            or not finite(rear)or not finite(front)or not finite(vr)or not finite(vf)then
             return false,'geometry_numeric'
         end
         local first,last=diskSpan(x-rear,z,vx-vr,vz,r)
@@ -553,7 +585,7 @@ local function radiusIntervals(s,a,b,t0,t1,lo,hi,padding,budget,emit,firstOnly)
         local aa=vx*vx+vz*vz-dr*dr
         local bb=2*(x*vx+z*vz-rad*dr)
         local cc=x*x+z*z-rad*rad
-        if not G.finite(aa)or not G.finite(bb)or not G.finite(cc)then return false,'geometry_numeric'end
+        if not finite(aa)or not finite(bb)or not finite(cc)then return false,'geometry_numeric'end
         local scale=max(abs(aa),abs(bb),abs(cc),1);aa,bb,cc=aa/scale,bb/scale,cc/scale
         local left,right
         if aa==0 then
@@ -587,7 +619,10 @@ local function radiusIntervals(s,a,b,t0,t1,lo,hi,padding,budget,emit,firstOnly)
     return false,'geometry_piece_budget'
 end
 function G.sweep(s,a,b,t0,t1,radius,budget,clipLo,clipHi)
-    if not G.finite(t0)or not G.finite(t1)or t1<t0 or not G.finite(radius)or radius<0 then return nil,'invalid_interval'end
+    -- `finite` inlined: this entry runs once per threat per route segment (about half a million times in the
+    -- ten-champion stress scenario).
+    if not(type(t0)=='number'and t0==t0 and abs(t0)<huge)or not(type(t1)=='number'and t1==t1 and abs(t1)<huge)or t1<t0
+        or not(type(radius)=='number'and radius==radius and abs(radius)<huge)or radius<0 then return nil,'invalid_interval'end
     local lo,hi=max(t0,s.starts),(s.motionUnknown or s.shape=='compound'and G.uncertainMotion(s))and t1 or min(t1,s.ends)
     lo=max(lo,clipLo or lo);hi=min(hi,clipHi or hi)
     if hi<lo then return false end
@@ -649,7 +684,7 @@ if (s.shape=='circle'or s.shape=='missile')and not s.motion and (not s.accelerat
     local settled=s.emissionSpeed and s.emissionStart+s.length/s.emissionSpeed
     local emissionEnd=s.emissionEnd
     local function sample(t)
-        return G.distance(s,G.lerp(a,b,duration>0 and (t-t0)/duration or 0),t)
+        return G.distance(s,probeAt(a,b,duration>0 and (t-t0)/duration or 0),t)
     end
     budget.remaining=budget.remaining-1
     if budget.remaining<0 then return nil,'geometry_budget'end
@@ -673,8 +708,8 @@ end
 -- Complex shapes enclose the possible contact interval; work exhaustion is explicit.
 function G.intervals(s,a,b,t0,t1,radius,budget,clipLo,clipHi)
     local out={intervals={},complete=false,exact=false}
-    if not G.point(a)or not G.point(b)or not G.finite(t0)or not G.finite(t1)or t1<t0
-        or not G.finite(radius)or radius<0 or not G.valid(s)then out.reason='invalid_interval';return out end
+    if not G.point(a)or not G.point(b)or not finite(t0)or not finite(t1)or t1<t0
+        or not finite(radius)or radius<0 or not G.valid(s)then out.reason='invalid_interval';return out end
     if s.shape=='targeted'then out.reason='targeted_effect';return out end
     budget=budget or {remaining=12000}
     local lo,hi=max(t0,s.starts),(s.motionUnknown or s.shape=='compound'and G.uncertainMotion(s))and t1 or min(t1,s.ends)
@@ -746,9 +781,11 @@ if (s.shape=='circle'or s.shape=='missile')and not s.motion and (s.acceleration 
             if hit then add(first,last)end;return true
         end
         local launch=s.launch or s.starts
-        local arrival=s.speed and s.speed>0 and s.b and launch+G.dist(s.origin or s.a,s.b)/s.speed
+        local arrival=s.speed and s.speed>0 and s.b and launch+G.travelTime(s,G.dist(s.origin or s.a,s.b))
+        local step=s.speedStep and arrival and launch+stepTime(s)
         local from=lo
         if launch>from and launch<hi then if not visit(from,launch)then return out end;from=launch end
+        if step and step>from and step<hi and step<arrival then if not visit(from,step)then return out end;from=step end
         if arrival and arrival>from and arrival<hi then if not visit(from,arrival)then return out end;from=arrival end
         out.complete=visit(from,hi);return out
     end
@@ -765,7 +802,7 @@ if (s.shape=='circle'or s.shape=='missile')and not s.motion and (s.acceleration 
         budget.remaining=budget.remaining-1
         if budget.remaining<0 then out.reason='geometry_budget';return false end
         local mid=(l+h)/2
-        local d=G.distance(s,G.lerp(a,b,duration>0 and (mid-t0)/duration or 0),mid)
+        local d=G.distance(s,probeAt(a,b,duration>0 and (mid-t0)/duration or 0),mid)
         if d==nil then out.reason='geometry_unknown';return false end
         local motion=settled and l>=settled and h<=emissionEnd and 0 or speed
         local reach=(player+motion)*(h-l)/2+.001
@@ -774,6 +811,68 @@ if (s.shape=='circle'or s.shape=='missile')and not s.motion and (s.acceleration 
         return visit(l,mid,depth+1)and visit(mid,h,depth+1)
     end
     out.complete=visit(lo,hi,0);return out
+end
+-- Curved flight (catalogue `curve`, fractions of the chord length L unless noted):
+-- the host reports start, end and current position, never the curve, so a curved
+-- missile becomes the static corridor of its whole flight: the chord widened on
+-- both sides by the largest sideways excursion (bulge*L + pad units; both sides,
+-- because the record's side convention is not established), extended `back`*L+pad
+-- behind the start and `over`*L+pad beyond the end (pad covers the record's start
+-- offset in any direction), dangerous from launch to arrival.
+-- Mutates and returns `s`; nil,reason for an unusable curve. Never clipped by units.
+function G.curveCorridor(s,curve,launch,arrival)
+    if type(curve)~='table'then return nil,'invalid_curve'end
+    local bulge,pad,back,over=curve.bulge or 0,curve.pad or 0,curve.back or 0,curve.over or 0
+    if not G.finite(bulge)or bulge<0 or bulge>2 or not G.finite(pad)or pad<0 or pad>1000
+        or not G.finite(back)or back<0 or back>1 or not G.finite(over)or over<0 or over>1 then return nil,'invalid_curve'end
+    local o,b=s.origin or s.a,s.b
+    if not G.point(o)or not G.point(b)or not G.finite(launch)or not G.finite(arrival)or arrival<launch then return nil,'invalid_curve'end
+    local length=G.dist(o,b);if length<1 then return nil,'zero_curve_chord'end
+    local dx,dz=(b.x-o.x)/length,(b.z-o.z)/length
+    local behind,beyond=back*length+pad,over*length+pad
+    s.origin={x=o.x-dx*behind,y=o.y or 0,z=o.z-dz*behind}
+    s.b={x=b.x+dx*beyond,y=b.y or 0,z=b.z+dz*beyond}
+    s.a=nil;s.shape='rectangle';s.length=length+behind+beyond
+    s.radius=(s.radius or 0)+bulge*length+pad
+    s.starts=launch;s.ends=arrival;s.launch=nil
+    s.speed,s.acceleration,s.minSpeed,s.maxSpeed,s.speedUncertain=nil,nil,nil,nil,nil
+    s.contourOrigin=nil;s.positionObservedAt=nil
+    s.curveChord=length;s.curveEnvelope=true
+    return s
+end
+-- Damage zones inside one threat (catalogue `zones`, at most 8, first match wins):
+-- {axis='radial'|'along',from=,to=,damage=multiplier,cc=,ccHard=}. `radial` is the
+-- distance from the threat's centre at t (circle or ring centre, the projectile
+-- body, a cone or strike apex); `along` is the distance along the aim from where
+-- the flight or strike starts. A zone without `cc` keeps the threat's own control.
+-- Returns multiplier, cc, ccHard, zone index (0: no zone, the threat's own values),
+-- or nil when p is outside the threat at t. Reads only; no planner decision uses it yet.
+function G.zoneAt(s,p,t)
+    if t<s.starts or t>s.ends then return nil end
+    local d=G.distance(s,p,t);if d==nil or d>0 then return nil end
+    local zones=s.zones
+    if type(zones)=='table'then
+        local radial,along
+        for i=1,min(#zones,8)do
+            local z=zones[i];local value
+            if z.axis=='radial'then
+                if radial==nil then local c=G.center(s,t);radial=c and G.dist(c,p)or false end
+                value=radial
+            elseif z.axis=='along'then
+                if along==nil then
+                    local o,b=s.contourOrigin or s.castOrigin or s.origin or s.a,s.b
+                    if G.point(o)and G.point(b)then local dx,dz=G.direction(o,b);along=(p.x-o.x)*dx+(p.z-o.z)*dz else along=false end
+                end
+                value=along
+            end
+            if value and value>=z.from and value<z.to then
+                local cc,hard=z.cc,z.ccHard
+                if cc==nil then cc,hard=s.cc,s.ccHard end
+                return z.damage or 1,cc,hard==true,i
+            end
+        end
+    end
+    return 1,s.cc,s.ccHard==true,0
 end
 return G
 

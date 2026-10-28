@@ -21,14 +21,42 @@ return function()
 --  the ratio is left out (a lower bound) and the speed is a slow 1000 bound (a later impact only raises the requirement).
 --  Q/W target range: wiki and asset castRange say 1200, the display override 1150; 1150 is kept until the ezreal_q_reach
 --  development trace records landed hits beyond it.
+local D=(function()
 return {
-    Ezreal={id='normal',qRange=1150,qBase={20,45,70,95,120},qAD=1.3,qAP=.4,
-        wRange=1150,wSpeed=1700,wRadius=80,wBase={80,135,190,245,300},wAP=.9,wAD=1,rBase={350,550,750},rAP=1.1,rAD=1,marks=true,
-        e='EzrealE',eRange=475,eCast=.25,eBase={80,130,180,230,280},eAD=.6,eAP=.75,eBolt=750,eBoltSpeed=2000,
+ EzrealE={
+  BaseDamage={80,130,180,230,280},EAPRatio=.75,MissileRange=750,castRangeDisplayOverride=475,
+ },
+ EzrealQ={
+  BaseDamage={20,45,70,95,120},BaseDamageADRatio=1.3,BaseDamageAPRatio=.4,castRangeDisplayOverride=1150,
+ },
+ EzrealW={
+  APRatio=.9,BaseDamage={80,135,190,245,300},castRange=1200,castRangeDisplayOverride=1150,mMissileWidth=80,mSpeed=1700,
+ },
+ EzrealR={
+  BaseDamage={350,550,750},RAPRatio=1.1,
+ },
+ Jade_EzrealW={
+  APRatio=.6,BaseDamage={80,130,180,230,280},castRange=1050,mMissileWidth=100,mSpeed=1600,
+ },
+ Jade_EzrealR={
+  BaseDamage={350,500,650},RAPRatio=1,
+ },
+ Jade_EzrealQ={
+  BaseDamage={40,65,90,115,140},BaseDamageADRatio=1.1,
+ },
+ Jade_EzrealE={
+  BaseDamage={75,125,175,225,275},EAPRatio=.75,MissileRange=750,castRangeDisplayOverride=475,
+ },
+}
+end)()
+return {
+    Ezreal={id='normal',qRange=D.EzrealQ.castRangeDisplayOverride,qBase=D.EzrealQ.BaseDamage,qAD=D.EzrealQ.BaseDamageADRatio,qAP=D.EzrealQ.BaseDamageAPRatio,
+        wRange=D.EzrealW.castRangeDisplayOverride,wSpeed=D.EzrealW.mSpeed,wRadius=D.EzrealW.mMissileWidth,wBase=D.EzrealW.BaseDamage,wAP=D.EzrealW.APRatio,wAD=1,rBase=D.EzrealR.BaseDamage,rAP=D.EzrealR.RAPRatio,rAD=1,marks=true,
+        e='EzrealE',eRange=D.EzrealE.castRangeDisplayOverride,eCast=.25,eBase=D.EzrealE.BaseDamage,eAD=.6,eAP=D.EzrealE.EAPRatio,eBolt=D.EzrealE.MissileRange,eBoltSpeed=2000,
         eSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Ezreal/Arcane_Shift 2026-10-08: blink, range 475, cast 0.25'},
-    Jade_Ezreal={id='classic',qRange=1100,qBase={40,65,90,115,140},qAD=1.1,qAP=0,
-        wRange=1050,wSpeed=1600,wRadius=100,wBase={80,130,180,230,280},wAP=.6,wAD=0,rBase={350,500,650},rAP=1,rAD=0,marks=false,
-        e='Jade_EzrealE',eRange=475,eCast=.25,eBase={75,125,175,225,275},eAD=0,eAP=.75,eBolt=750,eBoltSpeed=1000,
+    Jade_Ezreal={id='classic',qRange=1100,qBase=D.Jade_EzrealQ.BaseDamage,qAD=D.Jade_EzrealQ.BaseDamageADRatio,qAP=0,
+        wRange=D.Jade_EzrealW.castRange,wSpeed=D.Jade_EzrealW.mSpeed,wRadius=D.Jade_EzrealW.mMissileWidth,wBase=D.Jade_EzrealW.BaseDamage,wAP=D.Jade_EzrealW.APRatio,wAD=0,rBase=D.Jade_EzrealR.BaseDamage,rAP=D.Jade_EzrealR.RAPRatio,rAD=0,marks=false,
+        e='Jade_EzrealE',eRange=D.Jade_EzrealE.castRangeDisplayOverride,eCast=.25,eBase=D.Jade_EzrealE.BaseDamage,eAD=0,eAP=D.Jade_EzrealE.EAPRatio,eBolt=D.Jade_EzrealE.MissileRange,eBoltSpeed=1000,
         eSource='research/family-assets/Jade_Ezreal/spells.json (range 475, field 11704a2b 0.25) and https://wiki.leagueoflegends.com/en-us/League_Classic/Ezreal (cast 0.25) 2026-10-08'},
 }
 

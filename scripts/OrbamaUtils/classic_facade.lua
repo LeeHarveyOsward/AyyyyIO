@@ -5,6 +5,10 @@ function F.new(c)
     local g=c.g;local V={c=c,last={},delayed={}}
     local offensive={[773128]=true,[773146]=true,[773144]=true,[773153]=true,[773092]=true,[773142]=true,
         [773131]=true,[773069]=true,[773023]=true,[773056]=true,[773074]=true,[773077]=true,[773042]=true}
+    function V:ItemReady(slot)
+        local spell=c:spell(slot)
+        return U.finite(spell.currentCd) and c:ready(slot),spell
+    end
     function V:Cast(key,target,options)
         options=options or {};local slot
         for s=4,12 do if c.actions:key(s)==key then slot=s;break end end

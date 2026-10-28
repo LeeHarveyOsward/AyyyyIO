@@ -704,7 +704,8 @@ return function(g,core,adapter)
      J.keyHeld=true;if J.enabled and J.paused then J.resumePress=true end
     end
    elseif msg==256 and key==J:CameraKey()and J:Enabled()then J.cameraYielded=true;J:ReleaseCamera()
-   elseif J:Enabled()and (msg==516 or msg==513)then J:Pause('Physical mouse command')end
+   -- Only a running route pauses: a click on a paused one must not cancel the held mode's casts.
+   elseif J:Enabled()and not J.paused and (msg==516 or msg==513)then J:Pause('Physical mouse command')end
   end)
  end
  J.defaultKey=DEFAULT_KEY
