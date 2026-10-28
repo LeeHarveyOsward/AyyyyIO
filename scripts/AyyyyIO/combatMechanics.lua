@@ -3,9 +3,59 @@ return function(require)
 -- Units: world units, seconds, raw damage.
 -- Runtime aliases and gameplay outcomes require live acceptance; retained rows are not stages.
 local P={version=1,patch='26.21',assetVersion='16.21.829.8620'}
+local stationary=(function()
+-- Explicit stationary stages only. Seconds come from maintained cast-time fields,
+-- never a prediction/impact delay. Identity and native names are independent evidence.
+-- AbilityData provenance remains beside each field. Missing stages stay unknown.
+-- Excluded: mobility, charge holds, resets, variable Jinx W/Yone/Normal Lucian Q,
+-- target-dependent Lulu W, and Lulu R whose wiki source says no cast time despite
+-- its asset timing. Lucian Q's retained Normal value is copied from a Classic
+-- rank-three recording, not a fixed stationary rule for either complete profile.
+return {
+ aatrox=function(D,p)return {
+  Aatrox={[0]={names={'AatroxQ','AatroxQ2','AatroxQ3','AatroxQWrapperCast'},seconds=D.AatroxQWrapperCast.mCastTime},[1]={names={'AatroxW'},seconds=D.AatroxW.mCastTime}},
+  Jade_Aatrox={[2]={names={'Jade_AatroxE'},seconds=D.Jade_AatroxE.mCastTime}}}end,
+ caitlyn=function(D,p)return {Jade_Caitlyn={[0]={names={'Jade_CaitlynQ'},seconds=D.Jade_CaitlynQ.CastTime}}}end,
+ janna=function(D,p)return {Janna={[1]={names={'SowTheWind'},seconds=D.SowTheWind.mCastTime}}}end,
+ jax=function(D,p)return {Jax={[3]={names={'JaxR'},seconds=p.Jax.rCast}}}end,
+ jhin=function(D,p)return {Jhin={[1]={names={'JhinW'},seconds=D.JhinW.mCastTime},[2]={names={'JhinE'},seconds=p.Jhin.eCast}}}end,
+ jinx=function(D,p)return {Jinx={[3]={names={'JinxR'},seconds=D.JinxR.mCastTime}}}end,
+ karma=function(D,p)return {
+  Karma={[1]={names={'KarmaSpiritBind'},seconds=D.KarmaSpiritBind.mCastTime}},
+  Jade_Karma={[1]={names={'Jade_KarmaW'},seconds=D.Jade_KarmaW.mCastTime}}}end,
+ kassadin=function(D,p)return {
+  Kassadin={[0]={names={'NullLance'},seconds=p.Kassadin.qCast}},
+  Jade_Kassadin={[0]={names={'Jade_KassadinQ'},seconds=p.Jade_Kassadin.qCast}}}end,
+ lucian=function(D,p)return {Jade_Lucian={[1]={names={'Jade_LucianW'},seconds=D.Jade_LucianW.mCastTime}}}end,
+ missfortune=function(D,p)return {
+  MissFortune={[2]={names={'MissFortuneScattershot'},seconds=D.MissFortuneScattershot.CastDelay}},
+  Jade_MissFortune={[2]={names={'Jade_MissFortuneScattershot'},seconds=D.Jade_MissFortuneScattershot.mCastTime}}}end,
+ morgana=function(D,p)return {
+  Morgana={[0]={names={'MorganaQ'},seconds=D.MorganaQ.mCastTime},[1]={names={'MorganaW'},seconds=D.MorganaW.mCastTime}},
+  Jade_Morgana={[0]={names={'Jade_MorganaQ'},seconds=D.Jade_MorganaQ.mCastTime},[1]={names={'Jade_MorganaW'},seconds=D.Jade_MorganaW.mCastTime}}}end,
+ nami=function(D,p)return {
+  Nami={[1]={names={'NamiW'},seconds=p.Nami.wCast}},
+  Jade_Nami={[1]={names={'Jade_NamiW'},seconds=p.Jade_Nami.wCast}}}end,
+ nasus=function(D,p)return {
+  Nasus={[3]={names={'NasusR'},seconds=p.Nasus.rCast}},
+  Jade_Nasus={[3]={names={'Jade_NasusR'},seconds=p.Jade_Nasus.rCast}}}end,
+ nautilus=function(D,p)return {
+  Nautilus={[3]={names={p.Nautilus.r,p.Nautilus.rCastName},seconds=p.Nautilus.rCast}},
+  Jade_Nautilus={[3]={names={p.Jade_Nautilus.r,p.Jade_Nautilus.rCastName},seconds=p.Jade_Nautilus.rCast}}}end,
+ quinn=function(D,p)return {Jade_Quinn={[0]={names={'Jade_QuinnQ'},seconds=D.Jade_QuinnQ.mCastTime}}}end,
+ skarner=function(D,p)return {
+  -- ChampionProfiles/Skarner documents rInterruptDelay as Impale's cast time.
+  Skarner={[3]={names={'SkarnerR'},seconds=p.Skarner.rInterruptDelay}},
+  Jade_Skarner={[3]={names={'Jade_SkarnerR'},seconds=p.Jade_Skarner.rCast}}}end,
+ thresh=function(D,p)return {Thresh={[2]={names={'ThreshE'},seconds=p.Thresh.eCast},[3]={names={'ThreshRPenta'},seconds=p.Thresh.rCast}}}end,
+ vayne=function(D,p)return {
+  Vayne={[2]={names={'VayneCondemn'},seconds=p.Vayne.eCastTime}},
+  Jade_Vayne={[2]={names={'Jade_VayneE'},seconds=p.Jade_Vayne.eCastTime}}}end,
+}
+
+end)()
 local factories={}
 factories['aatrox']=function()
--- Shared Aatrox Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
 local D=(function()
 return {
  AatroxR={
@@ -40,6 +90,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Aatrox Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+
 local profiles={}
 profiles['Aatrox']=profiles['Aatrox']or {}
 profiles['Aatrox'].combat={id='normal',champion='Aatrox',names={{'AatroxQ','AatroxQ2','AatroxQ3'},{'AatroxW'},{'AatroxE'},{'AatroxR'}},
@@ -87,8 +140,14 @@ function classic.heal(p,rank,stats,active,mantra,finite)
 end
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['aatrox'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['akali']=function()
+local pair=(function()
 -- Shared Akali mechanics data. Values preserved from the maintained controller.
 -- Classic Shadow Dance range, three sources (2026-10-08), resolved by profile match, not averaged:
 --   800  installed asset research/family-assets/Jade_Akali/spells.json, the Shadow Dance record (S3 icon, base
@@ -164,8 +223,11 @@ return {
    source='https://wiki.leagueoflegends.com/en-us/Akali 2026-10-08: Perfect Execution first cast range 675, cast 0.25, speed 1500, dash 750 and at least 150 past the target'}},
 }
 
+end)()
+return pair
 end
 factories['amumu']=function()
+local pair=(function()
 -- Shared Amumu mechanics data. Values preserved from the maintained controller.
 -- wRadius: installed asset 300 (both profiles); the wiki (read 2026-10-10) says 350. Kept at the asset
 -- value until 'amumu_w_edge' development traces show damage ticks beyond 300 (Amumu-4).
@@ -207,8 +269,11 @@ return {
    eBase={65,95,125,150,175},eAP=.5,rBase=D.Jade_AmumuCurseoftheSadMummy.RDamage,rAP=D.Jade_AmumuCurseoftheSadMummy.RCoefficient,rInterrupt=false,wRadius=D.Jade_AmumuAuraofDespair.castRadius},
 }
 
+end)()
+return pair
 end
 factories['annie']=function()
+local pair=(function()
 -- Shared Annie mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -252,27 +317,10 @@ return {
  -- Whether Classic E also reaches Tibbers is unmeasured (no ePet): the dev trace annie_classic_e_tibbers settles it.
 }
 
+end)()
+return pair
 end
 factories['caitlyn']=function()
--- Ranking pass 2026-10-10 (experiments/champion-ranking-20261010/dossiers/Caitlyn.md), wiki.leagueoflegends.com/en-us/Caitlyn
--- read 2026-10-10: Normal R crit bonus is 1 + (0.30 + 0.09 with Infinity Edge) x crit chance (was 0.3 x crit x (critDamage-1),
--- which refused kills). Headshot every 5 attacks, 4 from brush (patch 13.16; was 6, preview data only). The Normal passive
--- crit term follows the current installed CriticalStrikeScaling and calculation. Current source pins are in
--- implementation/family/current-patch.json; live Headshot acceptance remains pending. Classic: the net enabling a Headshot is unmeasured (no net buff alias),
--- so the E + Headshot finisher is Normal only.
--- Shared Caitlyn Normal/Classic mechanics; current pins are in implementation/family/current-patch.json.
--- R timing, 2026-10-08: Normal 0.375 s cast + 1 s channel (delay 1.375), missile speed 3200
--- (wiki.leagueoflegends.com/en-us/Caitlyn, Ace in the Hole); the earlier 1 / 1500 made the lethal
--- check add two more seconds of regeneration and refuse valid kills. Classic: speed 3200 and a
--- 1 s channel (wiki.leagueoflegends.com/en-us/League_Classic/Caitlyn; V1.0.0.112 raised it from
--- 2200); its "brief delay" before the channel is not quantified, so delay stays 1.
--- Classic W: arm 1.1 s and three traps per the League Classic page (V1.0.0.114: 3 from 2); the
--- earlier 1 / 2 only cost a trap or made a trap arm 0.1 s late. Classic Q cast time 1 s and Classic E
--- range 950, half width 80, speed 2000 come from Classic's own records (2026-10-28, 16.21 ability table:
--- Jade_CaitlynQ CastTime 1, Jade_CaitlynEMissile castRangeDisplayOverride 950, mMissileWidth 80, mSpeed 2000);
--- the earlier .625 / 750 / 70 / 1600 were the Normal values. Uncertain and unchanged: Classic E recoil
--- (390 here, 400 on the page). Normal E recoil speed 1000 (same page, "1600 / 1000") is recorded
--- as recoilSpeed; the Normal recoil is offered to Evade with the cast mirrored (Core:RegisterMobility aim).
 local D=(function()
 return {
  CaitlynPassive={
@@ -316,6 +364,27 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Ranking pass 2026-10-10 (experiments/champion-ranking-20261010/dossiers/Caitlyn.md), wiki.leagueoflegends.com/en-us/Caitlyn
+-- read 2026-10-10: Normal R crit bonus is 1 + (0.30 + 0.09 with Infinity Edge) x crit chance (was 0.3 x crit x (critDamage-1),
+-- which refused kills). Headshot every 5 attacks, 4 from brush (patch 13.16; was 6, preview data only). The Normal passive
+-- crit term follows the current installed CriticalStrikeScaling and calculation. Current source pins are in
+-- implementation/family/current-patch.json; live Headshot acceptance remains pending. Classic: the net enabling a Headshot is unmeasured (no net buff alias),
+-- so the E + Headshot finisher is Normal only.
+-- Shared Caitlyn Normal/Classic mechanics; current pins are in implementation/family/current-patch.json.
+-- R timing, 2026-10-08: Normal 0.375 s cast + 1 s channel (delay 1.375), missile speed 3200
+-- (wiki.leagueoflegends.com/en-us/Caitlyn, Ace in the Hole); the earlier 1 / 1500 made the lethal
+-- check add two more seconds of regeneration and refuse valid kills. Classic: speed 3200 and a
+-- 1 s channel (wiki.leagueoflegends.com/en-us/League_Classic/Caitlyn; V1.0.0.112 raised it from
+-- 2200); its "brief delay" before the channel is not quantified, so delay stays 1.
+-- Classic W: arm 1.1 s and three traps per the League Classic page (V1.0.0.114: 3 from 2); the
+-- earlier 1 / 2 only cost a trap or made a trap arm 0.1 s late. Classic Q cast time 1 s and Classic E
+-- range 950, half width 80, speed 2000 come from Classic's own records (2026-10-28, 16.21 ability table:
+-- Jade_CaitlynQ CastTime 1, Jade_CaitlynEMissile castRangeDisplayOverride 950, mMissileWidth 80, mSpeed 2000);
+-- the earlier .625 / 750 / 70 / 1600 were the Normal values. Uncertain and unchanged: Classic E recoil
+-- (390 here, 400 on the page). Normal E recoil speed 1000 (same page, "1600 / 1000") is recorded
+-- as recoilSpeed; the Normal recoil is offered to Evade with the cast mirrored (Core:RegisterMobility aim).
+
 local profiles={}
 profiles['Caitlyn']=profiles['Caitlyn']or {}
 profiles['Caitlyn'].combat={id='normal',champion='Caitlyn',names={{'CaitlynQ','CaitlynQ2'},{'CaitlynW'},{'CaitlynE'},{'CaitlynR'}},
@@ -359,8 +428,14 @@ function normal.passive(p,stats,target,finite)
 end
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['caitlyn'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['chogath']=function()
+local pair=(function()
 -- Shared Chogath mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -415,8 +490,11 @@ return {
   eSpikeRange=D.Jade_ChogathEMissile.castRange,eSpikeSpeed=D.Jade_ChogathEMissile.mSpeed,eHalfWidth=D.Jade_ChogathEMissile.mMissileWidth,stacksMayDropOnDeath=true},
 }
 
+end)()
+return pair
 end
 factories['corki']=function()
+local pair=(function()
 -- Shared Corki mechanics data. Values preserved from the maintained controller unless a source is named.
 -- Normal, https://wiki.leagueoflegends.com/en-us/Corki read 2026-10-08: Q "TARGET RANGE: 825", "EFFECT RADIUS: 275",
 --  "SPEED: 1100"; W "300 - 600", cast time "none", speed "650 + 100% movement speed"; E "EFFECT RADIUS: 690",
@@ -488,8 +566,11 @@ return {
    wSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Corki Valkyrie RANGE 800, SPEED 650 (read 2026-10-08); research/family-assets/Jade_Corki/spells.json Jade_CorkiW MaxRange 800 / MinRange 300, no cast-time field'},
 }
 
+end)()
+return pair
 end
 factories['ezreal']=function()
+local pair=(function()
 -- Shared Ezreal mechanics data. Values preserved from the maintained controller.
 -- Reviewed 2026-10-08 (each profile from its own source; nothing is copied between them):
 --  Normal E (Arcane Shift): blink, range 475, cast 0.25,
@@ -550,8 +631,11 @@ return {
         eSource='research/family-assets/Jade_Ezreal/spells.json (range 475, field 11704a2b 0.25) and https://wiki.leagueoflegends.com/en-us/League_Classic/Ezreal (cast 0.25) 2026-10-08'},
 }
 
+end)()
+return pair
 end
 factories['fiora']=function()
+local pair=(function()
 -- Shared Fiora mechanics data. Values preserved from the maintained controller.
 -- Classic R repeat share, two sources that disagree (both read 2026-10-08, neither averaged):
 --   rRepeat=.4       installed asset research/family-assets/Jade_Fiora/spells.json, Jade_FioraR ExtraHitDmgAmount
@@ -666,8 +750,11 @@ return {Jade_Fiora={classic=true,wAttacks=classicAttacks,q=D.Jade_FioraQ.castRan
  vitals={sides={NE={0,1},NW={1,0},SE={-1,0},SW={0,-1}},ownerRadius=100,offset=50,offsetMin=25,agreeCos=.8,learnAfter=3,reach=30,reveal=1.75,rReveal=.5,scanLimit=400},
  markDuration=D.FioraR.MarkDuration,healDuration=D.FioraR.HealDuration,healRadius=D.FioraR.HealRingRadius,healBase=D.FioraR.HealPerSecond,healAD=D.FioraR.Ratio,vitalBase=.03,vitalAD=.0004}}
 
+end)()
+return pair
 end
 factories['fizz']=function()
+local pair=(function()
 -- Shared Fizz mechanics data. Values preserved from the maintained controller.
 -- Normal R tiers (2026-10-10): the shark grows with the distance the lure travelled before it attached:
 --  under 455 small, 455-910 medium, over 910 large (https://wiki.leagueoflegends.com/en-us/Fizz, read 2026-10-10;
@@ -729,8 +816,11 @@ return {
   rBase=D.Jade_FizzR.BaseDamage,rAP=D.Jade_FizzR.APRatio,rRange=D.Jade_FizzR.castRangeDisplayOverride,rSpeed=D.Jade_FizzRMissile.mSpeed,rDelay=D.Jade_FizzR.DetonationTime,rTiered=false,eLanding=.75},
 }
 
+end)()
+return pair
 end
 factories['graves']=function()
+local pair=(function()
 -- Shared Graves mechanics data. Values preserved from the maintained controller.
 -- Ranking pass 2026-10-10: Normal fullReload 2.08 s, the reload of both shells from empty
 -- (https://wiki.leagueoflegends.com/en-us/Graves/LoL, page V26.17, read 2026-10-10); bounds the
@@ -786,8 +876,11 @@ return {
   rBase=D.Jade_GravesR.RBaseDamage,rCone=D.Jade_GravesR.RFalloffDamage,rAD=D.Jade_GravesR.BulletADRatio,rConeAD=D.Jade_GravesR.ConeADRatio,coneRange=800,recoil=0},
 }
 
+end)()
+return pair
 end
 factories['hecarim']=function()
+local pair=(function()
 -- Hecarim Normal/Classic mechanics. Details and witnesses: CombatProfiles/hecarim-provenance.json.
 -- Normal: installed 16.21 asset data/characters/hecarim/hecarim.bin (Hecarim.wad.client 2026-10-21).
 -- Classic: the same client's data/characters/jade_hecarim/jade_hecarim.bin. No live recording of either yet.
@@ -858,8 +951,11 @@ end
 normal.rawModifier=modifier;classic.rawModifier=modifier
 return profiles
 
+end)()
+return pair
 end
 factories['irelia']=function()
+local pair=(function()
 -- Shared Irelia Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
 local D=(function()
 return {
@@ -944,9 +1040,10 @@ end
 function classic.heal(p,rank,stats,active)return(active and p.wActiveHeal or p.wPassiveHeal)[rank]or 0 end
 return profiles
 
+end)()
+return pair
 end
 factories['janna']=function()
--- Shared Janna mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  ReapTheWhirlwind={
@@ -978,6 +1075,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Janna mechanics data. Values preserved from the maintained controller.
+
 return {
     -- 2026-10-08: E shield, W missile and R area were read from the matching page of each profile (`source`).
     -- Both pages give Q speed 880-1408 and width 240 by charge; the controller keeps its asset speed and a
@@ -1005,8 +1105,14 @@ return {
         rHeal={25,37.5,50},rHealAP=.125,rTick=.25,rChannel=D.ReapTheWhirlwind.Duration,tailwind=.3,baseMoveSpeed=315},
 }
 
+end)()
+for identity,casts in pairs(stationary['janna'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['jarvaniv']=function()
+local pair=(function()
 -- Shared JarvanIV mechanics data. Values preserved from the maintained controller.
 -- 2026-10-08: W radius, Q cast time, R numbers, E area and the W shield were read from the matching wiki page of
 -- each profile (`source`). Geometry used for prediction (Q radius 70, E radius 175, E flight) stays in the controller.
@@ -1055,9 +1161,10 @@ return {
   source='https://wiki.leagueoflegends.com/en-us/League_Classic/Jarvan_IV (read 2026-10-08); shield values also research/family-assets/Jade_JarvanIV/spells.json:774-813'},
 }
 
+end)()
+return pair
 end
 factories['jax']=function()
--- Shared Jax mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  JaxW={
@@ -1083,6 +1190,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Jax mechanics data. Values preserved from the maintained controller.
+
 return {
  Jax={id='normal',q={'JaxQ','JaxLeapStrike'},w='JaxW',e={'JaxE','JaxCounterStrike'},r='JaxR',
   eBuff={'JaxCounterStrike','JaxE'},wBuff='JaxW',wBuffAliases={'JaxW','JaxEmpowerTwo'},wAttack='JaxWAttack',wBase=D.JaxW.Damage,wAP=.6,wPrepare=.15,rKind='active_swing',
@@ -1109,13 +1219,13 @@ return {
   eSource='research/family-assets/Jade_Jax/spells.json Jade_JaxE DataValues; https://wiki.leagueoflegends.com/en-us/League_Classic/Jax read 2026-10-10'},
 }
 
+end)()
+for identity,casts in pairs(stationary['jax'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['jhin']=function()
--- Shared Jhin mechanics data. Values preserved from the maintained controller.
--- Reviewed 2026-10-08: qRange 550 is an EDGE range (the wiki's "Edge range" icon on TARGET RANGE: 550; the bounce
---  EFFECT RADIUS 450 carries "Centered range"; speed 1800 / 600, cast 0.25),
---  https://wiki.leagueoflegends.com/en-us/Template:Data_Jhin/Dancing_Grenade. qRangeEdge=true tells the controller to
---  add both gameplay radii for a centre-to-centre check. Live reach is not yet measured.
 local D=(function()
 return {
  JhinE={
@@ -1144,6 +1254,13 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Jhin mechanics data. Values preserved from the maintained controller.
+-- Reviewed 2026-10-08: qRange 550 is an EDGE range (the wiki's "Edge range" icon on TARGET RANGE: 550; the bounce
+--  EFFECT RADIUS 450 carries "Centered range"; speed 1800 / 600, cast 0.25),
+--  https://wiki.leagueoflegends.com/en-us/Template:Data_Jhin/Dancing_Grenade. qRangeEdge=true tells the controller to
+--  add both gameplay radii for a centre-to-centre check. Live reach is not yet measured.
+
 return {Jhin={id='normal',q='JhinQ',w='JhinW',e='JhinE',r='JhinR',rShot='JhinRShot',
  qBase=D.JhinQ.BaseDamage,qAD=D.JhinQ.ADRatio,qAP=.6,qRange=D.JhinQ.castRange,qRangeEdge=true,qBounces=D.JhinQ.NumberOfBounces,qBounce=D.JhinQ.BounceRange,qAmp=D.JhinQ.PercentAmpOnKill,
  wBase=D.JhinW.BaseDamage,wAD=.5,wRange=2500,wDelay=D.JhinW.mCastTime,wSpeed=5000,wRadius=D.JhinW.mLineWidth,mark='jhinespotteddebuff',
@@ -1155,9 +1272,13 @@ return {Jhin={id='normal',q='JhinQ',w='JhinW',e='JhinE',r='JhinR',rShot='JhinRSh
  rBase=D.JhinR.Damage,rAD=D.JhinR.ADRatio,rMissing=D.JhinR.PercentMissingAmp,rFourth=D.JhinR.FourthShotMultiplier,rRange=D.JhinRShot.castRangeDisplayOverride,rSpeed=D.JhinRShotMis.mSpeed,rRadius=D.JhinRShotMis.mMissileWidth,rDelay=.25,rInterval=D.JhinR.MInimumDelayBetweenShots,rHalfAngle=30.6,
  reload='JhinPassiveReload',passive='JhinPassiveAttackBuff',reloadTime=D.JhinPassive.ReloadTime}}
 
+end)()
+for identity,casts in pairs(stationary['jhin'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['jinx']=function()
--- Shared Jinx mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  JinxWMissile={
@@ -1180,6 +1301,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Jinx mechanics data. Values preserved from the maintained controller.
+
 return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
  qRange=D.JinxQ.RocketBonusRange,qSplash=D.JinxQ.RocketAoERadius,qAD=D.JinxQ.RocketTAD,qMana=20,qStacks=D.JinxQ.MinigunAttackSpeedStacks,qStackLife=D.JinxQ.MinigunAttackSpeedDuration,qAS=D.JinxQ.MinigunAttackSpeedMax,
  wBase=D.JinxW.Damage,wAD=D.JinxW.ADRatio,wRange=D.JinxW.castRangeDisplayOverride,wSpeed=D.JinxWMissile.mSpeed,wRadius=D.JinxWMissile.mMissileWidth,wMin=D.JinxW.JinxLowEndWCastTime,wBaseDelay=D.JinxWMissile.mCastTime,wASScalar=D.JinxW.JinxWASpeedCastTimeScalarPerHundrethSecond,
@@ -1190,9 +1314,13 @@ return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
  -- rMonsterCap: missing-health part against monsters (spells.json JinxR MonsterExecuteMax 1200; wiki V26.16).
  rMonsterCap=D.JinxR.MonsterExecuteMax,rRange=D.JinxR.castRange,rRadius=D.JinxR.mMissileWidth,rDelay=D.JinxR.mCastTime,rSpeed=D.JinxR.mSpeed,rDamageDistance=1500}}
 
+end)()
+for identity,casts in pairs(stationary['jinx'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['karma']=function()
--- Shared Karma Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
 local D=(function()
 return {
  KarmaSolKimShield={
@@ -1227,6 +1355,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Karma Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+
 local profiles={}
 profiles['Karma']=profiles['Karma']or {}
 profiles['Karma'].combat={id='normal',champion='Karma',names={{'KarmaQ'},{'KarmaSpiritBind'},{'KarmaSolKimShield'},{'KarmaMantra'}},
@@ -1264,8 +1395,14 @@ end
 normal.heal=heal;classic.heal=heal
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['karma'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['karthus']=function()
+local pair=(function()
 -- Karthus numbers that the controller reads beside AbilityProfiles.controllers.Karthus (abilities.lua is shared
 -- data; these rows only add what the 2026-10-10 ranking work needed). Sources: karthus-provenance.json.
 -- Lay Waste detonation: Normal wiki V26.03 (read 2026-10-10) gives 0.528-0.759 s after the 0.25 s cast and notes the
@@ -1278,9 +1415,10 @@ return {
  Jade_Karthus={id='classic',qDetonateMin=.5,qDetonateMax=.5,fogAge=5,fogMargin=150,fogBase=2500},
 }
 
+end)()
+return pair
 end
 factories['kassadin']=function()
--- Shared Kassadin mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  ForcePulse={
@@ -1306,6 +1444,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Kassadin mechanics data. Values preserved from the maintained controller.
+
 return {
  Kassadin={id='normal',q='NullLance',w='NetherBlade',e='ForcePulse',r='RiftWalk',wBuff='NetherBladeBuff',
   rBuff='RiftWalk',rRange=D.RiftWalk.CastRange,rBaseCost=D.RiftWalk.RBaseCost,rCostKind='double',rMax=D.RiftWalk.MaxStacks,rDuration=D.RiftWalk.RStackDuration,
@@ -1333,8 +1474,14 @@ return {
   qCast=D.Jade_KassadinQ.mCastTime,qInterrupts=true},
 }
 
+end)()
+for identity,casts in pairs(stationary['kassadin'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['kogmaw']=function()
+local pair=(function()
 -- Shared KogMaw mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -1408,8 +1555,11 @@ return {
   passive={buffs={jade_kogmawicathiansurprise=true,jade_kogmawpassivebuff=true},duration=D.Jade_KogMawPassive.passiveDuration,radius=nil,unknown='classic_radius_unmeasured'}},
 }
 
+end)()
+return pair
 end
 factories['leona']=function()
+local pair=(function()
 -- Shared Leona mechanics data. Values preserved from the maintained controller.
 -- Classic E (checked 2026-10-08, https://wiki.leagueoflegends.com/en-us/League_Classic/Leona): blade speed 2000
 -- and cast 0.25 confirmed (a reference script's 1200 has no support). `width` is used as the blade radius:
@@ -1474,14 +1624,10 @@ return {
   wSource='family-assets/Jade_Leona/spells.json Jade_LeonaSolarBarrier BonusARMR/BuffDuration + wiki League_Classic/Leona, read 2026-10-10'}
 }
 
+end)()
+return pair
 end
 factories['lucian']=function()
--- Lucian Normal/Classic mechanics. Details and witnesses: CombatProfiles/lucian-provenance.json.
--- Normal: installed 16.21 asset data/characters/lucian/lucian.bin (Lucian.wad.client 2026-10-21).
--- Classic: the same archive's data/characters/jade_lucian/jade_lucian.bin plus the live recording of an
--- enemy Jade_Lucian on 2026-10-27 (FamilyTelemetry-v2-223..234): Q windup 0.35 at rank 3, W windup 0.30,
--- W missile 1600 speed and 55 width over 1000 units, R missiles 2800 speed and 110 width over 1400 units.
--- Ranks index asset arrays from 1. Per-shot R values; the shot count is in r.shots (nil when not established).
 local D=(function()
 return {
  LucianRMissile={
@@ -1523,6 +1669,14 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Lucian Normal/Classic mechanics. Details and witnesses: CombatProfiles/lucian-provenance.json.
+-- Normal: installed 16.21 asset data/characters/lucian/lucian.bin (Lucian.wad.client 2026-10-21).
+-- Classic: the same archive's data/characters/jade_lucian/jade_lucian.bin plus the live recording of an
+-- enemy Jade_Lucian on 2026-10-27 (FamilyTelemetry-v2-223..234): Q windup 0.35 at rank 3, W windup 0.30,
+-- W missile 1600 speed and 55 width over 1000 units, R missiles 2800 speed and 110 width over 1400 units.
+-- Ranks index asset arrays from 1. Per-shot R values; the shot count is in r.shots (nil when not established).
+
 local profiles={}
 profiles['Lucian']=profiles['Lucian']or {}
 profiles['Lucian'].combat={id='normal',champion='Lucian',names={{'LucianQ'},{'LucianW'},{'LucianE'},{'LucianR'}},
@@ -1564,8 +1718,14 @@ end
 normal.passive=passive;classic.passive=passive
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['lucian'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['lulu']=function()
+local pair=(function()
 -- Shared Lulu mechanics data. Values preserved from the maintained controller.
 -- shieldSource names where the E shield figures offered to Evade were read (2026-10-08).
 local D=(function()
@@ -1625,8 +1785,11 @@ return {
    wEngage={jade_rammusq=true,jade_masteryihighlander=true}},
 }
 
+end)()
+return pair
 end
 factories['lux']=function()
+local pair=(function()
 -- Lux mechanics, Normal and Classic kept separate (no value is borrowed across profiles).
 -- Provenance: CombatProfiles/lux-provenance.json. Arrays are indexed by spell rank (passive: by champion level).
 -- Ranges are the maintained conservative values (display ranges); the wiki/asset maxima are recorded in the
@@ -1711,8 +1874,11 @@ return {
   pFlat=10,pLevel=10,pAP=0,pMark=D.Jade_LuxIlluminationPassive.DebuffDuration},
 }
 
+end)()
+return pair
 end
 factories['malphite']=function()
+local pair=(function()
 -- Shared Malphite mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -1764,8 +1930,11 @@ return {
    rBaseSpeed=1500,rKnockup=D.Jade_MalphiteUFSlash.KnockupDuration,rRadius=D.Jade_MalphiteUFSlash.castRadius,rEffectRadius=325,wAD=D.Jade_MalphiteObduracy.ADBonus},
 }
 
+end)()
+return pair
 end
 factories['masteryi']=function()
+local pair=(function()
 -- Shared MasterYi mechanics data. Values preserved from the maintained controller.
 -- wReset: Meditate resets the basic attack timer (both read 2026-10-08).
 --   Normal:  https://wiki.leagueoflegends.com/en-us/Master_Yi, Meditate: "resets Master Yi's basic attack timer".
@@ -1830,8 +1999,30 @@ return {
         wSource='Jade_MasterYi spells.json Jade_MasterYiMeditate castFrame 3.25, DefenseStat 100-300, Duration 5; wiki League_Classic/Master_Yi read 2026-10-10'},
 }
 
+end)()
+return pair
 end
 factories['missfortune']=function()
+local D=(function()
+return {
+ MissFortuneScattershot={
+  BaseSlowAmount=.4,CastDelay=.25,
+ },
+ MissFortuneViciousStrikes={
+  PassiveMaxMS={60,70,80,90,100},castFrame=8,
+ },
+ MissFortuneBullets={
+  castRange=1450,
+ },
+ Jade_MissFortuneRicochetShot={
+  castRangeDisplayOverride=650,
+ },
+ Jade_MissFortuneScattershot={
+  APRatio=.8,BaseDamage={95,155,215,275,335},mCastTime=.25,
+ },
+}
+end)()
+local pair=(function()
 -- Miss Fortune ranking data (2026-10-10). The shared rows (Q/R damage, channel, waves, buff names) stay in
 -- CombatProfiles/abilities.lua M.controllers.MissFortune; this file holds the numbers added for the ranking gaps.
 -- Sources, read 2026-10-10:
@@ -1853,25 +2044,7 @@ factories['missfortune']=function()
 --   (asset Jade_MissFortuneViciousStrikes: ASMod, Grievous; the Classic Strut is the uncastable passive).
 -- Normal R: 30 deg cone, 1450 effect radius (wiki; asset geometry 34 deg, the narrower is used for occupancy), first wave
 --   .066 s after the channel starts, waves .2036/.1781/.1583 s apart (wiki). Classic: no published cone or wave timing.
-local D=(function()
-return {
- MissFortuneScattershot={
-  BaseSlowAmount=.4,CastDelay=.25,
- },
- MissFortuneViciousStrikes={
-  PassiveMaxMS={60,70,80,90,100},castFrame=8,
- },
- MissFortuneBullets={
-  castRange=1450,
- },
- Jade_MissFortuneRicochetShot={
-  castRangeDisplayOverride=650,
- },
- Jade_MissFortuneScattershot={
-  APRatio=.8,BaseDamage={95,155,215,275,335},mCastTime=.25,
- },
-}
-end)()
+
 return {
  normal={id='normal',qReach='attack',qCrit=1.5,qCritIE=.15,ieItem=3031,
   loveTap={base=.5,step=.1,levels={4,7,9,11,13,20,25,30},minion=.5},
@@ -1885,8 +2058,14 @@ return {
   rAngle=30,rRange=1400},
 }
 
+end)()
+for identity,casts in pairs(stationary['missfortune'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['monkeyking']=function()
+local pair=(function()
 -- Shared MonkeyKing mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -1931,31 +2110,10 @@ return {
   eSpeed=1050,eSource='research/family-assets/Jade_Wukong/spells.json:430,456,517 (Jade_WukongE DashSpeed 1050, EndPointOffsetDistance 75, castRange 650; no cast-time field; 2026-10-08)'},
 }
 
+end)()
+return pair
 end
 factories['morgana']=function()
--- Morgana mechanics, Normal and Classic. Units: world units, seconds, raw damage.
--- Sources, read 2026-10-08:
---   installed assets research/family-assets/{Morgana,Jade_Morgana}/spells.json (DataValues, castRange, castRadius, missileSpeed)
---   League wiki https://wiki.leagueoflegends.com/en-us/Morgana (V25.21) and .../League_Classic/Morgana
--- Asset and wiki agree for each profile on Q (80-300 +90% AP, range 1300, width 140, speed 1200, cast 0.25), the W
--- range 900 and radius 280, the E amounts and 5 s duration, and R (radius 625, 3 s tether, cast 0.35, an enemy
--- champion within 575 required). Per profile:
---   Normal   W ticks every 0.5 s for 9-35 (+10% AP), doubled by missing health: `w` holds the per-second minimum.
---            E range 800, 100-320 (+70% AP). R 200/275/350 (+80% AP) per hit, stun 1.5/1.75/2.
---   Classic  W 25-85 (+20% AP) per second. E 100-300 (+70% AP); range: asset castRange 750, wiki 800, the installed
---            asset decides. R 175/250/325 (+70% AP) per hit, stun 1.5.
--- `q.reach` is not a mechanic: it is the distance beyond which a binding is walked out of (both reference scripts
--- cap their casts there). Nothing here is live-verified.
--- Added 2026-10-10 (same assets, DataValues; wiki Morgana infobox V25.21, W V25.17, R V25.09):
---   q.root        RootDuration 2/2.25/2.5/2.75/3 s (both profiles)
---   w.tick        Normal TickRate .5; w.missingAmp MissingHealthAmpPercent 1 (0-100% more by missing health);
---                 w.monster MonsterMod 170%; w.refund CDRefundPercent .05. Classic: no tick rate, no amplification,
---                 w.mrShred MRShred 4-8 by rank.
---   r.slow        SlowPercent 20 (Classic -0.2); r.haste HastePercent 20/40/60 (Normal only).
---   ccDashes      enemy dashes that apply crowd control on arrival (native cast names, lower case): spell names in
---                 research/family-assets/<Champion>/spells.json. A name the host does not report never matches.
--- W damage per counted second, amplified by the target's missing health (Normal) and against monsters.
--- options.seconds (the time the target is expected inside the soil) multiplies the per-second figure.
 local D=(function()
 return {
  MorganaQ={
@@ -1984,6 +2142,31 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Morgana mechanics, Normal and Classic. Units: world units, seconds, raw damage.
+-- Sources, read 2026-10-08:
+--   installed assets research/family-assets/{Morgana,Jade_Morgana}/spells.json (DataValues, castRange, castRadius, missileSpeed)
+--   League wiki https://wiki.leagueoflegends.com/en-us/Morgana (V25.21) and .../League_Classic/Morgana
+-- Asset and wiki agree for each profile on Q (80-300 +90% AP, range 1300, width 140, speed 1200, cast 0.25), the W
+-- range 900 and radius 280, the E amounts and 5 s duration, and R (radius 625, 3 s tether, cast 0.35, an enemy
+-- champion within 575 required). Per profile:
+--   Normal   W ticks every 0.5 s for 9-35 (+10% AP), doubled by missing health: `w` holds the per-second minimum.
+--            E range 800, 100-320 (+70% AP). R 200/275/350 (+80% AP) per hit, stun 1.5/1.75/2.
+--   Classic  W 25-85 (+20% AP) per second. E 100-300 (+70% AP); range: asset castRange 750, wiki 800, the installed
+--            asset decides. R 175/250/325 (+70% AP) per hit, stun 1.5.
+-- `q.reach` is not a mechanic: it is the distance beyond which a binding is walked out of (both reference scripts
+-- cap their casts there). Nothing here is live-verified.
+-- Added 2026-10-10 (same assets, DataValues; wiki Morgana infobox V25.21, W V25.17, R V25.09):
+--   q.root        RootDuration 2/2.25/2.5/2.75/3 s (both profiles)
+--   w.tick        Normal TickRate .5; w.missingAmp MissingHealthAmpPercent 1 (0-100% more by missing health);
+--                 w.monster MonsterMod 170%; w.refund CDRefundPercent .05. Classic: no tick rate, no amplification,
+--                 w.mrShred MRShred 4-8 by rank.
+--   r.slow        SlowPercent 20 (Classic -0.2); r.haste HastePercent 20/40/60 (Normal only).
+--   ccDashes      enemy dashes that apply crowd control on arrival (native cast names, lower case): spell names in
+--                 research/family-assets/<Champion>/spells.json. A name the host does not report never matches.
+-- W damage per counted second, amplified by the target's missing health (Normal) and against monsters.
+-- options.seconds (the time the target is expected inside the soil) multiplies the per-second figure.
+
 local function soilDamage(p,raw,s,slot,rank,stats,target,options,finite)
  if slot~=1 then return raw,s.type end
  local scale=1
@@ -2014,9 +2197,13 @@ profiles['Jade_Morgana'].combat={id='classic',champion='Morgana',names={{'Jade_M
    jade_rammusq=true,jade_jarvanivdragonstrike=true}}
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['morgana'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['nami']=function()
--- Shared Nami mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  NamiW={
@@ -2039,6 +2226,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Nami mechanics data. Values preserved from the maintained controller.
+
 return {
  Nami={id='normal',q='NamiQ',w='NamiW',e='NamiE',r='NamiR',eBuff='NamiE',spellE=true,
   qBase=D.NamiQ.BaseDamage,qAP=.5,wDamage={60,95,130,165,200},wHeal=D.NamiW.BaseHeal,healAP=D.NamiW.HealAPRatio,
@@ -2057,9 +2247,13 @@ return {
   qImpact=.99,wCast=.25,wSpeed=1500,wSpeedBound=true,rSpeed=850},
 }
 
+end)()
+for identity,casts in pairs(stationary['nami'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['nasus']=function()
--- Shared Nasus mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  NasusQ={
@@ -2088,6 +2282,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Nasus mechanics data. Values preserved from the maintained controller.
+
 return {
  Nasus={id='normal',q={'NasusQ'},qBuff='NasusQ',stacks='NasusQStacks',qAttack='NasusQAttack',
   w='NasusW',e='NasusE',r='NasusR',qBase=D.NasusQ.BonusDamage,eBase=D.NasusE.InitialHitDamage,
@@ -2109,9 +2306,13 @@ return {
    wardKillHealth=1,rSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Nasus (read 2026-10-10): R +300/450/600 health, cast 0.2 s, 15 s'},
 }
 
+end)()
+for identity,casts in pairs(stationary['nasus'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['nautilus']=function()
--- Shared Nautilus mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
  NautilusSplashZone={
@@ -2140,9 +2341,12 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Nautilus mechanics data. Values preserved from the maintained controller.
+
 return {
  Nautilus={id='normal',q='NautilusAnchorDrag',w='NautilusPiercingGaze',e='NautilusSplashZone',r='NautilusGrandLine',
-  rCast='NautilusGrandLineStart',shield='NautilusPiercingGazeShield',passive='NautilusPassiveCheck',root='NautilusPassiveRoot',
+  rCastName='NautilusGrandLineStart',shield='NautilusPiercingGazeShield',passive='NautilusPassiveCheck',root='NautilusPassiveRoot',
   qRoot='NautilusAnchorDragRoot',passiveCD=6,qBase=D.NautilusAnchorDrag.BaseDamage,qAP=.9,eBase=D.NautilusSplashZone.DamageBase,eRange=D.NautilusSplashZone.castRangeDisplayOverride,eArea=600,
    rBase=D.NautilusGrandLine.PrimaryDamage,
    -- Wiki Nautilus read 2026-10-10: Q reach 1122 (asset display range 1150), radius 90, speed 2000, cast .25; R cast .46,
@@ -2153,7 +2357,7 @@ return {
    qControl={'NautilusAnchorDragRoot'},
    geometrySource='https://wiki.leagueoflegends.com/en-us/Nautilus (read 2026-10-10)'},
  Jade_Nautilus={id='classic',q='Jade_NautilusQ',w='Jade_NautilusW',e='Jade_NautilusE',r='Jade_NautilusR',
-  rCast='Jade_NautilusR_Start',shield='Jade_NautilusW_Shield',passive='Jade_NautilusPassive_Check',root='Jade_NautilusPassive_Root',
+  rCastName='Jade_NautilusR_Start',shield='Jade_NautilusW_Shield',passive='Jade_NautilusPassive_Check',root='Jade_NautilusPassive_Root',
   qRoot='Jade_NautilusQ_Root',passiveCD=9.75,qBase=D.Jade_NautilusQ.BaseDamage,qAP=.75,eBase=D.Jade_NautilusE.DamageBase,eRange=D.Jade_NautilusE.castRadius,eArea=D.Jade_NautilusE.castRangeDisplayOverride,
    rBase=D.Jade_NautilusR.PrimaryDamage,
    -- League_Classic/Nautilus read 2026-10-10: same Q (1122, width 180, speed 2000) and R geometry/charge as Normal;
@@ -2163,8 +2367,14 @@ return {
    geometrySource='https://wiki.leagueoflegends.com/en-us/League_Classic/Nautilus (read 2026-10-10)'},
 }
 
+end)()
+for identity,casts in pairs(stationary['nautilus'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['nidalee']=function()
+local pair=(function()
 -- Shared Nidalee mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -2215,8 +2425,11 @@ return {
   trapArm=1.5,trapArmBound=true},
 }
 
+end)()
+return pair
 end
 factories['pantheon']=function()
+local pair=(function()
 -- Pantheon numbers the shared row in CombatProfiles/abilities.lua (M.controllers.Pantheon, not edited by the
 -- champion work) does not carry. The controller overlays these on a private copy of that row.
 local D=(function()
@@ -2246,14 +2459,10 @@ return {
   source='https://wiki.leagueoflegends.com/en-us/League_Classic/Pantheon (read 2026-10-10)'},
 }
 
+end)()
+return pair
 end
 factories['quinn']=function()
--- Shared Quinn Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
--- 2026-10-10 (champion ranking, Quinn-6/7/8/9/12): Q castRange 1050 (Normal asset QuinnQ),
--- Q explosion radius 210 (wiki Quinn and League_Classic/Quinn), Skystrike radius 700 (asset
--- QuinnRFinale / Jade_QuinnRFinale castRadius), R stage names, E dash speeds 2500 then 850 and
--- landing 525 (wiki Quinn), Classic Harrier 25 +10/level, +15/level from level 15 (asset
--- Jade_QuinnPassive; wiki 25-215). Details: CombatProfiles/quinn-provenance.json.
 local D=(function()
 return {
  QuinnW={
@@ -2282,6 +2491,14 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Quinn Normal/Classic mechanics; source pins remain in research/26.20-five-champions.
+-- 2026-10-10 (champion ranking, Quinn-6/7/8/9/12): Q castRange 1050 (Normal asset QuinnQ),
+-- Q explosion radius 210 (wiki Quinn and League_Classic/Quinn), Skystrike radius 700 (asset
+-- QuinnRFinale / Jade_QuinnRFinale castRadius), R stage names, E dash speeds 2500 then 850 and
+-- landing 525 (wiki Quinn), Classic Harrier 25 +10/level, +15/level from level 15 (asset
+-- Jade_QuinnPassive; wiki 25-215). Details: CombatProfiles/quinn-provenance.json.
+
 local profiles={}
 profiles['Quinn']=profiles['Quinn']or {}
 profiles['Quinn'].combat={id='normal',champion='Quinn',names={{'QuinnQ'},{'QuinnW'},{'QuinnE'},{'QuinnR','QuinnRChannel','QuinnRFinale','QuinnRReturnToQuinn'}},
@@ -2320,8 +2537,14 @@ end
 normal.passive=passive;classic.passive=passive
 return profiles
 
+end)()
+for identity,casts in pairs(stationary['quinn'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['rammus']=function()
+local pair=(function()
 -- Shared Rammus mechanics data. Values preserved from the maintained controller.
 -- 2026-10-10 additions (ranking gaps Rammus-1/10/11): R damage, R prediction delay/speed and W resistances,
 -- each with its installed-asset field and the wiki page read that day (rSource/wSource). Normal and Classic
@@ -2380,8 +2603,11 @@ return {
   wSource='family-assets/Jade_Rammus/spells.json Jade_RammusW Armour/Duration/11704a2b + wiki League_Classic/Rammus, read 2026-10-10'},
 }
 
+end)()
+return pair
 end
 factories['rell']=function()
+local pair=(function()
 -- Shared Rell mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -2425,8 +2651,11 @@ return {Rell={id='normal',q='RellQ',w='RellW_Dismount',w2='RellW_MountUp',e='Rel
  passive='rellp_debuff',maxStacks=5,passivePct=.03,passiveLife=5,refreshLife=3.5,
  mounted='rellw_mountedbuff',dismounted='rellw_dismountedbuff',shield='rellw_shield',eEmpower='relle_empowerself',storm='rellr'}}
 
+end)()
+return pair
 end
 factories['ryze']=function()
+local pair=(function()
 -- Ryze mechanics added by the 2026-10-10 ranking work. Damage, ranges and speeds stay in abilities.lua
 -- (AbilityProfiles.controllers.Ryze and the geometry rows); this file holds only the numbers those rows lack.
 -- Every row names its installed-asset field and the wiki page read that day; Normal and Classic are read from
@@ -2476,8 +2705,11 @@ return {
   rHaste=D.Jade_RyzeR.MovementSpeed,rDuration=D.Jade_RyzeR.Duration,rSource='family-assets/Jade_Ryze/spells.json Jade_RyzeR MovementSpeed/Duration + wiki League_Classic/Ryze, read 2026-10-10'},
 }
 
+end)()
+return pair
 end
 factories['seraphine']=function()
+local pair=(function()
 -- Shared Normal Seraphine data; no Classic mechanics are inferred.
 local D=(function()
 return {
@@ -2515,8 +2747,11 @@ return {
   shieldSource='https://wiki.leagueoflegends.com/en-us/Template:Data_Seraphine/Surround_Sound (shield 60/80/100/120/140 +20% AP, 2.5 s, cast 0.25), read 2026-10-08; base ranks also in research/family-assets/Seraphine/spells.json SeraphineW ShieldStrength'}
 }
 
+end)()
+return pair
 end
 factories['shen']=function()
+local pair=(function()
 -- Shared Shen mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -2566,8 +2801,11 @@ return {
   eSource='research/family-assets/Jade_Shen/spells.json:488,501,514 (DashBonusSpeed 800, MinimumDistance 300, MaximumDistance 575; 2026-10-08)'},
 }
 
+end)()
+return pair
 end
 factories['sivir']=function()
+local pair=(function()
 -- Sivir mechanics that are not in CombatProfiles/abilities.lua (M.controllers.Sivir keeps geometry and Q
 -- coefficients). Normal and Classic are separate; no value is borrowed across profiles.
 local D=(function()
@@ -2600,10 +2838,10 @@ return {
   rSource='https://wiki.leagueoflegends.com/en-us/League_Classic/Sivir (On The Hunt: 15 s, +25/45/65% attack speed), read 2026-10-10'},
 }
 
+end)()
+return pair
 end
 factories['skarner']=function()
--- Skarner numbers the shared row in CombatProfiles/abilities.lua (M.controllers.Skarner, not edited by the
--- champion work) does not carry. The controller overlays these on a private copy of that row.
 local D=(function()
 return {
  SkarnerQ={
@@ -2617,6 +2855,10 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Skarner numbers the shared row in CombatProfiles/abilities.lua (M.controllers.Skarner, not edited by the
+-- champion work) does not carry. The controller overlays these on a private copy of that row.
+
 return {
  -- https://wiki.leagueoflegends.com/en-us/Skarner read 2026-10-10: Shattered Earth empowers the next three attacks
  -- (+25 attack range) within the qHold window of the shared row; throwing Upheaval ends Shattered Earth. The buff that
@@ -2633,8 +2875,14 @@ return {
   source='research/family-assets/Jade_Skarner/spells.json; https://wiki.leagueoflegends.com/en-us/League_Classic/Skarner (read 2026-10-10)'},
 }
 
+end)()
+for identity,casts in pairs(stationary['skarner'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['sona']=function()
+local pair=(function()
 -- Shared Sona mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -2679,8 +2927,11 @@ return {
   eHasteSource='research/family-assets/Jade_Sona/spells.json Jade_SonaE MoveSpeedMod/ActiveSpeedDuration; https://wiki.leagueoflegends.com/en-us/League_Classic/Sona (read 2026-10-10)'},
 }
 
+end)()
+return pair
 end
 factories['teemo']=function()
+local pair=(function()
 -- Teemo numbers the controller adds to AbilityProfiles.controllers.Teemo (the shared abilities.lua row keeps Q speeds,
 -- R ranges/speed, Normal armTime and E rows). Sources in teemo-provenance.json (read 2026-10-10).
 --  rBase/rAP/rPoison: R poison 200/325/450 (+50% AP) magic damage over 4 s, both profiles (wiki Teemo and
@@ -2699,9 +2950,10 @@ return {
   spots={map=453,rows={{8375,1075,'brush'},{13025,1825,'brush'},{9825,2375,'brush'},{14025,2875,'brush'},{11025,3325,'brush'},{7275,3325,'brush'},{6225,3825,'brush'},{12625,3875,'brush'},{8675,3725,'brush'},{7125,4875,'brush'},{9075,5075,'brush'},{13125,5425,'brush'},{9675,6125,'brush'},{8825,6775,'brush'},{10125,6625,'brush'},{5425,7275,'brush'},{14725,7225,'brush'},{12175,7375,'brush'},{3875,8075,'brush'},{1375,8375,'brush'},{7125,8575,'brush'},{6075,8825,'brush'},{6025,9375,'brush'},{2825,10025,'brush'},{7075,10325,'brush'},{8875,10475,'brush'},{3275,11675,'brush'},{7175,11675,'brush'},{9825,11625,'brush'},{5075,12025,'brush'},{8375,12125,'brush'},{2025,13025,'brush'},{6225,13075,'brush'},{3125,13925,'brush'},{7975,14325,'brush'}}}},
 }
 
+end)()
+return pair
 end
 factories['thresh']=function()
--- Shared Normal Thresh data; no Classic mechanics are inferred.
 local D=(function()
 return {
  ThreshQ={
@@ -2718,6 +2970,9 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Normal Thresh data; no Classic mechanics are inferred.
+
 return {
  Thresh={id='normal',q='ThreshQ',qNative='ThreshQInternal',q2='ThreshQLeap',w='ThreshW',e='ThreshE',r='ThreshRPenta',hook='threshq',
  qBase=D.ThreshQ.BaseDamage,qAP=D.ThreshQ.APRatio,eBase=D.ThreshE.ActiveBaseDamage,eAP=D.ThreshE.APRatio,rBase=D.ThreshRPenta.Damage,shield=D.ThreshW.BaseShieldValue,
@@ -2729,8 +2984,14 @@ return {
  shieldSource='Thresh W: installed asset research/family-assets/Thresh/spells.json (BaseShieldValue 50..130, ShieldPerSoul 2, ShieldDuration 4, castRadius 350) and https://wiki.leagueoflegends.com/en-us/Template:Data_Thresh/Dark_Passage ("throws his lantern to the target location over 0.5 seconds", "Thresh and the first allied champion to come near the lantern are granted a shield for 4 seconds", effect radius 350), read 2026-10-08. lanternFar 1450 and leapHold are play rules, not kit numbers (hook mark 1.5 s: Template:Data_Thresh/Death_Sentence)'}
 }
 
+end)()
+for identity,casts in pairs(stationary['thresh'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['tristana']=function()
+local pair=(function()
 -- Shared Tristana mechanics data. Values preserved from the maintained controller.
 -- Reviewed 2026-10-08 (each profile from its own source; nothing is copied between them):
 --  Normal W (Rocket Jump): range 900, cast 0.25, speed 1100, 70/105/140/175/210 +100% bonus AD +50% AP magic,
@@ -2793,8 +3054,11 @@ return {
   wSource='research/family-assets/Jade_Tristana/spells.json (range 900, cast 0.25) and https://wiki.leagueoflegends.com/en-us/League_Classic/Tristana (speed 1100) 2026-10-08'},
 }
 
+end)()
+return pair
 end
 factories['twitch']=function()
+local pair=(function()
 -- Twitch numbers the controller adds to AbilityProfiles.controllers.Twitch (the shared abilities.lua row keeps
 -- W/E/R shapes, poison/stealth names and E ratios). Sources in twitch-provenance.json (read 2026-10-10).
 --  rBonusRange/rDuration/rBonusAD: spells.json TwitchFullAutomatic / Jade_TwitchR DataValues BonusRange, Duration,
@@ -2820,15 +3084,10 @@ return {
  Jade_Twitch={id='classic',rBonusRange=D.Jade_TwitchR.BonusRange,rDuration=D.Jade_TwitchR.Duration,rBonusAD=D.Jade_TwitchR.BonusAD,rMarginSpeed=4000,rWindow=3,dashLate=.3},
 }
 
+end)()
+return pair
 end
 factories['vayne']=function()
--- Shared Vayne mechanics data. Values preserved from the maintained controller.
--- E damage (2026-10-10, vayne-provenance.json): Normal research/family-assets/Vayne/spells.json VayneCondemn
--- Damage 50..190 (+50% bonus AD; wiki V26.20), terrain hit StunDamage x1.5 = 75..285 (+75% bonus AD).
--- Classic research/family-assets/Jade_Vayne/spells.json Jade_VayneE FirstHitDamage = SecondHitDamage 45..185,
--- 0.5 bonus AD each. Classic Q under R: Jade_VayneQ scalingDamageUlt .40..60 (ScalingDamage .30..50 otherwise).
--- stealth: alias lists from the installed assets (InquisitionStealth and the Q fade buff); which one the host
--- shows after Q under R is recorded by the vayne_stealth_buffs development trace (not live-verified).
 local D=(function()
 return {
  VayneCondemnMissile={
@@ -2848,6 +3107,15 @@ return {
  },
 }
 end)()
+local pair=(function()
+-- Shared Vayne mechanics data. Values preserved from the maintained controller.
+-- E damage (2026-10-10, vayne-provenance.json): Normal research/family-assets/Vayne/spells.json VayneCondemn
+-- Damage 50..190 (+50% bonus AD; wiki V26.20), terrain hit StunDamage x1.5 = 75..285 (+75% bonus AD).
+-- Classic research/family-assets/Jade_Vayne/spells.json Jade_VayneE FirstHitDamage = SecondHitDamage 45..185,
+-- 0.5 bonus AD each. Classic Q under R: Jade_VayneQ scalingDamageUlt .40..60 (ScalingDamage .30..50 otherwise).
+-- stealth: alias lists from the installed assets (InquisitionStealth and the Q fade buff); which one the host
+-- shows after Q under R is recorded by the vayne_stealth_buffs development trace (not live-verified).
+
 -- Condemn's stationary cast time is declared to the shared cast-time gate.
 return {
  Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
@@ -2856,8 +3124,14 @@ return {
   eBase=D.VayneCondemn.Damage,eAD=.5,eTerrain={75,127.5,180,232.5,285},eTerrainAD=.75,eCastTime=.25},
 }
 
+end)()
+for identity,casts in pairs(stationary['vayne'](D,pair))do
+pair[identity]=pair[identity]or {};pair[identity].stationaryCastTimes=casts
+end
+return pair
 end
 factories['viktor']=function()
+local pair=(function()
 -- Shared Viktor mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -2899,8 +3173,11 @@ return {Viktor={id='normal',q='ViktorQ',w='ViktorW',e='ViktorE',r='ViktorR',r2='
  rGrow=.4,rMaxGrowth=6,rExtension=3,rFast=275,rSlow=200,
  fragments='viktorpassivecount',qEmpower='viktorqbuff',qReturn='viktorqreturn',rTimer='viktorrtimer',rMark='viktorrguide'}}
 
+end)()
+return pair
 end
 factories['xerath']=function()
+local pair=(function()
 -- Shared Normal Xerath data; no Classic mechanics are inferred.
 local D=(function()
 return {
@@ -2940,8 +3217,11 @@ return {
  passive='XerathAscended2OnHit'}
 }
 
+end)()
+return pair
 end
 factories['yone']=function()
+local pair=(function()
 -- Shared Normal Yone data; no Classic mechanics are inferred.
 local D=(function()
 return {
@@ -3007,8 +3287,11 @@ return {
  mobilitySource='Yone Q3 dash: installed asset research/family-assets/Yone (yone-provenance.json q3.dash_distance 450, q3.dash_speed 1500, q.base_windup_seconds 0.35); the wiki page Template:Data_Yone/Mortal_Steel confirms cast 0.35 - 0.175 and "dashes a fixed distance" but states neither the distance nor the dash speed (read 2026-10-08)'}
 }
 
+end)()
+return pair
 end
 factories['zed']=function()
+local pair=(function()
 -- Shared Zed mechanics data. Values preserved from the maintained controller.
 local D=(function()
 return {
@@ -3045,20 +3328,32 @@ return {Zed={id='normal',q='ZedQ',w='ZedW',w2='ZedW2',e='ZedE',r='ZedR',r2='ZedR
  eRadius=D.ZedE.ShadowRadius,eShadowRadius=D.ZedE.ShadowRadius,eBase=D.ZedE.BaseDamage,eAD=D.ZedE.ADRatio,
  passiveThreshold=.5,passiveLevels={1,7,17},passiveRatios={.05,.075,.10},monsterMod=.75,monsterCap=175,passiveDuration=10}}
 
+end)()
+return pair
 end
+factories.katarina=function()return {Katarina={stationaryCastTimes={[0]={names={'KatarinaQ'},seconds=.25}}}}end
 local cached={}
-local function getProfile(identity)
+local function getRow(identity)
  if type(identity)~='string'then return nil end
  if cached[identity]~=nil then return cached[identity]or nil end
  local base=(identity:match('^Jade_(.+)$')or identity):lower()
  local factory=factories[base];if not factory then return nil end
- local pair=factory();local row=pair[identity];local value=row and row.combat
- cached[identity]=value or false;return value
+ local pair=factory();local row=pair[identity]
+ cached[identity]=row or false;return row
 end
+local function getProfile(identity)local row=getRow(identity);return row and row.combat end
 
 local function finite(v)return type(v)=='number'and v==v and v>-math.huge and v<math.huge end
 local function rankValue(v,rank)return type(v)=='table'and(v[rank]or 0)or v or 0 end
 function P.Get(identity)return getProfile(identity)end
+-- A slot alone is not a stage. Callers must supply the current native spell name.
+function P.StationaryCastTime(identity,slot,name)
+ if not finite(slot)or slot%1~=0 or slot<0 or slot>3 or type(name)~='string'then return nil,'unknown_stage'end
+ local row=getRow(identity);local cast=row and row.stationaryCastTimes and row.stationaryCastTimes[slot]
+ if not cast or not finite(cast.seconds)or cast.seconds<=0 or cast.seconds>2.5 then return nil,'unknown_cast_time'end
+ for _,native in ipairs(cast.names)do if name:lower()==native:lower()then return cast.seconds end end
+ return nil,'unknown_stage'
+end
 function P.Range(identity,slot,rank)local p=getProfile(identity);local s=p and p[({'q','w','e','r'})[slot+1]];return s and rankValue(s.range,rank)or 0 end
 function P.Raw(identity,slot,rank,stats,target,options)
  local p=getProfile(identity);local s=p and p[({'q','w','e','r'})[slot+1]];options=options or {}

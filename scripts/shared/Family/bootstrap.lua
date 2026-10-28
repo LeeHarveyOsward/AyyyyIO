@@ -82,7 +82,7 @@ return function(g, manifest, read, digest,storage)
     local loading={}
     local function valid()
         return family.active and g.OrbamaFamily==family
-            and (not provider or g.SDK==provider) and (not hero or g.myHero==hero)
+            and (not provider or g.SDK==provider and not provider.Stopped) and (not hero or g.myHero==hero)
     end
     function family:Factory(id)
         assert(valid(),'Family instance changed')
@@ -164,7 +164,7 @@ return function(g, manifest, read, digest,storage)
         if not self.active then return end
         self.active=false;self.pending={}
         self:ClosePreparation()
-        if self.guide then self.guide:Shutdown()end
+        if self.guide then pcall(self.guide.Shutdown,self.guide)end
         if self.maintenance and g.SDK and g.SDK.OnMaintenance then
             for i=#g.SDK.OnMaintenance,1,-1 do if g.SDK.OnMaintenance[i]==self.maintenance then table.remove(g.SDK.OnMaintenance,i)end end
         end
@@ -174,7 +174,16 @@ return function(g, manifest, read, digest,storage)
             if c and type(c.Shutdown)=='function' then pcall(c.Shutdown,c,reason or 'family_shutdown') end
         end
         if self.support then pcall(self.support.Close,self.support)end
-        if self.diagnostics then pcall(self.diagnostics.Close,self.diagnostics)end
+        if self.diagnostics then
+            local sdk=self.components.Orbama and self.components.Orbama.value
+            local input=sdk and sdk.Input
+            pcall(self.diagnostics.Event,self.diagnostics,'family_shutdown',{reason=reason or 'family_shutdown',
+                providerStopped=sdk and sdk.Stopped==true or false,
+                ownedKeys=input and next(input.KeysOwned or{})~=nil or false,
+                pendingKeyUp=input and next(input.PendingUp or{})~=nil or false,
+                pendingButtons=input and next(input.Buttons or{})~=nil or false})
+            pcall(self.diagnostics.Close,self.diagnostics)
+        end
         if self.diagnosticMaintenance and g.SDK and g.SDK.OnMaintenance then
             for i=#g.SDK.OnMaintenance,1,-1 do if g.SDK.OnMaintenance[i]==self.diagnosticMaintenance then table.remove(g.SDK.OnMaintenance,i)end end
         end
@@ -226,7 +235,15 @@ return function(g, manifest, read, digest,storage)
             return nil,'failed'
         end
         record.state='ready';record.value=value;self.pending[name]=nil
-        if name~='Orbama'and type(value)=='table'and type(value.Shutdown)=='function'then
+        if name=='Orbama'and type(value)=='table'and type(value.Shutdown)=='function'then
+            local shutdown=value.Shutdown
+            value.Shutdown=function(component,reason)
+                if family.active and family.components.Orbama.value==component then
+                    family:Shutdown(reason or 'provider_shutdown');return true
+                end
+                return shutdown(component,reason)
+            end
+        elseif name~='Orbama'and type(value)=='table'and type(value.Shutdown)=='function'then
             local shutdown=value.Shutdown
             value.Shutdown=function(component,...)
                 family:ClosePreparation(name)
@@ -286,6 +303,7 @@ return function(g, manifest, read, digest,storage)
     end
     if g.Callback and g.Callback.Add then
         g.Callback.Add('Tick',function()if family.active then family:Tick()end end)
+        g.Callback.Add('UnLoad',function()family:Shutdown('unload')end)
     end
     return family
 end

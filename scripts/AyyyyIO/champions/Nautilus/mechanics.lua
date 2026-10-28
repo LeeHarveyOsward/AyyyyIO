@@ -31,7 +31,7 @@ return {
 end)()
 return {
  Nautilus={id='normal',q='NautilusAnchorDrag',w='NautilusPiercingGaze',e='NautilusSplashZone',r='NautilusGrandLine',
-  rCast='NautilusGrandLineStart',shield='NautilusPiercingGazeShield',passive='NautilusPassiveCheck',root='NautilusPassiveRoot',
+  rCastName='NautilusGrandLineStart',shield='NautilusPiercingGazeShield',passive='NautilusPassiveCheck',root='NautilusPassiveRoot',
   qRoot='NautilusAnchorDragRoot',passiveCD=6,qBase=D.NautilusAnchorDrag.BaseDamage,qAP=.9,eBase=D.NautilusSplashZone.DamageBase,eRange=D.NautilusSplashZone.castRangeDisplayOverride,eArea=600,
    rBase=D.NautilusGrandLine.PrimaryDamage,
    -- Wiki Nautilus read 2026-10-10: Q reach 1122 (asset display range 1150), radius 90, speed 2000, cast .25; R cast .46,
@@ -42,7 +42,7 @@ return {
    qControl={'NautilusAnchorDragRoot'},
    geometrySource='https://wiki.leagueoflegends.com/en-us/Nautilus (read 2026-10-10)'},
  Jade_Nautilus={id='classic',q='Jade_NautilusQ',w='Jade_NautilusW',e='Jade_NautilusE',r='Jade_NautilusR',
-  rCast='Jade_NautilusR_Start',shield='Jade_NautilusW_Shield',passive='Jade_NautilusPassive_Check',root='Jade_NautilusPassive_Root',
+  rCastName='Jade_NautilusR_Start',shield='Jade_NautilusW_Shield',passive='Jade_NautilusPassive_Check',root='Jade_NautilusPassive_Root',
   qRoot='Jade_NautilusQ_Root',passiveCD=9.75,qBase=D.Jade_NautilusQ.BaseDamage,qAP=.75,eBase=D.Jade_NautilusE.DamageBase,eRange=D.Jade_NautilusE.castRadius,eArea=D.Jade_NautilusE.castRangeDisplayOverride,
    rBase=D.Jade_NautilusR.PrimaryDamage,
    -- League_Classic/Nautilus read 2026-10-10: same Q (1122, width 180, speed 2000) and R geometry/charge as Normal;

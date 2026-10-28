@@ -585,13 +585,23 @@ if self.gates[token]then self.gates[token]=nil;return true end;return false end
         -- while Evade forecasts that standing for it turns the current route into a lethal or hard-control
         -- hit that walking avoids (Evade:CastAllowed). Waiting, never a cancellation: the action keeps its
         -- deadline and `evadeHeld` names the reason. Evade's own answers (evadeCompatible) are not asked.
-        if self.evadePolicy and not q.evadeCompatible and type(q.castTime)=='number'and q.castTime>0 and q.castTime<=2.5 then
+        if self.evadePolicy and not q.evadeCompatible and(q.type=='cast'or q.castTime~=nil)then
             local prior=q.ready
             q.ready=function()
                 if prior and not call(prior)then return false end
+                local seconds=q.castTime
+                if seconds==nil and q.type=='cast'and sdk.Data and type(sdk.Data.GetStationaryCastTime)=='function'and #q.keys==1 then
+                    local key=q.keys[1];local slot
+                    for index,name in ipairs({'HK_Q','HK_W','HK_E','HK_R'})do if key==g[name]then slot=index-1;break end end
+                    if slot~=nil then
+                        local ok,value=pcall(sdk.Data.GetStationaryCastTime,sdk.Data,g.myHero,slot)
+                        if ok then seconds=value end
+                    end
+                end
+                if type(seconds)~='number'or seconds~=seconds or seconds<=0 or seconds>2.5 then q.evadeHeld=nil;return true end
                 local evade=sdk.Evade
                 if not evade or type(evade.CastAllowed)~='function'then q.evadeHeld=nil;return true end
-                local ok,allowed,why=pcall(evade.CastAllowed,evade,q.castTime,q.owner,q.key,q.id)
+                local ok,allowed,why=pcall(evade.CastAllowed,evade,seconds,q.owner,q.key or q.keys[1],q.id)
                 if not ok or allowed~=false then q.evadeHeld=nil;return true end
                 q.evadeHeld=why or 'evade_cast_time';return false
             end

@@ -127,7 +127,7 @@ function B:confirmPreview()
     if not shown then i.confirmBlocked=true;i.resource='No shown plan to confirm; hold Alt to preview';return false end
     i.contract={};i.contractIndex=1;i.flashConsent=false
     for _,step in ipairs(shown.steps) do
-        i.contract[#i.contract+1]={kind=step.kind,unitID=U.id(step.unit),itemID=step.itemID}
+        i.contract[#i.contract+1]={kind=step.kind,unitID=U.id(step.unit),wardSource=step.wardSource}
         if step.kind=='flash' or step.kind=='rflash' then i.flashConsent=true end
     end
     i.plan=shown;i.approvedLabel=shown.label;i.at=c:now();i.confirmBlocked=nil

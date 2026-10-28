@@ -4,7 +4,14 @@ local D={};D.__index=D
 -- Installed KatarinaPassive TotalDamage level table, ranks 1..18.
 local passive={68.184616,72.138458,76.861542,82.353844,88.615387,95.646156,103.446152,112.015381,121.353844,131.461533,142.338455,153.984619,166.399994,179.584610,193.538467,208.261536,223.753845,240.015381}
 function D.new(c)return setmetatable({c=c},D)end
-function D:protected(o)return o.isImmortal==true or U.buff(o,P.protection,Game.Timer())~=nil end
+function D:protected(o)
+    -- The host also sets isImmortal for damageable revival passives. Use the
+    -- provider's spell protection semantics, not that death-prevention flag.
+    local object=self.c.sdk.ObjectManager
+    return o.type==self.c.hero.type and object:IsHeroImmortal(o,false)
+        or U.buff(o,P.protection,Game.Timer())~=nil
+end
+function D:deathPrevented(o)return o.isImmortal==true or U.buff(o,P.deathPrevention,Game.Timer())~=nil end
 function D:spellShield(o)return U.buff(o,P.spellShield,Game.Timer())~=nil end
 function D:mitigate(o,kind,raw)
     if kind=='true'then return math.max(0,raw)end
@@ -83,13 +90,13 @@ function D:apply(pool,parts)
     return pool.hp
 end
 function D:lethal(slot,o,seconds)
-    if self:protected(o)or(slot~='AA'and self:spellShield(o))then return false end
+    if self:protected(o)or self:deathPrevented(o)or(slot~='AA'and self:spellShield(o))then return false end
     local pool=self:pool(o,(o.health or 0)+10+(o.hpRegen or 0)*(seconds or .3))
     return self:apply(pool,self:parts(slot,o,seconds,pool))<=0
 end
 -- Several hits applied in order to one health/shield pool (e.g. E then the dagger pickup).
 function D:lethalWith(slots,o,seconds)
-    if self:protected(o)or self:spellShield(o)then return false end
+    if self:protected(o)or self:deathPrevented(o)or self:spellShield(o)then return false end
     local pool=self:pool(o,(o.health or 0)+10+(o.hpRegen or 0)*(seconds or .3))
     for _,slot in ipairs(slots)do if self:apply(pool,self:parts(slot,o,seconds,pool))<=0 then return true end end
     return false

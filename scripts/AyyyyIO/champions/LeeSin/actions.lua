@@ -51,7 +51,7 @@ function A:wardDependency(slot,target,owner,anticipation)
     local event=ward and (early and ward.event or ward.placementEvent)
     return slot==1 and ward and (early or ward.state=='waiting_w' and ward.observed and U.same(ward.target,target))
         and event and not event.cancelled and event.owner==owner and ward.owner==owner
-        and (c.profile.wards[event.before.item] or c.wards.wardFallbacks and c.wards.wardFallbacks[event.before.item])
+        and (event.before.wardKind or c.profile.wards[event.before.item] or c.wards.wardFallbacks and c.wards.wardFallbacks[event.before.item])
 end
 function A:observeQAim()
     local c=self.ctx;local now=c:now();local active=myHero.activeSpell
@@ -351,6 +351,7 @@ function A:cast(slot,target,owner,opts)
         insecAttempt=owner=='insec' and c.insecTrace or nil,
         deadline=now+math.max(.4,c.latency*2+c.jitter*3+.2),
         before={name=d.name,cd=d.currentCd,ammo=d.ammo,toggleState=d.toggleState,item=item and item.itemID,
+            wardKind=opts.wardItem and c.wards:wardKind(slot,item)or nil,
             itemAmmo=item and item.ammo,stacks=U.stackCount(item),stackCount=item and item.stackCount}}
     if stage==2 then
         event.recastBefore=require('leesin.recasts').snapshot(c,slot)
@@ -389,6 +390,7 @@ function A:cast(slot,target,owner,opts)
             if slot<3 and stage and c:stage(slot,intended)~=stage then return false,'spell_stage_changed' end
             if not opts.wardItem and not c:ready(slot) then return false,'cooldown_energy_or_rank' end
             if itemID and (myHero:GetItemData(slot) or {}).itemID~=itemID then return false,'item_slot_changed' end
+            if opts.wardItem and c:spell(slot).name~=event.before.name then return false,'ward_slot_changed'end
             if opts.wardItem and target and U.dist(myHero.pos,target)>c.wards:range(slot) then return false,'ward_out_of_range' end
             if opts.wardItem and target and c.terrain:wall(target)~=false then return false,'ward_placement_blocked' end
             if slot==1 and stage==1 and target and target.pos and not U.same(target,myHero) and not c.wards:jumpable(target) then return false,'invalid_w_ally_or_range' end

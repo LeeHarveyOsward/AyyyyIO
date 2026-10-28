@@ -6,6 +6,30 @@ Entries for v3 through v8 were reconstructed from published commits. Dates below
 
 The one-line installer follows `main`. GitHub Releases retain the historical snapshots. Offline checks establish implementation behavior, not live game outcomes.
 
+## [v10](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v10) - 2026-10-28
+
+Farming, ward jumps and game-end cleanup
+
+### Fixed
+
+- Keep waveclear from selecting invalid minions or minions forecast dead over living alternatives.
+- Let Katarina damage revival targets without treating the native death-prevention flag as damage immunity. Real invulnerability remains protected, and revival targets are excluded from guaranteed-kill estimates.
+- Resolve supported ward sources from native spell identity and readiness when inventory rows are unavailable. Preserve that source through Lee Sin's wardjump and insec, Katarina's queued ward mobility and shared reveal casts. Unknown charge counts remain unknown.
+- Keep orbwalking active when world-cursor samples are corrupt.
+- Retire callbacks safely during dispatch, cancel pending work and release owned input at unload. Late callbacks stay inert after host replacement.
+- Apply sourced stationary cast times at shared dispatch and separate Nautilus R's cast name from its duration.
+
+### Development recordings
+
+- Add bounded farming and Katarina Q evidence with explicit coverage gaps.
+- Preserve important cast observations under recorder pressure, resolve missile-owner handles and skip native reads for samples that cannot be retained.
+
+### Verification and limits
+
+The integrated farming build passed 122 sequential shared runners and all 24 stress runs with unchanged budgets. The Katarina correction passed 318 checks in both Lua engines and profiles, plus its release gate. The exact stripped release passed byte readback, source reproducibility, installer, controller initialization, load-order, unload and lazy-loading checks. Earlier unchanged champion packages retain their completed checks from the resumed gate.
+
+Live recordings show wardjump completion and clean unloads. The farming fix was loaded, but CS attribution and total missed opportunities remain unknown. The Katarina correction still needs live confirmation after reload. No perfect-farming or live FPS claim is made. Native inventory item IDs, stacks and charges remain unreliable; ward resolution does not repair the compiled inventory reader. Public builds exclude development diagnostics.
+
 ## [v9](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v9) - 2026-10-28
 
 Lucian, Hecarim, shared ability data and steadier dodges

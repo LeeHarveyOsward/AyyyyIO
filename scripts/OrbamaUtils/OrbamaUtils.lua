@@ -7,7 +7,7 @@ local function boot()
  if SDK.OrbamaUtils and SDK.OrbamaUtils:active() then return SDK.OrbamaUtils end
  local modules,cache={},{}
  local externalRequire=require
-modules["ChampionMobility.wards"]=function(require) return _G.OrbamaFamily:Factory("9768e601e79b31befc238366ddb7f056cd4f9dc0720c8c999f918b1829091bf1")(require) end
+modules["ChampionMobility.wards"]=function(require) return _G.OrbamaFamily:Factory("4ef35c0420ac8c8c9cfb1cb7b27d17b8e7162fc7a46b0230c40d7d7a09aebe6e")(require) end
 modules["CombatProfiles.camp_timing"]=function(require) return _G.OrbamaFamily:Factory("2d57ee1752e69959f1f19f9d0db112f6fc4e368636ad800025f6c307183102ee")(require) end
 modules["CombatProfiles.classic_camp_formations"]=function(require) return _G.OrbamaFamily:Factory("350c61b34f4b7ddbec4fc72de9eefdbb73338b35740254abb733e6e5d43b7d44")(require) end
 modules["CombatProfiles.classic_camps"]=function(require) return _G.OrbamaFamily:Factory("dd8d382af457ae61aa5f6fa779bab1b2e02301b557e863f020d2ec75859cc4a9")(require) end
@@ -16,7 +16,7 @@ modules["CombatProfiles.cooldowns"]=function(require) return _G.OrbamaFamily:Fac
 modules["CombatProfiles.flash"]=function(require) return _G.OrbamaFamily:Factory("f4b5e27faa780bcc038c7c2f186bcdd6e68f3269056e09bd4c3bea8b38c32151")(require) end
 modules["CombatProfiles.normal_camp_formations"]=function(require) return _G.OrbamaFamily:Factory("37708c5cf79c846a41b3755041696fcdb26afc439a5ba0b684586daac395039a")(require) end
 modules["CombatProfiles.normal_camps"]=function(require) return _G.OrbamaFamily:Factory("bf478ad3bded3b66d0c1ccae1ced56308a28c067a83c8c5628a78d47c79d5dd2")(require) end
-modules["CombatProfiles.world"]=function(require) return _G.OrbamaFamily:Factory("283debfb90308f50cc23be05b6bd05b74ddfd75687ca20b0064f3c6c75a0d06e")(require) end
+modules["CombatProfiles.world"]=function(require) return _G.OrbamaFamily:Factory("4e0e5949eae6eb7199d28f1731943c7c4340f5a68683a234de707d56b47d9607")(require) end
 modules["InputGeometry.object_aim"]=function(require) return _G.OrbamaFamily:Factory("39ce532f5f22d98ea5faa9d3652ac04f0aebb5fcc6694b9975215121e9f63959")(require) end
 modules["InputGeometry.screen"]=function(require) return _G.OrbamaFamily:Factory("65cdc30affd39d36b5c04a3be7e4387f39deba4d4237f5ba45981c845387254e")(require) end
 modules["Orbama.menus"]=function(require) return _G.OrbamaFamily:Factory("d77e24d9e67e4afce47aec143cde65f28183d8a9d3505511d35fc782fae476fe")(require) end
@@ -36,9 +36,9 @@ modules["utils.locations"]=function(require) return _G.OrbamaFamily:Factory("399
 modules["utils.objectives"]=function(require) return _G.OrbamaFamily:Factory("1560ede4e60c7f57f8c97deb4c853964166dfbd8f2650d4396218eca2ab7a92c")(require) end
 modules["utils.observations"]=function(require) return _G.OrbamaFamily:Factory("378241e9ca3c8b0ee4c87e009a5a1818915698da7a54f162df8d56e5013b0c43")(require) end
 modules["utils.placement_requests"]=function(require) return _G.OrbamaFamily:Factory("d8e2ad1bcad00b3cdf3816609e6dfbc86893ca10eaab759e7ba3e0af08ed394b")(require) end
-modules["utils.reveal"]=function(require) return _G.OrbamaFamily:Factory("62c03900e02cefc3c840950feed5525d87d11663878e6f917e114dd9d2483fae")(require) end
+modules["utils.reveal"]=function(require) return _G.OrbamaFamily:Factory("4724b0a2c4f932aa1b28645dddae56779ab9788b1944d8d5c0707d41b146bd3b")(require) end
 modules["utils.util"]=function(require) return _G.OrbamaFamily:Factory("65cb2f3117088367ad12497bff818eb67088f789da1fee3f2f9712f777839511")(require) end
-modules["utils.wards"]=function(require) return _G.OrbamaFamily:Factory("ec09c94d1bc3dce5ab2f8ebb59aeac757a2dc20c7c36fe59452a101421496124")(require) end
+modules["utils.wards"]=function(require) return _G.OrbamaFamily:Factory("c9daffbdd4a61df994caecb7d04339a1d30899043b9cd625dca076a97969b549")(require) end
 modules["utils.classic_activator"]=function(require) return _G.OrbamaFamily:Factory("f8088a74afbca914ee35690b9e6398839950d32d96ee045e93e74b59a11b01cb")(require) end
 local function load(name)
  if cache[name]~=nil then return cache[name]end

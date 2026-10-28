@@ -49,17 +49,22 @@ W.itemReady=Shared.itemReady
 W.hasCharges=Shared.hasCharges
 W.wardKind=Shared.wardKind
 W.wardCharges=Shared.wardCharges
+W.sourceIdentity=Shared.sourceIdentity
 function W:diagnostics(reason)
     if not self.ctx.config.capture then return end
-    local c=self.ctx;local rows={}
-    for slot=6,12 do
-        local item=myHero:GetItemData(slot);local d=c:spell(slot)
-        if item and (item.itemID or 0)>0 then rows[#rows+1]={slot=slot,id=item.itemID,name=d.name,
-            spellSlot=c:spellSlot(slot),hotkey=self.actions:key(slot),
-            supported=c.profile.wards[item.itemID]~=nil,cd=d.currentCd,useState=Game.CanUseSpell(c:spellSlot(slot)),
-            spellAmmo=d.ammo,itemAmmo=item.ammo,stacks=item.stacks,stackCount=item.stackCount,ready=self:itemReady(slot,item)} end
+    local c=self.ctx;local fields={reason=reason,wStage=c:stage(1),wReady=c:ready(1)}
+    local function short(v)return type(v)=='number'and tostring(math.floor(v+.5))or'-'end
+    -- Scalar fields survive the bounded family recorder. Probe inventory and
+    -- spell namespaces separately; an empty item row does not identify a spell.
+    for index=6,12 do
+        local ok,item=pcall(myHero.GetItemData,myHero,index)
+        fields['i'..index]=ok and item and(short(item.itemID)..':'..short(item.ammo)..':'..short(U.stackCount(item)))or'unknown'
     end
-    if c.config.capture then c:log('ward_resolution',{reason=reason,wStage=c:stage(1),wReady=c:ready(1),items=rows}) end
+    for slot=6,12 do
+        local d=c:spell(slot)
+        fields['n'..slot]=tostring(d.name or'-')..':'..short(d.currentCd)..':'..short(d.ammo)..':'..short(Game.CanUseSpell(c:spellSlot(slot)))
+    end
+    c:log('ward_resolution',fields)
 end
 W.slot=Shared.slot
 function W:itemSlot(id) return self:slot(id) end

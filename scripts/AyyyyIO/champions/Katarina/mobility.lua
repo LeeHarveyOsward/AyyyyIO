@@ -51,12 +51,13 @@ function M:start(pos,owner,target,unit)
     end
     if c.profile.id=='normal'then return false end
     local slot=self:slot();if not slot or U.dist(c.hero.pos,pos)>c.config:get('wardRange')or self.terrain:wall(pos)~=false then return false end
+    local source=Ward.sourceIdentity(self,slot)
     if owner~='jump'and not c.planner:safe(pos,target,owner~='combo')then return false end
     if owner=='combo'and(not U.valid(target)or not c.planner:estimate(target,pos,2).lethal or not c.planner:safe(pos,target))then return false end
     local ids={};for _,w in ipairs(c.state.objects.wards or {})do if U.id(w)then ids[U.id(w)]=true end end
     local p={state='placing',owner=owner,pos=U.copy(pos),ids=ids,target=target,at=Game.Timer(),expires=Game.Timer()+2}
     local ok,record=c.actions:submit({slot=slot,pos=pos,owner=owner,ward=true,release=true,
-        validate=function()return c.state:ready(2)and self:itemReady(slot,nil,true)and self:hasCharges(slot)and self.terrain:wall(pos)==false and(owner=='jump'or c.planner:safe(pos,target,owner~='combo'))
+        validate=function()return Ward.sourceIdentity(self,slot)==source and c.state:ready(2)and self:itemReady(slot,nil,true)and self:hasCharges(slot)and self.terrain:wall(pos)==false and(owner=='jump'or c.planner:safe(pos,target,owner~='combo'))
             and U.dist(c.hero.pos,pos)<=c.config:get('wardRange')and(owner~='combo'or U.valid(target)and c.planner:estimate(target,pos,2).lethal and c.planner:safe(pos,target))end})
     if ok then p.event=record;self.pending=p;c:record('jump',{event='ward_requested',owner=owner,pos=pos});return true end
     c:record('jump',{event='ward_rejected',owner=owner,reason=record})

@@ -13,11 +13,13 @@ function Service:Available(itemID)
     local slot=self.inventory:slot(itemID)
     if not slot then return nil,'no_usable_ward'end
     local item=self.c.g.myHero:GetItemData(slot)
-    return {slot=slot,itemID=item.itemID,at=self.c:now(),profile=self.c.profile.id}
+    local id=item and item.itemID
+    return {slot=slot,itemID=U.finite(id)and id>0 and id<4294967295 and id%1==0 and id or nil,
+        source=self.inventory:sourceIdentity(slot,item),at=self.c:now(),profile=self.c.profile.id}
 end
 function Service:Ready(slot,itemID)
     local item=self.c.g.myHero:GetItemData(slot)
-    return not self.c:blocked()and item and item.itemID==itemID
+    return not self.c:blocked()and(not itemID or self.inventory:sourceIdentity(slot,item)==itemID)
         and self.inventory:itemReady(slot,item)and self.inventory:hasCharges(slot,item)
 end
 function Service:FindNearby(pos,range,team)
@@ -32,10 +34,10 @@ end
 function Service:Request(position,options)
     return self.requests:Request(position,options,function(o)
         local available,why=self:Available(o.itemID);if not available then return nil,why end
-        local slot,itemID=available.slot,available.itemID
+        local slot,source=available.slot,available.source
         available.ready=function()
             local item=self.c.g.myHero:GetItemData(slot)
-            return item and item.itemID==itemID and self.inventory:itemReady(slot,item,true)
+            return self.inventory:sourceIdentity(slot,item)==source and self.inventory:itemReady(slot,item,true)
                 and self.inventory:hasCharges(slot,item)
         end
         return available

@@ -47,14 +47,14 @@ modules["evade.threats"] = function(require) return _G.OrbamaFamily:Factory("0c2
 modules["evade.trajectory"] = function(require) return _G.OrbamaFamily:Factory("3383f3e60000f69a624a07a2fd50f70800e5c1474c25917f22a5098de69abae0")(require) end
 modules["evade.unlisteddata"] = function(require) return _G.OrbamaFamily:Factory("28dbbe40368e86fce14b184437b0643576838826fae3dd5b3b7a8fc8ece8a1dc")(require) end
 modules["evade.untargetable_adapter"] = function(require) return _G.OrbamaFamily:Factory("b516d8cd7f85a551319b14213fc4677847cb61f8a9365578cfd9c00e0856d514")(require) end
-modules.ActionClient=function(require) return _G.OrbamaFamily:Factory("c573bc09602a9a132c55899af54011b1d90ef4191ab35858361d95c72391fe90")(require) end
+modules.ActionClient=function(require) return _G.OrbamaFamily:Factory("e80d2d89d6979a56680ad4df176d2d31edbb448d5b2d34c591286a9ce0f7d93f")(require) end
 modules["CombatProfiles.control_window"]=function(require) return _G.OrbamaFamily:Factory("d42fe401457668562d806fcc0b9d7098264e8bdb117a673b06410528d8a56bdf")(require) end
 modules["CombatProfiles.champion_motion"]=function(require) return _G.OrbamaFamily:Factory("a1065fd9c06af1a474441a702bd65f660b7f9d53a9aa919016e0bb00158fafa9")(require) end
 modules["CombatProfiles.projectile_motion"]=function()return _G.OrbamaFamily:Require("2d5cfc805e63c733edec2d00ddd809a46bb9e5db0284653b6674ff4af9615f10")end
 modules["CombatProfiles.abilities"]=function()return _G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")end
 modules["CombatProfiles.flash"]=function(require) return _G.OrbamaFamily:Factory("f4b5e27faa780bcc038c7c2f186bcdd6e68f3269056e09bd4c3bea8b38c32151")(require) end
 modules["CombatProfiles.cc_attacks"]=function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end
-modules["CombatProfiles.champion_mechanics"]=function(require) return _G.OrbamaFamily:Factory("9b0f0ca4dc10e89ac5153be241244434028523e5505df6b650ac40f1e6f736d3")(require) end
+modules["CombatProfiles.champion_mechanics"]=function(require) return _G.OrbamaFamily:Factory("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")(require) end
 local function load(name) if cache[name]~=nil then return cache[name]end; local f=modules[name]; if not f then return externalRequire(name)end; local v=f(load);cache[name]=v;return v end
 return load("evade.app").boot(_G)
 

@@ -158,7 +158,7 @@ function I:plan(i,origin,used,reservedEnergy,checkpoint)
     if i.contract then
         wardSlot=nil
         for n=i.contractIndex or 1,#i.contract do
-            if i.contract[n].kind=='ward' then wardSlot=wReady and c.wards:itemSlot(i.contract[n].itemID);break end
+        if i.contract[n].kind=='ward' then wardSlot=wReady and c.wards:itemSlot(i.contract[n].wardSource);break end
         end
     end
     local wardRange=c.wards:range(wardSlot)
@@ -227,7 +227,7 @@ function I:plan(i,origin,used,reservedEnergy,checkpoint)
         if not permits(node,kind,unit) or not ground(p) or node.energy+energy>energyBudget then return end
         local steps={};for n,s in ipairs(node.steps) do steps[n]=s end
         local step={kind=kind,pos=U.copy(p),unit=unit}
-        if kind=='ward' then step.itemID=myHero:GetItemData(wardSlot).itemID end
+        if kind=='ward' then step.wardSource=c.wards:sourceIdentity(wardSlot)end
         for _,goal in ipairs(goals) do
             if (kind=='ward' or kind=='flash' or kind=='rflash') and U.dist(p,goal)<1 then step.goalDistance=U.dist(goal,i.plannedTarget or i.target.pos);break end
         end
@@ -321,7 +321,7 @@ function I:plan(i,origin,used,reservedEnergy,checkpoint)
         local labels={};for _,s in ipairs(best.steps) do
             local label=s.kind=='ward' and 'Ward / W' or s.kind=='flash' and 'Flash' or s.kind=='rflash' and 'R > Flash' or s.kind=='w' and 'Existing W'
                 or ((stage==2 and 'Q2' or 'Q1 > Q2')..' ['..(s.unit.charName or 'bridge')..']')
-            if s.kind=='ward' then label=label..' ['..(WardNames[s.itemID] or 'item '..tostring(s.itemID))..']' end
+            if s.kind=='ward'and WardNames[s.wardSource]then label=label..' ['..WardNames[s.wardSource]..']'end
             labels[#labels+1]=label
         end
         if best.walk then labels[#labels+1]='Walk correction' end
@@ -387,7 +387,7 @@ function I:adapt(i,plan)
     for _,s in ipairs(plan.steps) do
         local p=s.unit and s.unit.pos or s.pos
         if s.goalDistance then p=U.toward(i.plannedTarget or i.target.pos,i.plannedEndpoint or i.endpoint,-s.goalDistance) end
-        out.steps[#out.steps+1]={kind=s.kind,pos=U.copy(p),unit=s.unit,itemID=s.itemID,goalDistance=s.goalDistance,closeLanding=s.closeLanding}
+        out.steps[#out.steps+1]={kind=s.kind,pos=U.copy(p),unit=s.unit,wardSource=s.wardSource,goalDistance=s.goalDistance,closeLanding=s.closeLanding}
     end
     return out
 end
@@ -399,7 +399,7 @@ function I:validate(i,plan,origin,reserved)
         if i.contract then
             local expected=i.contract[(i.contractIndex or 1)+n-1]
             if not expected or expected.kind~=step.kind or expected.unitID and expected.unitID~=U.id(step.unit)
-                or expected.itemID and expected.itemID~=step.itemID then return false end
+                or expected.wardSource and expected.wardSource~=step.wardSource then return false end
         end
         if not step.pos or c.terrain:wall(step.pos)~=false then return false end
         local d=U.dist(from,step.pos)
@@ -412,7 +412,7 @@ function I:validate(i,plan,origin,reserved)
                 or c.spells:projectileWall(step.pos,from,U.id(step.unit)) then return false end
             energy=energy-(c:spell(0).mana or 0)-(marked and 0 or 50)
         elseif step.kind=='w' or step.kind=='ward' then
-            local wardSlot=step.kind=='ward' and c.wards:itemSlot(step.itemID)
+            local wardSlot=step.kind=='ward' and c.wards:itemSlot(step.wardSource)
             if step.kind=='ward' and not wardSlot then return false end
             if not self:spellReady(1,origin~=nil) or c:stage(1)~=1 or c.actions:pendingCast(1)
                 or d>(step.kind=='ward' and c.wards:range(wardSlot) or c.profile.wRange) then return false end
@@ -582,7 +582,7 @@ function I:tick(i,aim)
         if not self:validate(i,plan) then i.search=nil;return end
         i.plan=plan;step=plan.steps[1]
         i.resource=#plan.steps==1 and not plan.walk and 'Ward / W' or plan.label
-        ok=c.wards:start(step.pos,'insec',true,step.itemID)
+        ok=c.wards:start(step.pos,'insec',true,step.wardSource)
         if ok then
             i.used.w=true;i.wardCommitted=true;i.phase='wardjump';i.wardAttempt=c.wards.pending
             if i.wardAttempt then i.wardAttempt.contractIndex=i.contractIndex or 1 end

@@ -30,7 +30,7 @@ function R:Available(position)
  end
  if c.Wards and(not distance or distance<=R.wardRange)then
   local ward=c.Wards:Available()
-  if ward then return {slot=ward.slot,itemID=ward.itemID,range=R.wardRange,kind='ward'}end
+  if ward then return {slot=ward.slot,itemID=ward.itemID,source=ward.source,range=R.wardRange,kind='ward'}end
  end
  return nil,'no_reveal_source'
 end
@@ -38,7 +38,11 @@ function R:Request(position,options)
  return self.requests:Request(position,options,function()
   local resource,why=self:Available(position);if not resource then return nil,why end
   local slot,itemID=resource.slot,resource.itemID
-  resource.ready=function()local item=self.c.g.myHero:GetItemData(slot);return item and item.itemID==itemID and self.c:ready(slot)end
+  if resource.kind=='ward'then
+   resource.ready=function()return self.c.Wards:Ready(slot,resource.source)end
+  else
+   resource.ready=function()local item=self.c.g.myHero:GetItemData(slot);return item and item.itemID==itemID and self.c:ready(slot)end
+  end
   return resource
  end)
 end

@@ -39,15 +39,16 @@ P.wardExcluded={[3363]=true,[3364]=true,[3330]=true,[4643]=true,[773348]=true}
 -- Item-spell names that place a jumpable ward, for an item id the tables above
 -- do not know. Names are the long-standing public spell names of these actives;
 -- they are NOT read from installed assets (the repository extracts no item
--- spells), and Classic items report '<id>Spell' (live 2026-10-08: '773340Spell'),
--- so this fallback is a safety net for Normal only. Farsight ('TrinketOrb') and
+-- spells), and Classic items report '<id>Spell'. The shared resolver matches
+-- numeric native names only against the active profile's ward IDs. Farsight ('TrinketOrb') and
 -- sweepers are deliberately absent.
-local wardSpells={{'trinkettotem','charge'},{'itemghostward','charge'},{'jammerdevice','stack'},{'visionward','stack'},
-    {'sightward','stack'},{'itemminiward','stack'},{'wrigglelantern','cooldown'}}
+local wardSpells={{'trinkettotem','charge',1},{'itemghostward','charge',2},{'jammerdevice','stack',6},{'visionward','stack',6},
+    {'sightward','stack',4},{'itemminiward','stack',4},{'wrigglelantern','cooldown',3}}
 function P.wardSpellKind(name)
-    name=(name or ''):lower()
+    if type(name)~='string'then return nil end
+    name=name:lower()
     if name=='' or name:find('trinketorb',1,true) or name:find('sweep',1,true) or name:find('farsight',1,true) then return nil end
-    for _,row in ipairs(wardSpells) do if name:find(row[1],1,true) then return row[2] end end
+    for _,row in ipairs(wardSpells) do if name:find(row[1],1,true) then return row[2],row[3] end end
 end
 -- Spend order, lowest first. Rule: the free trinket charge, then other
 -- recharging charges (Sightstone, support item), then a cooldown item, then

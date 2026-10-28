@@ -69,7 +69,7 @@ function P:estimate(target,origin,exclude,ready)
                 if pool.hp<=0 then break end
             end
         end
-        local result={lethal=pool.hp<=0,time=time,damage=math.max(0,target.health-pool.hp),parts=used}
+        local result={lethal=pool.hp<=0 and not c.damage:deathPrevented(target),time=time,damage=math.max(0,target.health-pool.hp),parts=used}
         if result.lethal and(not best.lethal or result.time<best.time)or not best.lethal and result.damage>best.damage then best=result end
     end
     return best
