@@ -385,11 +385,11 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
             local landed=arrival+G.dist(from,path[1])/mobility.speed
             if landed>finish then return unknown('route_exceeds_horizon')end
             ok,why=segment(from,path[1],arrival,landed,true);if not ok then return unknown(why)end
-            ok,why=self.terrain:Segment(from,path[1],ctx.radius,arrival,landed,budget)
+            ok,why=self.terrain:Segment(from,path[1],ctx.radius,arrival,landed,budget,ctx.terrainMemo)
             if ok~=true then return unknown(why)end
             arrival=landed
         else
-            ok,why=self.terrain:Segment(path[1],path[1],ctx.radius,arrival,arrival,budget)
+            ok,why=self.terrain:Segment(path[1],path[1],ctx.radius,arrival,arrival,budget,ctx.terrainMemo)
             if ok~=true then return unknown(why)end
         end
         from,t=path[1],arrival;first=2
@@ -468,14 +468,14 @@ function P:Evaluate(path,ctx,defense,observedRoute,skipUnusableTerrain)
     if not observedRoute and not (skipUnusableTerrain and unusable)then
   if timedSegments then
    for _,piece in ipairs(timedSegments)do
-    local free,reason=self.terrain:Segment(piece.a,piece.b,ctx.radius,piece.t0,piece.t1,budget)
+    local free,reason=self.terrain:Segment(piece.a,piece.b,ctx.radius,piece.t0,piece.t1,budget,ctx.terrainMemo)
     if free~=true then return unknown(reason)end
    end
   else
    local position,time=movementOrigin,movementStart
    for i=first,#path do local point=path[i]
     local arrival=time+G.dist(position,point)/ctx.speed
-    local free,reason=self.terrain:Segment(position,point,ctx.radius,time,arrival,budget)
+    local free,reason=self.terrain:Segment(position,point,ctx.radius,time,arrival,budget,ctx.terrainMemo)
     if free~=true then return unknown(reason)end
     position,time=point,arrival
    end
@@ -852,7 +852,7 @@ function P:Search(ctx,previous)
                 local distance=n.g+step*((x~=0 and z~=0)and 1.4142135623731 or 1)
                 if distance<=length and (not seen[key]or distance<seen[key])then
                     local point={x=ctx.origin.x+nx*step,y=ctx.origin.y,z=ctx.origin.z+nz*step}
-                    local free=self.terrain:Segment(p,point,ctx.radius,ctx.now+n.g/ctx.speed,ctx.now+distance/ctx.speed,ctx.sharedBudget)
+                    local free=self.terrain:Segment(p,point,ctx.radius,ctx.now+n.g/ctx.speed,ctx.now+distance/ctx.speed,ctx.sharedBudget,ctx.terrainMemo)
                     if free==true then seen[key]=distance;push(heap,{x=nx,z=nz,g=distance,f=distance+G.dist(point,intent)*.1,parent=n})end
                 end
             end end end
@@ -915,9 +915,13 @@ function P:Weave(best,baseline,ctx,alternatives)
     return best
 end
 function P:Plan(ctx,previous)
+    local copy={};for k,v in pairs(ctx)do copy[k]=v end;ctx=copy
+    if self.terrain.live then
+        ctx.terrainMemo={owner=self.terrain,reader=self.terrain.live,revision=self.terrain.revision,count=0}
+    else ctx.terrainMemo=nil end
     -- A dodge in an attack mode collects a few safe escapes for the weave check.
     if ctx.attack and ctx.attack.ready then
-        local copy={};for k,v in pairs(ctx)do copy[k]=v end;copy.weaveList={};ctx=copy
+        ctx.weaveList={}
     end
     local best,baseline=self:Choose(ctx,previous)
     return self:Weave(best,baseline,ctx,ctx.weaveList),baseline
