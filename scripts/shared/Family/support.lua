@@ -1,5 +1,5 @@
 return function()
--- Shared opt-in support controls. File IO stays in idle recorder maintenance.
+-- Shared opt-in log recording controls. File IO stays in idle recorder maintenance.
 return function(g,family)
     local recorder=family.diagnostics
     local store=recorder.recordingStore
@@ -23,10 +23,10 @@ return function(g,family)
         if self.closed then return end
         local sdk=g.SDK;local main=sdk and sdk.Menu and sdk.Menu.Main
         if not self.menu and main then
-            main:MenuElement({type=g.MENU,id='SupportLogs',name='Support logs'})
+            main:MenuElement({type=g.MENU,id='SupportLogs',name='Logs'})
             self.menu=main.SupportLogs
             if type(self.menu.Hide)=='function'then self.menu:Hide(false)end
-            self.menu:MenuElement({id='record',name='Record support logs',value=false})
+            self.menu:MenuElement({id='record',name='Record logs',value=false})
             self.menu:MenuElement({type=g.SPACE,name='Recording starts off each reload'})
             self.menu:MenuElement({type=g.SPACE,name='Keeps 5 recordings, up to 8 MiB each'})
             self.menu:MenuElement({type=g.SPACE,name='Share file: FamilySupport.jsonl'})
@@ -59,7 +59,7 @@ return function(g,family)
                 'Recording is paused. Enable it again to continue.',
                 'The file contains up to five recordings.', 'Nothing is uploaded automatically.'}
             self.request=nil;self:Publish(lines)
-            if g.print then pcall(g.print,'[Support logs]\n'..table.concat(lines,'\n')..'\nRecording: '..recorder.session)end
+            if g.print then pcall(g.print,'[Logs]\n'..table.concat(lines,'\n')..'\nRecording: '..recorder.session)end
         elseif self.request and store and store.error then
             self.request=nil;self:Publish({'Share file is incomplete: '..tostring(store.error),'Folder: '..directory})
         end

@@ -10,6 +10,8 @@ The one-line installer follows `main`. GitHub Releases retain the historical sna
 
 Smarter farming, steadier input and opt-in log recording
 
+Replacement build: the menu is now Orbama > Logs, with Record logs. Existing v11 users must rerun the installer and fully reload; the updater skips equal-sequence replacements.
+
 ### Shared farming and waveclear
 - Time incoming minion attacks from native cast end. Prevent already-landed damage from being subtracted again, a confirmed cause of early shots.
 - Keep tracking launched attacks after the source retargets, casts again, disappears or dies.
@@ -74,7 +76,7 @@ Smarter farming, steadier input and opt-in log recording
 - Start recording OFF after every reload, regardless of a previous saved opt-in.
 - Add bounded public opt-in log recording; keep detailed development hooks lazy and ability capture separately opt-in.
 - Keep five RECORDING SESSIONS, not necessarily five games, at up to 8 MiB each.
-- Export one FamilySupport.jsonl through Orbama > Support logs, with filename and folder shown in the menu.
+- Export one FamilySupport.jsonl through Orbama > Logs, with filename and folder shown in the menu.
 - Cap retained slots at 40 MiB and the export at another 40 MiB, plus a small index.
 - Export incrementally during safe idle maintenance, pause recording for sharing and show storage/error messages.
 - Remove legacy champion file sinks so old preferences cannot start separate unbounded logs.
@@ -99,7 +101,7 @@ Smarter farming, steadier input and opt-in log recording
 - Native inventory slot mapping still limits BORK activation.
 - Live fountain-hit timing remains unverified.
 
-Public opt-in log recording starts off. Enable it under Orbama > Support logs when reporting a problem. Prepare the share file there, then share FamilySupport.jsonl from LOLEXT/Scripts/Common. A full script reload is required after updating.
+Public opt-in log recording starts off. Enable it under Orbama > Logs when reporting a problem. Prepare the share file there, then share FamilySupport.jsonl from LOLEXT/Scripts/Common. A full script reload is required after updating.
 
 ## [v10](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v10) - 2026-10-28
 
