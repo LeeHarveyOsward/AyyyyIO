@@ -15,7 +15,7 @@ return function(require)
 local G=require('evade.geometry')
 local H={};H.__index=H
 H.interval=.25;H.maxTracked=32;H.reach=2500;H.maxScan=400
-function H.new(threats)return setmetatable({threats=threats,rows={},count=0,nextAt=0,names={},advisory={}},H)end
+function H.new(threats)return setmetatable({threats=threats,rows={},count=0,nextAt=0,advisory={}},H)end
 -- Lower-cased object names -> hazard record, over every loaded enemy set.
 function H:Index(observer)
     if self.indexed==observer.loadedCount then return self.index end
@@ -33,19 +33,24 @@ function H:Index(observer)
     end
     self.index=index or false;return self.index
 end
-local function objectName(self,u)
-    local key=u.networkID or u.handle
-    local cached=key and self.names[key]
-    if cached~=nil then return cached end
+local function objectName(u)
     local name=u.charName
     if type(name)~='string'or name==''then name=u.name end
-    name=type(name)=='string'and name:lower()or false
-    if key then self.names[key]=name end
-    return name
+    return type(name)=='string'and name:lower()or false
+end
+local function sameObject(row,u,name)
+    return row.networkID==u.networkID and row.handle==u.handle and row.name==name and row.team==u.team
+end
+-- A retained wrapper can outlive its SDK cache entry. Only positive native
+-- removal with the captured identity may retire it; unreadable/recycled wrappers
+-- and fog remain unknown. References are bounded by maxTracked and released below.
+local function removed(row)
+    local u=row.object
+    return sameObject(row,u,objectName(u))and(u.dead==true or u.valid==false and u.visible==true)
 end
 local function consider(self,observer,index,u,now,hero,myTeam)
     if not u or u.team==myTeam or u.team==300 then return end
-    local name=objectName(self,u)
+    local name=objectName(u)
     local record=name and index[name]
     if not record then return end
     local pos=u.pos
@@ -53,17 +58,19 @@ local function consider(self,observer,index,u,now,hero,myTeam)
     local key=u.networkID or u.handle;if not key then return end
     local id='hazard:'..tostring(key)
     local row=self.rows[id]
+    if row and not sameObject(row,u,name)then return end
     if u.dead==true or u.valid==false then
-        if row then row.gone=true end
+        if row and(u.dead==true or u.visible==true)then row.gone=true end
         return
     end
     local z=record.hazard
     if not row then
         if self.count>=H.maxTracked then return end
-        row={id=id,record=record,first=now,expires=now+(z.lifetime or 60),position=G.copy(pos)}
+        row={id=id,record=record,first=now,expires=now+(z.lifetime or 60),position=G.copy(pos),
+            object=u,networkID=u.networkID,handle=u.handle,name=name,team=u.team}
         self.rows[id]=row;self.count=self.count+1
     end
-    row.seen=now;row.position=G.copy(pos);row.team=u.team
+    row.seen=now;row.position=G.copy(pos);row.object=u
 end
 function H:Scan(observer,now)
     if now<self.nextAt then return end
@@ -89,6 +96,11 @@ function H:Scan(observer,now)
     local advisory={}
     for id,row in pairs(self.rows)do
         local record=row.record;local z=record.hazard
+        if not row.gone and now<=row.expires then
+            observer.hostCalls=(observer.hostCalls or 0)+1
+            local ok,gone=pcall(removed,row)
+            if ok and gone then row.gone=true end
+        end
         if row.gone or now>row.expires then
             self.threats:Remove(id);self.rows[id]=nil;self.count=self.count-1
         elseif z.advisory then

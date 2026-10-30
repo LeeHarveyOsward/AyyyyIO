@@ -90,7 +90,26 @@ local function capsuleCell(a,b,dx,dz,inverse,x0,z0,x1,z1,r2)
         or cornerNear(x1,z0,a.x,a.z,dx,dz,inverse,r2)
         or cornerNear(x1,z1,a.x,a.z,dx,dz,inverse,r2)
 end
-function T:Segment(a,b,radius,t0,t1,budget)
+-- Native centre queries may be shared only inside the planner's explicit
+-- evaluation scope. Dynamic obstacles, time/radius checks and dispatch remain
+-- fresh. Charge logical work before lookup so savings never expand the search.
+local function nativeWall(self,p,memo)
+    local share=memo and memo.owner==self and memo.reader==self.live and memo.revision==self.revision
+    local x,z,y=p.x,p.z,p.y or 0
+    local bucket=share and memo.points and memo.points[x]
+    local entry=bucket and bucket[z]
+    if entry and entry.y==y then return true,entry.value end
+    local ok,value=pcall(self.live,p)
+    if share and ok and type(value)=='boolean'and not self.unknown and memo.revision==self.revision
+        and memo.reader==self.live and p.x==x and p.z==z and(p.y or 0)==y and memo.count<128 then
+        if not memo.points then memo.points={}end
+        if not bucket then bucket={};memo.points[x]=bucket end
+        if not entry then memo.count=memo.count+1 end
+        bucket[z]={y=y,value=value}
+    end
+    return ok,value
+end
+function T:Segment(a,b,radius,t0,t1,budget,memo)
     if not G.point(a)or not G.point(b)or not G.finite(radius)or radius<0 then return nil,'invalid_path'end
     local g=self.grid;if not self:Ready()then return nil,'map_variant_unknown'end
     local revision=self.revision
@@ -133,7 +152,7 @@ function T:Segment(a,b,radius,t0,t1,budget)
             budget.remaining=budget.remaining-1;if budget.remaining<0 then return nil,'terrain_budget'end
             -- Native queries are the expensive unit of a decision; the planner bounds them separately.
             if budget.native then budget.native=budget.native-1;if budget.native<0 then return nil,'terrain_budget'end end
-            local p=steps>0 and G.lerp(a,b,i/steps)or a;local ok,v=pcall(self.live,p)
+            local p=steps>0 and G.lerp(a,b,i/steps)or a;local ok,v=nativeWall(self,p,memo)
             if not ok or type(v)~='boolean'then return nil,'dynamic_terrain_unknown'end
             if self.unknown or self.revision~=revision then return nil,'terrain_changed'end
             if v then return false,'live_wall'end

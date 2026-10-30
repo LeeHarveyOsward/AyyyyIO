@@ -11,6 +11,7 @@ local Landings=require('evade.landings')
 local Impacts=require('evade.impacts')
 local Anchors=require('evade.anchors')
 local Extents=require('evade.extents')
+local Lifecycle=require('evade.lifecycle')
 local Abilities=require('CombatProfiles.abilities')
 local CombatMechanics=require('CombatProfiles.champion_mechanics')
 local function readCastFinish(spell,start)
@@ -202,6 +203,9 @@ function O:CancelCast(owner,spell,now,definition)
     local ownerID=owner.networkID or owner.handle
     local start=castEpoch(spell)
     local profile=definition and definition.cast
+    -- Reviewed channel envelopes own their release/interruption lifecycle.
+    -- A pre-castEnd stop can be an early release, including its final damage.
+    if profile and profile.lifecycle and profile.lifecycle.mode=='channel'then return end
     if not profile or owner.team==self.g.myHero.team or not ownerID or not G.finite(now)or not G.finite(start)or start<=0
         or start>now+.1 or now-start>2 then return end
     for id,c in pairs(self.casts)do
@@ -912,8 +916,9 @@ function O:ObserveCast(owner,spell,now,knownSet)
             local tracked,why=self.anchored:Cast(self,threat,owner,spell,anchor,now)
             if not tracked and not self.threats.byID[id]then reject(why or 'anchor_unresolved');self.lastCast[ownerID]=key;return end
         elseif threat.shape=='missile'then self:TrackFlight(threat,definition.impact,anchor,now)end
-        if c.detonation then self:WatchDetonation(id,owner,c.detonation)end
         if c.extras then Extras.Publish(self,threat,c,origin,destination,launch,now)end
+        local lifecycle=c.detonation or c.lifecycle
+        if lifecycle then Lifecycle.Watch(self,id,owner,lifecycle,spell,c.extras,now)end
         if c.follow then self.auras=self.auras or require('evade.auras').new(self.threats);self.auras:Follow(id,owner,c.follow)end
         self.lastCast[ownerID]=key
         self.casts[id]={owner=ownerID,alias=c.alias,missile=c.missile,missiles=c.missiles,origin=origin,destination=destination,
@@ -1229,38 +1234,6 @@ function O:Scan(now)
     if self.castGeometryUnmodeled then return false,'cast_geometry_unmodeled'end
     return true
 end
--- A recastable ground zone (own profile `detonation`) ends at its observed
--- recast: the owner's slot first shows the armed recast name, then the primary
--- name again. Only that positive transition shortens the zone; unreadable,
--- fogged or never-armed samples keep the own timeout. One slot read per live zone.
-function O:WatchDetonation(id,owner,d)
-    self.detonations=self.detonations or {}
-    if self.detonations[id]or (self.detonationCount or 0)>=16 then return end
-    if type(d.slot)~='number'or type(d.armed)~='string'or type(d.primary)~='string'then return end
-    self.detonations[id]={owner=owner,slot=d.slot,armed=d.armed:lower(),primary=d.primary:lower(),margin=G.finite(d.margin)and d.margin or .15}
-    self.detonationCount=(self.detonationCount or 0)+1
-end
-function O:Detonations(now)
-    for id,w in pairs(self.detonations)do
-        local row=self.threats.byID[id];local done=not row or row.ends<now
-        if not done and type(w.owner.GetSpellData)=='function'then
-            self.hostCalls=(self.hostCalls or 0)+1
-            local ok,data=pcall(w.owner.GetSpellData,w.owner,w.slot)
-            local name=ok and data and type(data.name)=='string'and data.name:lower()
-            if name==w.armed then w.armedAt=w.armedAt or now
-            elseif name==w.primary and w.armedAt then
-                done=true
-                local ends=math.max(now,row.starts)+w.margin
-                if ends<row.ends then
-                    local event=self.threats:Snapshot(id)
-                    event.ends=ends;event.detonationObservedAt=now;event.timingScope='observed_recast_detonation'
-                    self.threats:Observe(event)
-                end
-            end
-        end
-        if done then self.detonations[id]=nil;self.detonationCount=self.detonationCount-1 end
-    end
-end
 -- Caster-attached zones, placed objects and marks on the player (own modules,
 -- each sampled at its own period; skipped entirely without a champion that has such rows).
 function O:ScanAttached(now)
@@ -1280,7 +1253,7 @@ function O:ScanAttached(now)
 end
 function O:ScanCasts(now,shadow)
     for id,c in pairs(self.casts)do if now>c.ends+.5 then self.casts[id]=nil end end
-    if self.detonations then self:Detonations(now)end
+    if self.detonations then Lifecycle.Scan(self,now)end
     if self.cancellationGapUntil and now>self.cancellationGapUntil then self.cancellationGapUntil=nil end
     if self.channels then self.channels:Expire(now)end
     if self.fanEpochs then

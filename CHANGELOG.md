@@ -6,6 +6,19 @@ Entries for v3 through v8 were reconstructed from published commits. Dates below
 
 The one-line installer follows `main`. GitHub Releases retain the historical snapshots. Offline checks establish implementation behavior, not live game outcomes.
 
+## [v12](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v12) - 2026-10-30
+
+- Fix Normal Lux E and Gragas Q retaining their areas after an observed early detonation. Keep each profile's own geometry and timing.
+- Add the same early-detonation handling to Normal Ziggs W.
+- Require fresh, visible, identity-matched native evidence before ending a recast area, including the existing Classic Lux E and Gragas Q handling.
+- Add guarded native toggle-off handling for Normal and Classic Anivia R.
+- End reviewed Nunu R, Katarina R, Belveth E and Classic Galio R envelopes after a same-cast running-to-stopped transition. Track Sion Q through its own observed release completion. Close extra footprints together and preserve the final contact window.
+- Retire future mark pops after a complete player buff scan proves removal or replacement. Keep a brief possible early-pop window and the original damage identity.
+- Retire tracked traps and placed objects when their own retained native instance positively reports destruction, even when it has left the SDK cache. Absence or fog alone does not remove them.
+- Share duplicate native wall reads within one Evade planning pass while keeping dynamic terrain and dispatch checks fresh. Keep search limits and performance budgets unchanged.
+- Audit the earlier minimap, Leona, Fiora, Thresh and Swain fixes for profile parity. No further omitted supported-profile port was found in those fixes.
+- Remaining limits: Ziggs E individual mine depletion, contact-shortened bounce stages and unverified Classic trap objects need native evidence. No claim of complete live ability coverage.
+
 ## [v11](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v11) - 2026-10-30
 
 Smarter farming, steadier input and opt-in log recording
