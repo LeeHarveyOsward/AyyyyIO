@@ -6,6 +6,101 @@ Entries for v3 through v8 were reconstructed from published commits. Dates below
 
 The one-line installer follows `main`. GitHub Releases retain the historical snapshots. Offline checks establish implementation behavior, not live game outcomes.
 
+## [v11](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v11) - 2026-10-30
+
+Smarter farming, steadier input and opt-in support logs
+
+### Shared farming and waveclear
+- Time incoming minion attacks from native cast end. Prevent already-landed damage from being subtracted again, a confirmed cause of early shots.
+- Keep tracking launched attacks after the source retargets, casts again, disappears or dies.
+- Include our own confirmed launched ranged attacks in the incoming-hit forecast.
+- Observe allied turret projectiles, keep their damage through target switches, verify identities and avoid double-counting.
+- Use available native turret timing instead of fixed substitutes when data is missing.
+- Add a bounded attack scheduler for upcoming last-hit windows and spare waveclear/harass attacks.
+- Stay cautious around uncertain allied aggro, exact lethal boundaries and minions forecast dead.
+- Keep safe Senna soul collection without giving up an upcoming last hit.
+- Coordinate rescue spells with the attack schedule and keep other last hits.
+- Account for known spell cast locks when evaluating subsequent attacks.
+- Exclude validated spell last-hit targets only after the spell is actually sent; admission or cancellation does not claim a minion.
+- Refresh farming forecasts at dispatch and keep cooldown-based spell rescues.
+- Keep champion attack preferences behind shared farming policy.
+
+### Champion farming and combat
+- Vayne: calculate post-Q attack flight from the resolved tumble endpoint. Keep follow-ups through delayed observations, require an actual send and native readiness, and do not repeat an already-observed empowered attack.
+- Classic Vayne: respect unknown projectile timing in SDK target selection.
+- Caitlyn: restore verified Classic AA travel, distinguish ordinary attacks and Headshots, and use shared timing in combat finishers.
+- Ahri and Ezreal: unknown AA flight no longer counts as instant or wrongly vetoes rescue Q.
+- Seraphine: include AA projectile travel when comparing farm spells with a ready attack.
+- Corki: remove guessed AA timing from spell-plus-attack finishers.
+- Ashe, Sivir, Teemo, Twitch and Twisted Fate: use checked shared attack-impact timing in affected farming/combat decisions.
+- Normal Lux: coordinate Q's two-minion last-hit set with the attack schedule. Recheck both identities, final ray, collision order, damage and impacts before sending.
+- Twitch: coordinate farm E's complete eligible kill set with the attack schedule. Never register a partial set when capacity is exceeded.
+- Separate multi-minion spell coordination capacity from the smaller bounded attack search.
+- Fizz, Jax, Wukong, Normal Shen and cougar Nidalee: an empowerment cast no longer claims damage from the basic attack that must still follow.
+- Recognize fresh profile-declared empowerment buffs as shared attack-reset evidence.
+
+### Orbwalking, input and skill allocation
+- Stop repeating sent moves at an unchanged cursor location.
+- Allow a fresh move after an attack or relevant input/state change, so attack-move cycles keep working.
+- Clear stale right-button state after Evade clicks through a held button; this could block held combat modes until another manual click.
+- Confirm the held modifier before sending the skill key in an allocation chord.
+- Require an actual rank increase before reporting allocation success.
+- Keep scheduled key-up retries instead of spending them repeatedly in one frame.
+- Report completed held-key cleanup consistently.
+- Share supported recall recognition, including SuperRecall, across the affected SDK, Utils, Lee Sin and Katarina guards.
+
+### Recall tracking and global ultimates
+- Restore recall countdowns/progress bars using validated native channel timing when buff clocks are corrupt.
+- Keep established deadlines stable, detect restarted recalls and keep valid buff timing when channel duration is unavailable.
+- Add Normal Jinx recall-to-base R sniping through the shared planner.
+- Share Jinx R's stepped flight model across Evade, prediction, combat and recall shots.
+- Include contact timing, qualified health observations, regeneration, fountain healing, shields and supported blockers in relevant recall-shot decisions.
+- Apply Ezreal's Classic recall-shot damage reduction only to Classic, not Normal.
+- Refresh timing and permission at dispatch; cancel unsent work when the opportunity ends.
+
+### Orbamautils drawings and menus
+- Move the minimap missing-time option under Last seen position in fog, keeping saved settings.
+- Simplify Appearance labels and remove redundant Enemy titles.
+- Add per-feature team filters: enemies on, allies off by default.
+- Add optional ally cooldown tracking, including the player, in two compact side-by-side panels of up to five rows each.
+- Prefer qualified native ally cooldowns, keep useful deadlines across missing samples and label calculated fallbacks as estimates.
+- Draw actual remaining movement waypoints, and skip native waypoint reads for disabled teams.
+- Show known levels independently of XP. Draw XP only when profile/map/data support it.
+- Replace ward squares with ward glyphs, team colours, type markings and suitable timers.
+- Apply feature and ward-type minimap switches together.
+- Keep intersecting ward sight-radius circles visible when the ward itself is off screen.
+
+### Opt-in support recording
+- Start recording OFF after every reload, regardless of a previous saved opt-in.
+- Add bounded public support recording; keep detailed development hooks lazy and ability capture separately opt-in.
+- Keep five RECORDING SESSIONS, not necessarily five games, at up to 8 MiB each.
+- Export one FamilySupport.jsonl through Orbama > Support logs, with filename and folder shown in the menu.
+- Cap retained slots at 40 MiB and the export at another 40 MiB, plus a small index.
+- Export incrementally during safe idle maintenance, pause recording for sharing and show storage/error messages.
+- Remove legacy champion file sinks so old preferences cannot start separate unbounded logs.
+- Make provider collection, development profiling and Evade diagnostics follow the recording switch.
+- Add development evidence for farm readiness/settings/schedules, incoming hits, Q follow-ups and item observations.
+- Remove redundant telemetry rows, add stationary missile heartbeats and recover capture capacity from lingering wrappers.
+- Encode invalid native text safely and mark uncertainty.
+- Nothing uploads automatically.
+
+### Performance, packaging and verification
+- Reuse scalar outline coordinates instead of retaining projection objects; reproject freshly each draw.
+- In the affected offline LuaJIT comparison, median drawing allocation fell from 14.5 KiB to 1.8 KiB with matching decisions.
+- All 24 stress runs pass without relaxed budgets.
+- 4,874 Evade checks and 5,484 coverage assertions pass.
+- Regenerate stale bundles and repair fixtures for recording defaults, buffer reservations, modifiers and export seeking.
+- All 201 full-gate selections have passing results across retained/repaired batches. This was not a new full-suite run on one final commit.
+- Final public candidate passes both Lua engines, archive readback, source parity, deterministic rebuild and 963 isolated installer assertions.
+
+### Known limits
+- Perfect CS and live FPS gains are not proven.
+- Arbitrary whole-wave ability/reset planning and future allied retarget prediction remain incomplete.
+- Native inventory slot mapping still limits BORK activation.
+- Live fountain-hit timing remains unverified.
+
+Public support recording starts off. Enable it under Orbama > Support logs when reporting a problem. Prepare the share file there, then share FamilySupport.jsonl from LOLEXT/Scripts/Common. A full script reload is required after updating.
+
 ## [v10](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v10) - 2026-10-28
 
 Farming, ward jumps and game-end cleanup

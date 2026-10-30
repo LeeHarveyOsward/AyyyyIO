@@ -14,7 +14,8 @@ return function(g,previous,resolve)
     local target=resolve(id)
     if not target or not target.networkID or(target.networkID~=id and target.handle~=id)then return nil end
     if not target.valid or target.dead or not target.isTargetable or not target.visible or (target.health or 0)<=0 then return nil end
-    return {target=target.networkID,object=target,at=cast.castEndTime,nativeTarget=id,startTime=cast.startTime}
+    return {target=target.networkID,handle=target.handle,object=target,at=cast.castEndTime,
+        nativeTarget=id,startTime=cast.startTime,name=cast.name}
 end
 
 end

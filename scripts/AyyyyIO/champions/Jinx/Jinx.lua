@@ -6,7 +6,7 @@ modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("e80d2d89
 modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Jinx"]=function()return _G.OrbamaFamily:Require("46927461b15eedfde9378db77a45f5627c65c0939435e252ba866501adb3e998")()end
+factories["Jinx"]=function()return _G.OrbamaFamily:Require("80bae11dac5f4d9c6ab898fc56245965f4129c72145c12db29e8849f8a41c8f4")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -22,19 +22,19 @@ modules.ahriProfile=(function(require) return _G.OrbamaFamily:Factory("30d95faa8
 modules.kogmawProfile=(function(require) return _G.OrbamaFamily:Factory("309e64d13d66b4a917814dd40e811f4f7a34102f488bc17c6f0c58e6b83cb99a")(require) end)(require)
 modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end)(require)
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
-modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
-modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
+modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("3da377a20f2c2a192efc8343b23fb571f5cda62e822551b4678aab011deb2b69")(require) end)(require)
+modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("3c7cec6192229bd783dbb481829105edbbe5cfcc52fbeae7408eed05670af826")(require) end)(require)
 modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
 modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")
-modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")
+modules["gameplay"]=_G.OrbamaFamily:Require("150735cd6058eefcd206afc8513dde960e1a1f0823bdfd223db9491c39a2f4d8")
 modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("f7d98e88d54ea77cb1c1c4aa026b699688271ff1aa4f6e769036de5dccf63c4f")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -311,18 +311,7 @@ function IsPoison(unit)
 end
 
 function Recalling(unit)
-	local as = unit.activeSpell
-	if as and as.valid and type(as.name)=='string' and as.name:lower():find("recall") then
-		return true
-	end
-	local buffs = GetBuffs(unit)
-	for i = 1, #buffs do
-		local buff = buffs[i]
-		if type(buff.name)=='string' and buff.name:lower():find("recall") then
-			return true
-		end
-	end
-	return false
+    return _G.SDK.IsRecalling(unit,Core.validating==true)
 end
 
 function HasInvalidDashBuff(unit)
@@ -541,13 +530,13 @@ end
 local JinxChampion=class("JinxChampion")
 function JinxChampion:__init()
  self.profile=assert(profiles[myHero.charName]);self.traps={};self:LoadMenu()
- -- No base-snipe registration: the fountain distance needs one established R
- -- flight model, and the two reviewed hypotheses disagree there by far more
- -- than the recall arrival window (they agree only within ~2100 units). The
- -- shared planner hits the fountain within 0.1 s after the recall ends, so a
- -- single "conservative" model cannot stand in for a measurement. The dev trace
- -- jinx_r_flight (observed R start -> first health drop of the target, with
- -- distance) settles it; the shared planner gains Jinx once RTravel is measured.
+ local p=self.profile
+ self.recallCast={key=HK_R,damageType='physical',
+  spell={Type=OrbamaPrediction.SPELLTYPE_LINE,Delay=p.rDelay,Radius=p.rRadius,Range=p.rRange,Speed=p.rSpeed,Motion=p.rMotion,
+   DirectionalCast=true,AimErrorWorld=5,Collision=true,CollisionTypes={OrbamaPrediction.COLLISION_ENEMYHERO,OrbamaPrediction.COLLISION_YASUOWALL}},
+  enabled=function()return Menu.Misc.BaseR:Value()end,
+  safe=function()return self:Ready(_R)and GetEnemyCount(800,myHero.pos)==0 end,
+  damage=function(unit,health,effective,distance)return self:Damage(unit,_R,distance,false,effective,health)end}
  Core:RegisterCleanup('Jinx',function()cleanup(self)end)
  Callback.Add('Tick',function()self:Tick()end);Callback.Add('Draw',function()self:Draw()end)
  _G.SDK.Orbwalker:OnPostAttack(function(args)self:OnPostAttack(args)end)
@@ -592,6 +581,7 @@ function JinxChampion:LoadMenu()
  Menu.Misc:MenuElement({id='RAssist',name='Cast R at the selected target',key=string.byte('T')})
  Menu.Misc:MenuElement({id='WAssist',name='Cast W at the selected target',key=string.byte('U')})
  Menu.Misc:MenuElement({id='KillSecure',name='Finish killable enemies without holding a mode key',value=true})
+ Menu.Misc:MenuElement({id='BaseR',name='R recalling enemies at their base if it kills',value=true})
  Menu.Misc:MenuElement({id='RMax',name='Longest R cast distance',value=4000,min=1000,max=12500,step=500,menu=false})
  Menu.Misc:MenuElement({id='Reserve',name='Mana to keep when attacking with rockets',value=80,min=0,max=300,step=10,menu=false})
  Menu.Misc:MenuElement({id='Splash',name='Use rockets when they splash several enemies',value=true,menu=false})
@@ -708,12 +698,14 @@ function JinxChampion:WDelay()
  return math.max(self.profile.wMin,self.profile.wBaseDelay-self.profile.wASScalar*math.max(0,as-1))
 end
 function JinxChampion:Damage(u,slot,distance,secondary,futureHealth,observation)
- if not self:Current(u)and not(slot==_R and observation and observation.id==id(u)and observation.handle==u.handle and observation.name==u.charName)then return 0 end;local p=self.profile;local rank=myHero:GetSpellData(slot).level;local raw
+ local observed=slot==_R and observation and u and observation.id==id(u)and observation.handle==u.handle and observation.name==u.charName
+ if observation and not observed or not self:Current(u)and not observed then return 0 end;local p=self.profile;local rank=myHero:GetSpellData(slot).level;local raw
  if slot==_W then if not p.wBase[rank]or not finite(myHero.totalDamage)then return 0 end;raw=p.wBase[rank]+p.wAD*myHero.totalDamage
- elseif slot==_R then if not p.rMin[rank]or not finite(myHero.bonusDamage)or not finite(u.maxHealth)or u.maxHealth<=0 then return 0 end
+ elseif slot==_R then local maxHealth=observed and observation.maxHealth or u.maxHealth
+  if not p.rMin[rank]or not finite(myHero.bonusDamage)or not finite(maxHealth)or maxHealth<=0 or futureHealth~=nil and not finite(futureHealth)then return 0 end
   local fraction=math.max(0,math.min(1,(distance or GetDistance(u.pos,myHero.pos))/p.rDamageDistance))
   raw=p.rMin[rank]+p.rMinAD*myHero.bonusDamage+fraction*(p.rMax[rank]-p.rMin[rank]+(p.rMaxAD-p.rMinAD)*myHero.bonusDamage)
-  raw=raw+p.rMissing[rank]*math.max(0,u.maxHealth-(futureHealth or u.health));if secondary then raw=raw*p.rSecondary end
+  raw=raw+p.rMissing[rank]*math.max(0,maxHealth-(futureHealth or u.health));if secondary then raw=raw*p.rSecondary end
  else return 0 end
  return _G.SDK.Damage:CalculateDamage(myHero,u,_G.SDK.DAMAGE_TYPE_PHYSICAL,raw)
 end
@@ -723,7 +715,8 @@ function JinxChampion:Settings(slot)
  if slot==_W then local delay=self:WDelay();if not delay then return nil end
   return {Type=OrbamaPrediction.SPELLTYPE_LINE,Delay=delay,Radius=60,Range=1450,Speed=3300,Collision=false,DirectionalCast=true,AimErrorWorld=5}
  end
- return {Type=OrbamaPrediction.SPELLTYPE_LINE,Delay=.6,Radius=140,Range=Menu.Misc.RMax:Value(),Speed=1700,Collision=false,DirectionalCast=true,AimErrorWorld=5}
+ local p=self.profile
+ return {Type=OrbamaPrediction.SPELLTYPE_LINE,Delay=p.rDelay,Radius=p.rRadius,Range=Menu.Misc.RMax:Value(),Speed=p.rSpeed,Motion=p.rMotion,Collision=false,DirectionalCast=true,AimErrorWorld=5}
 end
 function JinxChampion:Predict(u,slot)
  if not self:Current(u)then return nil end;local settings=self:Settings(slot);if not settings then return nil end
@@ -901,17 +894,15 @@ function JinxChampion:MaintainTraps()
   end
  end
 end
-function JinxChampion:RTravel(distance,accelerated)
- -- The asset pins initial1700. A reviewed accelerating transport is a second
- -- hypothesis, not verified live movement. Long moving rays must survive both.
- return .6+(accelerated and distance>1350 and 1350/1700+(distance-1350)/2200 or distance/1700)
+function JinxChampion:RTravel(distance)
+ return self.profile.rDelay+OrbamaPrediction.ProjectileMotion.Time(self.profile.rMotion,distance)
 end
-function JinxChampion:RContactPlan(aim,anchor,accelerated,scope)
+function JinxChampion:RContactPlan(aim,anchor,scope)
  if not self:Current(anchor)or anchor.type~=Obj_AI_Hero or not point(aim)then return nil end
  local distance=GetDistance(aim,myHero.pos);if distance>Menu.Misc.RMax:Value()then return nil end
  local rows=scope and scope.rows or self:Rows('heroes',math.min(13000,distance+550));local first,firstAlong
  for _,u in ipairs(rows)do
-  local time=self:RTravel(GetDistance(u.pos,myHero.pos),accelerated);local pos=self:Projected(u,time);local a,b,len=ray(myHero.pos,aim,pos)
+  local time=self:RTravel(GetDistance(u.pos,myHero.pos));local pos=self:Projected(u,time);local a,b,len=ray(myHero.pos,aim,pos)
   if a and a>=0 and a<=len+140+(u.boundingRadius or 0)and b<=140+(u.boundingRadius or 0)then
    local contact=math.max(0,a-math.sqrt(math.max(0,(140+(u.boundingRadius or 0))^2-b*b)))
    if not firstAlong or contact<firstAlong then first,firstAlong=u,contact end
@@ -920,8 +911,9 @@ function JinxChampion:RContactPlan(aim,anchor,accelerated,scope)
  if not first then return nil end
  -- Explosion occurs at the actual first champion's collision boundary, not
  -- the intended target's centre. Secondary damage uses that travel distance.
- local hit=myHero.pos:Extended(aim,firstAlong);local impact=self:RTravel(firstAlong,accelerated)
- local blocked,_,n=OrbamaPrediction:GetCollision(myHero.pos,hit,1700,.6,140,{OrbamaPrediction.COLLISION_YASUOWALL},id(first))
+ local hit=myHero.pos:Extended(aim,firstAlong);local impact=self:RTravel(firstAlong)
+ local p=self.profile
+ local blocked,_,n=OrbamaPrediction:GetCollision(myHero.pos,hit,p.rSpeed,p.rDelay,p.rRadius,{OrbamaPrediction.COLLISION_YASUOWALL},id(first),{motion=p.rMotion})
  if blocked==true or(n or 0)>0 then return nil end
  local victims,count,anchorDamage,anchorLower={},0,nil,nil
  for _,u in ipairs(rows)do local pos=self:Projected(u,impact)
@@ -939,11 +931,7 @@ end
 function JinxChampion:RPlan(aim,anchor)
  if not point(aim)then return nil end
  local scope={rows=self:Rows('heroes',math.min(13000,GetDistance(aim,myHero.pos)+550))}
- local plan=self:RContactPlan(aim,anchor,false,scope);if not plan then return nil end
- if GetDistance(aim,myHero.pos)>1350 then local faster=self:RContactPlan(aim,anchor,true,scope)
-  if not faster or faster.firstID~=plan.firstID or faster.firstHandle~=plan.firstHandle then return nil end
-  plan.count=math.min(plan.count,faster.count);plan.damage=math.min(plan.damage,faster.damage);plan.estimate=math.min(plan.estimate,faster.estimate)
- end;return plan
+ return self:RContactPlan(aim,anchor,scope)
 end
 -- The rocket kills its anchor at impact by the shared kill rule: invulnerability and stasis refuse (a spell shield
 -- does not stop the rocket's explosion, only its damage, which the shield pools carry), undying/revive states refuse
@@ -992,7 +980,7 @@ function JinxChampion:CastR(u,context,permission,manual)
  return ok
 end
 -- Development evidence only: R flight time (observed cast start -> first health drop of the target) by distance,
--- to replace the two RTravel hypotheses. Nothing here authorizes a cast.
+-- to check the recorded native missile model against impact. Nothing here authorizes a cast.
 function JinxChampion:TraceEvidence()
  local t=self.rTrace;if not t then return end;local now=Game.Timer();local u=t.unit
  if now>t.expires or not IsValid(u)then self.rTrace=nil;return end
@@ -1023,8 +1011,8 @@ function JinxChampion:RMonsterDamage(u,distance)
  raw=raw+math.min(p.rMonsterCap,p.rMissing[rank]*math.max(0,u.maxHealth-u.health))
  return _G.SDK.Damage:CalculateDamage(myHero,u,_G.SDK.DAMAGE_TYPE_PHYSICAL,raw)
 end
--- Objective steal (off by default): R at a contested epic monster when it kills at impact under both flight
--- hypotheses (health forecast) and no enemy champion stands on the path (the rocket would explode on it).
+-- Objective steal (off by default): R at a contested epic monster when it kills at impact
+-- (health forecast) and no enemy champion stands on the path (the rocket would explode on it).
 function JinxChampion:Steal()
  if not Menu.Misc.Steal:Value()or not self:Ready(_R)then return false end
  for _,u in ipairs(self:Rows('jungle',Menu.Misc.RMax:Value()))do
@@ -1036,10 +1024,7 @@ function JinxChampion:Steal()
     for _,h in ipairs(self:Rows('heroes',math.min(13000,d+550)))do local a,b=ray(myHero.pos,u.pos,h.pos)
      if a and a>=0 and a<d and b<=self.profile.rRadius+(h.boundingRadius or 0)then return false end
     end
-    for _,accelerated in ipairs({false,true})do
-     if not(Core:Lethal(u,self:RTravel(d,accelerated),function()return self:RMonsterDamage(u,d)end,{kind='physical'}))then return false end
-    end
-    return true
+    return(Core:Lethal(u,self:RTravel(d),function()return self:RMonsterDamage(u,d)end,{kind='physical'}))
    end
    if kills()then local dir=directional()
     if Core:Cast(HK_R,point(u.pos),{intentTarget=u,range=Menu.Misc.RMax:Value(),context={priority='interactive'},owner='RSteal',deferAttackWindup=true,prevalidateWorldCast=true,
@@ -1219,7 +1204,7 @@ function JinxChampion:Assist()
 end
 function JinxChampion:Tick()
  if not Core:InputAvailable()or ShouldWait()then self.preview=nil;return end
- self:MaintainWeapon();self:MaintainTraps();if Core.logger then self:TraceEvidence()end;if IsCasting()then return end;if self:Assist()or self:DashE()or self:PeelE()or self:ZoneE()then return end
+ self:MaintainWeapon();self:MaintainTraps();if Core.logger then self:TraceEvidence()end;if IsCasting()then return end;if Core:RecallBaseCast(self.recallCast)or self:Assist()or self:DashE()or self:PeelE()or self:ZoneE()then return end
  local mode=GetMode();if mode=='Combo'then self:Combo()elseif mode=='Harass'then self:Harass()
  elseif mode=='LaneClear'then if Core:FarmModeEnabled('lane')and(self:FarmHarass()or self:StructureWeapon())then return end;if Core:FarmModeEnabled('lane')then self:LaneClear()end;if Core:FarmModeEnabled('jungle')then self:JungleClear()end
  elseif mode=='LastHit'then self:LastHit()elseif mode=='Flee'then self:Flee()end

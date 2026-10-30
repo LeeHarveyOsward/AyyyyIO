@@ -6,7 +6,7 @@ modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("e80d2d89
 modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Vayne"]=function()return _G.OrbamaFamily:Require("f9140862f16003682ea4c06beb2d5ea6362a59b3bf16b70c1ec7a287dffb4f14")()end
+factories["Vayne"]=function()return _G.OrbamaFamily:Require("af7489c694ebf365c20f5427031be1fcb372dc9fe928efbd5314b43d3f169aaf")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -22,19 +22,19 @@ modules.ahriProfile=(function(require) return _G.OrbamaFamily:Factory("30d95faa8
 modules.kogmawProfile=(function(require) return _G.OrbamaFamily:Factory("309e64d13d66b4a917814dd40e811f4f7a34102f488bc17c6f0c58e6b83cb99a")(require) end)(require)
 modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end)(require)
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
-modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
-modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
+modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("3da377a20f2c2a192efc8343b23fb571f5cda62e822551b4678aab011deb2b69")(require) end)(require)
+modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("3c7cec6192229bd783dbb481829105edbbe5cfcc52fbeae7408eed05670af826")(require) end)(require)
 modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
 modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")
-modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")
+modules["gameplay"]=_G.OrbamaFamily:Require("150735cd6058eefcd206afc8513dde960e1a1f0823bdfd223db9491c39a2f4d8")
 modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("f7d98e88d54ea77cb1c1c4aa026b699688271ff1aa4f6e769036de5dccf63c4f")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -311,18 +311,7 @@ function IsPoison(unit)
 end
 
 function Recalling(unit)
-	local as = unit.activeSpell
-	if as and as.valid and type(as.name)=='string' and as.name:lower():find("recall") then
-		return true
-	end
-	local buffs = GetBuffs(unit)
-	for i = 1, #buffs do
-		local buff = buffs[i]
-		if type(buff.name)=='string' and buff.name:lower():find("recall") then
-			return true
-		end
-	end
-	return false
+    return _G.SDK.IsRecalling(unit,Core.validating==true)
 end
 
 function HasInvalidDashBuff(unit)
@@ -938,7 +927,7 @@ function VayneChampion:CastSafeQ(point,target,mode)
   validate=function(_,resolved)
    local current=resolved and resolved.position
    return current and Menu.Combo.Qmode:Value()==style and self:QAllowed(target,mode)
-    and(mode~='LastHit'or self:CanRescue(target))
+    and(mode~='LastHit'or self:CanRescue(target,current))
     and GetDistance(current,target.pos)<=myHero.range+(myHero.boundingRadius or 0)+(target.boundingRadius or 0)
     and self:QSafe(current)
   end})
@@ -1198,10 +1187,8 @@ function VayneChampion:QBonusDamage(target)
  if not ratio then return 0 end
  return _G.SDK.Damage:CalculateDamage(myHero,target,_G.SDK.DAMAGE_TYPE_PHYSICAL,ratio*myHero.totalDamage+self.profile.qAP*(myHero.ap or 0))
 end
-function VayneChampion:AttackImpact(target)
- local windup=_G.SDK.Attack:GetWindup();local speed=_G.SDK.Attack:GetProjectileSpeed()
- if type(windup)~='number'or windup<0 or windup~=windup or type(speed)~='number'or speed<=0 or speed~=speed then return nil end
- return windup+GetDistance(myHero.pos,target.pos)/speed
+function VayneChampion:AttackImpact(target,origin)
+ return Core:AttackImpact(target,origin)
 end
 function VayneChampion:AttackDamageAt(target,delay)
  local sdk=_G.SDK
@@ -1227,18 +1214,21 @@ function VayneChampion:FarmTarget(target,mode)
  if mode=='JungleClear'then return target.team==300 end
  return (target.team==100 or target.team==200)and target.team~=myHero.team
 end
-function VayneChampion:CanRescue(target)
+function VayneChampion:CanRescue(target,endpoint)
  if not self:FarmTarget(target,'LastHit')or not self:QAllowed(target,'LastHit')then return false end
- local attack=self:AttackImpact(target);if not attack then return false end
- -- Conservative preparation budget; actual continuation requires the observed Q
+ local point=endpoint or self:QPoint(target,'LastHit',Menu.Combo.Qmode:Value())
+ if not point then return false end
+ local afterAttack=self:AttackImpact(target,point);if not afterAttack then return false end
+ -- Existing preparation budget; actual continuation requires the observed Q
  -- buff and live attack readiness, rather than injecting an estimated reset.
- local impact=attack+.45
+ local impact=afterAttack+.45
  local hp=Core:UnshieldedLegacyForecast(target,impact)
  if not finite(hp)or hp<=0 then return false end
  local shield=math.max(0,target.shieldAD or 0);local regen=math.max(0,target.hpRegen or 0)
  local damage=self:EmpoweredAttackDamage(target,impact)
  if damage<hp+shield+regen*impact then return false end
  if _G.SDK.Orbwalker:CanAttack()and _G.SDK.Data:IsInAutoAttackRange(myHero,target)then
+  local attack=self:AttackImpact(target);if not attack then return false end
   local soon=Core:UnshieldedLegacyForecast(target,attack)
   if soon==nil then return false end
   if finite(soon)and soon>0 and self:AttackDamageAt(target,attack)>=soon+shield+regen*attack then return false end
@@ -1246,41 +1236,93 @@ function VayneChampion:CanRescue(target)
  return true
 end
 function VayneChampion:FarmQ(target,mode)
- if not self:FarmTarget(target,mode)or mode=='LastHit'and not self:CanRescue(target)then return false end
- local point=self:QPoint(target,mode,Menu.Combo.Qmode:Value());if not point then return false end
+ if not self:FarmTarget(target,mode)then return false end
+ local point,why=self:QPoint(target,mode,Menu.Combo.Qmode:Value())
+ if not point then
+  -- Toggle, mode setting and cooldown are in classic.farm_gate rows.
+  if Core.logger and why~='farm_toggle'and why~='menu'and why~='not_ready'and why~='attack_windup'then
+   Core:Trace('q_decline',{mode=mode,reason=why,target=target.networkID,distance=math.floor(GetDistance(myHero.pos,target.pos))},500)
+  end
+  return false
+ end
+ if mode=='LastHit'and not self:CanRescue(target,point)then return false end
  local accepted=self:CastSafeQ(point,target,mode)
  if accepted then
-  Core:AfterCast(HK_Q,function(q)
-   self.farmPlan={target=target,id=target.networkID,mode=mode,context=q.context,expires=Game.Timer()+.8}
-  end)
+  local q=Core.pending[HK_Q]
+  if q then
+   local now=Game.Timer();local wait=finite(q.expires)and math.max(0,(q.expires-Core.adapter:Now())/1000)or 0
+   self.farmPlan={target=target,id=target.networkID,handle=target.handle,mode=mode,context=q.context,
+    intent=q,at=now,expires=now+wait+.8}
+  end
  end
  return accepted
 end
+-- Second return value: the first failed check, in evaluation order.
 function VayneChampion:FarmAttackAllowed(plan)
- if not plan or Game.Timer()>plan.expires or plan.id~=plan.target.networkID
-  or not Core.adapter:ContextValid({context=plan.context})or not self:FarmTarget(plan.target,plan.mode)
-  or not self:ModeMenu(plan.mode).Q:Value()
-  or not self:HasSelfBuff(self.profile.qBuff)or _G.SDK.Attack:IsActive()
-  or not _G.SDK.Orbwalker:CanAttack()or not _G.SDK.Data:IsInAutoAttackRange(myHero,plan.target)then return false end
+ if not plan or Game.Timer()>plan.expires then return false,'expired'end
+ if plan.id~=plan.target.networkID or not Core.adapter:ContextValid({context=plan.context})or not self:FarmTarget(plan.target,plan.mode)then return false,'target_or_context'end
+ if not self:ModeMenu(plan.mode).Q:Value()then return false,'menu'end
+ if not self:HasSelfBuff(self.profile.qBuff)then return false,'no_q_buff'end
+ if _G.SDK.Attack:IsActive()then return false,'attack_windup'end
+ if not _G.SDK.Orbwalker:CanAttack()then return false,'attack_not_ready'end
+ if not _G.SDK.Data:IsInAutoAttackRange(myHero,plan.target)then return false,'out_of_range'end
  if plan.mode=='LastHit'then
-  local impact=self:AttackImpact(plan.target);if not impact then return false end
+  local impact=self:AttackImpact(plan.target);if not impact then return false,'no_impact'end
   local hp=Core:UnshieldedLegacyForecast(plan.target,impact)
-  if not finite(hp)or hp<=0 then return false end
-  if not self:HasSelfBuff(self.profile.qBuff,impact)or self:EmpoweredAttackDamage(plan.target,impact)<hp+math.max(0,plan.target.shieldAD or 0)+math.max(0,plan.target.hpRegen or 0)*impact then return false end
+  if not finite(hp)or hp<=0 then return false,'forecast_dead'end
+  if not self:HasSelfBuff(self.profile.qBuff,impact)then return false,'q_buff_expires'end
+  if self:EmpoweredAttackDamage(plan.target,impact)<hp+math.max(0,plan.target.shieldAD or 0)+math.max(0,plan.target.hpRegen or 0)*impact then return false,'not_lethal'end
  end
  return true
 end
+-- One development row per farm Q plan: the follow-up attack was requested, or
+-- the plan ended with the last refusal seen while it waited.
+function VayneChampion:TraceFarmFollowup(plan,outcome,reason)
+ if Core.logger then
+  Core:Trace('farm_q_followup',{mode=plan.mode,target=plan.id,outcome=outcome,reason=reason,
+   waited=Game.Timer()-plan.at})
+ end
+end
+-- A late cooldown observation may arrive after the orbwalker has already
+-- spent Q on this minion. A completed native empowered windup is evidence of
+-- that attack, not evidence of a hit or CS, and must not schedule another.
+function VayneChampion:FarmFollowupSpent(plan)
+ local w=self.attackWitness
+ return finite(plan.sentGameTime)and w and w.object==plan.target and w.target==plan.id
+  and w.handle==plan.handle and finite(w.startTime)and w.startTime>=plan.sentGameTime
+  and finite(w.at)and w.at<=Game.Timer()and self.profile.qAttackNames[w.name]==true
+end
 function VayneChampion:ContinueFarm()
  local plan=self.farmPlan;if not plan then return end
- if Game.Timer()>plan.expires or not Core.adapter:ContextValid({context=plan.context})or not self:FarmTarget(plan.target,plan.mode)then self.farmPlan=nil;return end
- if not self:FarmAttackAllowed(plan)then return end
+ local q=plan.intent
+ if q and not plan.sentGameTime then
+  local receipt=Core.adapter:Poll(q.id)
+  if not receipt or receipt.state=='cancelled_before_send'or receipt.state=='send_uncertain'or receipt.jobCancelled then
+   self:TraceFarmFollowup(plan,'dropped','q_not_sent');self.farmPlan=nil;return
+  end
+  if receipt.sentAt then
+   local sent=receipt.sentGameTime
+   if not finite(sent)then self:TraceFarmFollowup(plan,'dropped','q_send_clock_unknown');self.farmPlan=nil;return end
+   plan.sentGameTime=sent;plan.at=sent;plan.expires=sent+.8
+  elseif Game.Timer()<=plan.expires and Core.adapter:ContextValid({context=plan.context})then return end
+ end
+ if self:FarmFollowupSpent(plan)then
+  self:TraceFarmFollowup(plan,'attack_observed','empowered_windup_complete');self.farmPlan=nil;return
+ end
+ if Game.Timer()>plan.expires or not Core.adapter:ContextValid({context=plan.context})or not self:FarmTarget(plan.target,plan.mode)then
+  self:TraceFarmFollowup(plan,'dropped',plan.refusal or(Game.Timer()>plan.expires and 'expired'or 'target_or_context'))
+  self.farmPlan=nil;return
+ end
+ if q and not plan.sentGameTime then self:TraceFarmFollowup(plan,'dropped','q_not_sent');self.farmPlan=nil;return end
+ local allowed,why=self:FarmAttackAllowed(plan)
+ if not allowed then plan.refusal=why;return end
  local accepted=Core:Attack(plan.target,{owner='FarmAttack',context=plan.context,ttl=120,
-  validate=function()return self:FarmAttackAllowed(plan)end,
+  validate=function()return(self:FarmAttackAllowed(plan))end,
   observe=function(q)
    self:ObserveAttack();local w=self.attackWitness
    return w and w.target==plan.id and w.object==plan.target and w.at>=q.requestGameTime
   end})
- if accepted then self.farmPlan=nil end
+ if accepted then self:TraceFarmFollowup(plan,'requested');self.farmPlan=nil end
 end
 function VayneChampion:LastHit()
  if not Menu.LastHit.Q:Value()then return end

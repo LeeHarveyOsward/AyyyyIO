@@ -78,6 +78,17 @@ profiles['Jade_Caitlyn'].combat={id='classic',champion='Caitlyn',names={{'Jade_C
   r={range=D.Jade_CaitlynR.castRange,delay=1,speed=D.Jade_CaitlynRMissile.mSpeed,radius=D.Jade_CaitlynRMissile.mMissileWidth,type='physical',base=D.Jade_CaitlynR.RBaseDamage,bonusAD=D.Jade_CaitlynR.RADRatio},qPierceStep=D.Jade_CaitlynQ.ExtraHitPercentReduction,qPierceMin=D.Jade_CaitlynQ.MinimumDamagePercent,
   headshotNames={'Jade_CaitlynHeadshot'},headshotCountNames={'Jade_CaitlynHeadshotCount'},trapNames={'Jade_CaitlynYordleTrapDebuff'},trapObjectNames={'Jade_CaitlynTrap'},headshotBonus=.5,headshotNonChampion=1.5,headshotAttacks={8,7,6},trapLifetimeUnknown=true}
 local normal,classic=profiles.Caitlyn.combat,profiles.Jade_Caitlyn.combat
+-- Normal extracted CaitlynBasicAttack/CritAttack missileSpeed=2500 and
+-- CaitlynPassiveMissile=3000 (research/family-assets/Caitlyn/spells.json).
+normal.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=normal.headshotNames}},
+ casts={CaitlynBasicAttack='basic',CaitlynCritAttack='basic',CaitlynPassiveMissile='headshot'},
+ source='Normal extracted basic/crit/PassiveMissile missileSpeed; separate from Classic data'}
+-- Units/s. Classic extracted Basic/Crit missileSpeed=2500, Headshot=3000:
+-- research/26.20-five-champions/Jade_Caitlyn/spells.json; independently matched
+-- in live 1062-1068 (107 basic/crit and 15 Headshot missiles). Not Normal defaults.
+classic.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=classic.headshotNames}},
+ casts={Jade_CaitlynBasicAttack='basic',Jade_CaitlynCritAttack='basic',Jade_CaitlynHeadshotMissile='headshot'},
+ source='Classic extracted basic/crit/Headshot missileSpeed; live 1062-1068 native corroboration'}
 normal.e.mobilitySource='https://wiki.leagueoflegends.com/en-us/Caitlyn 90 Caliber Net: recoils 390 units, cast time 0.15, speed 1600 / 1000 (missile / recoil), read 2026-10-08'
 normal.e.mobility=true;classic.e.mobility=true;normal.w.requiresAmmo=true
 local function modifier(p,raw,s,slot,rank,stats,target,options,finite)

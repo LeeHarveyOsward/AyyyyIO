@@ -6,7 +6,7 @@ modules.actionClient=(function(require) return _G.OrbamaFamily:Factory("e80d2d89
 modules.abilityProfiles=_G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")
 modules.championProfiles=(function()
 local factories={}
-factories["Caitlyn"]=function()return _G.OrbamaFamily:Require("5c602221510229cce0e8390743274c19a0c0488ea13173e2b3f9fecc5fdc094b")()end
+factories["Caitlyn"]=function()return _G.OrbamaFamily:Require("7e9b2eff920d1fdc2220ba41c50d289867e1c86facd8a1d911d416c542d2bffc")()end
 return function(name)
 local factory=factories[name]
 if not factory then error('Unknown champion mechanics family: '..tostring(name),0)end
@@ -22,19 +22,19 @@ modules.ahriProfile=(function(require) return _G.OrbamaFamily:Factory("30d95faa8
 modules.kogmawProfile=(function(require) return _G.OrbamaFamily:Factory("309e64d13d66b4a917814dd40e811f4f7a34102f488bc17c6f0c58e6b83cb99a")(require) end)(require)
 modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end)(require)
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
-modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
-modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
+modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("3da377a20f2c2a192efc8343b23fb571f5cda62e822551b4678aab011deb2b69")(require) end)(require)
+modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("3c7cec6192229bd783dbb481829105edbbe5cfcc52fbeae7408eed05670af826")(require) end)(require)
 modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
 modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")
-modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")
+modules["gameplay"]=_G.OrbamaFamily:Require("150735cd6058eefcd206afc8513dde960e1a1f0823bdfd223db9491c39a2f4d8")
 modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("f7d98e88d54ea77cb1c1c4aa026b699688271ff1aa4f6e769036de5dccf63c4f")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -311,18 +311,7 @@ function IsPoison(unit)
 end
 
 function Recalling(unit)
-	local as = unit.activeSpell
-	if as and as.valid and type(as.name)=='string' and as.name:lower():find("recall") then
-		return true
-	end
-	local buffs = GetBuffs(unit)
-	for i = 1, #buffs do
-		local buff = buffs[i]
-		if type(buff.name)=='string' and buff.name:lower():find("recall") then
-			return true
-		end
-	end
-	return false
+    return _G.SDK.IsRecalling(unit,Core.validating==true)
 end
 
 function HasInvalidDashBuff(unit)
@@ -683,9 +672,12 @@ local GameplayHooks=(function(g,C,P)
   return H.pos:Extended(aim,-f.profile.e.recoil)
  end
  -- noFollow: the net alone (a peel or the net-then-Headshot finisher), no buffered Q.
- function Hooks.castE(f,u,context,allowed,noFollow)
+ function Hooks.castE(f,u,context,allowed,noFollow,followupCheck)
   local origin=f.point(H.pos)
-  return f:Cast(2,u,context,{world=true,permission=allowed,check=function(_,r)local landing=Hooks.recoil(f,position(r,u.pos));return landing and f:Safe(landing,false)end,
+  return f:Cast(2,u,context,{world=true,permission=allowed,check=function(_,r)
+   local landing=Hooks.recoil(f,position(r,u.pos))
+   return landing and f:Safe(landing,false)and(not followupCheck or followupCheck(landing))
+  end,
    after=function(q)
     if noFollow then return end
     f.sequences.eq={action=q.id,intent=q,target=u,identity=id(u),handle=u.handle,context=context,origin=origin,expires=G.Timer()+1.1,observed=true}
@@ -745,10 +737,8 @@ local GameplayHooks=(function(g,C,P)
  function Hooks.qFinisherOk(f,u)
   for _,v in ipairs(f:Rows('hero',400))do if id(v)~=id(u)then return false end end
   if f:AttackReach(u)and SDK.Orbwalker:CanAttack()then
-   local windup=H.attackData and H.attackData.windUpTime or .25
-   local speed=H.attackData and H.attackData.projectileSpeed
-   local travel=finite(speed)and speed>0 and f.distance(H.pos,u.pos)/speed or 0
-   if windup+travel<=f:Impact(0,u)and C:Lethal(u,windup+travel,function()return SDK.Damage:GetAutoAttackDamage(H,u,true)end,{attack=true})then return false end
+   local impact=C:AttackImpact(u)
+   if impact and impact<=f:Impact(0,u)and C:Lethal(u,impact,function()return SDK.Damage:GetAutoAttackDamage(H,u,true)end,{attack=true})then return false end
   end
   return true
  end
@@ -767,7 +757,8 @@ local GameplayHooks=(function(g,C,P)
  end
  function Hooks.pathTrap(f,u,context,allowed)
   if not f:Ready(1)or not f:Reach(u,f.profile.w.range+200)then return false end
-  if f:AttackReach(u)and C:Lethal(u,.3,function()return SDK.Damage:GetAutoAttackDamage(H,u,true)end,{attack=true})then return false end
+  local attackImpact=f:AttackReach(u)and C:AttackImpact(u)
+  if attackImpact and C:Lethal(u,attackImpact,function()return SDK.Damage:GetAutoAttackDamage(H,u,true)end,{attack=true})then return false end
   local p,goal=Hooks.pathTrapPoint(f,u);if not p then return false end
   local ok=Hooks.trapAt(f,p,context,allowed,function()
    local path=u.pathing;return f:Current(u)and path and path.hasMovePath==true and f.point(path.endPos)~=nil and f.distance(path.endPos,goal)<=150
@@ -786,14 +777,16 @@ local GameplayHooks=(function(g,C,P)
   if f.profile.id~='normal'or not f.profile.netNames or not f.menu.Misc.KillSecure:Value()or not f:Permission(mode,2)or not f:Ready(2)then return false end
   for _,u in ipairs(f:Rows('hero',f:Range(2)))do
    if f:Allowed(u)then
-    local function kills()
+    local function kills(landing)
      if not f:Current(u)or C:SpellProtected(u)~=false then return false end
-     local windup=H.attackData and H.attackData.windUpTime or .25
-     local speed=H.attackData and H.attackData.projectileSpeed
-     local travel=finite(speed)and speed>0 and f.distance(H.pos,u.pos)/speed or 0
-     return not f:Lethal(2,u)and C:Lethal(u,f:Impact(2,u)+windup+travel,function()return Hooks.netFinisherDamage(f,u)end)
+     landing=landing or Hooks.recoil(f,u.pos)
+     local impact=landing and C:AttackImpact(u,landing,'headshot')
+     local e=f.profile.e;local launch=g.OrbamaPrediction:GetLaunchDelay({Delay=e.delay})
+     if not impact or not finite(launch)or not finite(e.recoilSpeed)or e.recoilSpeed<=0 then return false end
+     local afterNet=math.max(f:Impact(2,u),launch+e.recoil/e.recoilSpeed)
+     return not f:Lethal(2,u)and C:Lethal(u,afterNet+impact,function()return Hooks.netFinisherDamage(f,u)end)
     end
-    if kills()and Hooks.castE(f,u,context,function()return f:Permission(mode,2)and f.menu.Misc.KillSecure:Value()and kills()end,true)then return true end
+    if kills()and Hooks.castE(f,u,context,function()return f:Permission(mode,2)and f.menu.Misc.KillSecure:Value()and kills()end,true,kills)then return true end
    end
   end;return false
  end

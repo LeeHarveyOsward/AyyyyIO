@@ -583,6 +583,7 @@ return function(g, modules, champion)
         self.enabled=false;self.reason=reason;self.locks={}
         local preference=self.attackPreference;self.attackPreference=nil;self.zoneWatch=nil
         if preference and sdk.Orbwalker.ForceTarget==preference.unit then sdk.Orbwalker.ForceTarget=nil end
+        if preference and sdk.Orbwalker.ForceTargetPreference==preference.unit then sdk.Orbwalker.ForceTargetPreference=nil end
         local movement=self.movePreference;self.movePreference=nil
         if movement and sdk.Orbwalker.ForceMovement==movement.position then sdk.Orbwalker.ForceMovement=nil end
         unregisterDefenses(self.defenseBindings);self.defenseBindings=nil;self.defenseBindingCount=nil;self.defenseProvider=nil
@@ -1567,14 +1568,20 @@ return function(g, modules, champion)
     -- opts.attack selects how the basic attack is weighed:
     --   nil     the rule: rescue only a minion that dies before the next attack
     --           can land (cooldown, approach, windup, flight), or between that
-    --           attack, when it is not lethal, and the following one.
+    --           attack, when it is not lethal, and the following one. Where the
+    --           shared attack schedule knows the minion (HealthPrediction:
+    --           FarmRescue), its answer replaces this rule: rescue only a kill
+    --           our attacks would not collect while they take the others.
     --   'ready' earlier class-style rule, kept where a champion's regressions pin
     --           it: only an attack that is ready and in range right now counts,
     --           and only when it kills at its own landing.
     --   false   the caller has already ruled the basic attack out.
     -- opts.attackDamage (number or function(unit)) replaces the provider's
     -- attack damage when that figure is not guaranteed for this champion.
-    function C:Rescue(unit,impact,damage,opts)
+    -- opts.castLock is a known cast duration in seconds, excluding flight.
+    -- During final validation, a declared slot cast duration supplies it when
+    -- omitted. Unknown timing keeps the schedule's conservative impact wait.
+    local function rescueDecision(self,unit,impact,damage,opts)
         local finite=C.finite;local h=g.myHero
         if not unit or not finite(impact)then return false end
         local hp=self:UnshieldedLegacyForecast(unit,impact)
@@ -1588,11 +1595,26 @@ return function(g, modules, champion)
         if type(damage)=='function'then damage=damage()end
         if type(damage)~='number'or damage<hp+(unit.hpRegen or 0)*impact then return false end
         if policy==false then return true end
-        local attack=sdk.Attack;if not attack then return false end
         local own=opts and opts.attackDamage
+        -- The default rule first asks the shared basic-attack schedule, which
+        -- knows when our next attack goes to another minion. Its windows use the
+        -- provider's attack damage, so a caller's own figure keeps the rule below,
+        -- as does an unknown answer (nil).
+        if policy==nil and own==nil then
+            local prediction=sdk.HealthPrediction
+            if prediction and type(prediction.FarmRescue)=='function'then
+                local castLock=opts and opts.castLock
+                if castLock==nil and self.farmValidation then castLock=self.farmValidation.farmCastLock end
+                local ok,planned=pcall(prediction.FarmRescue,prediction,unit,impact,castLock)
+                if ok and planned==true then return true end
+                if ok and planned==false then return false end
+            end
+        end
+        local attack=sdk.Attack;if not attack then return false end
         local windup=attack:GetWindup()
         if policy=='ready'and(not sdk.Orbwalker:CanAttack()or not sdk.Data:IsInAutoAttackRange(h,unit)or not finite(windup)or windup<0)then return true end
-        local distance=flatDistance(h.pos,unit.pos);local reach=sdk.Data:GetAutoAttackRange(h,unit);local speed=attack:GetProjectileSpeed()
+        local distance=flatDistance(h.pos,unit.pos);local reach=sdk.Data:GetAutoAttackRange(h,unit);local speed,speedKnown=attack:GetProjectileSpeed()
+        if speedKnown==false then return false end
         local flight=type(speed)=='number'and speed>0 and speed<math.huge and finite(reach)and math.min(distance,reach)/speed or 0
         if policy=='ready'then
             local landing=windup+flight;local atAttack=self:UnshieldedLegacyForecast(unit,landing)
@@ -1617,6 +1639,88 @@ return function(g, modules, champion)
             if not finite(atSecond)or atSecond>0 then return false end
         end
         return true
+    end
+    local function farmProofContext(q)
+        return q and q.type~='attack'and(q.mode=='LastHit'or q.mode=='LaneClear'
+            or q.context and q.context.farmRescue==true)
+    end
+    local function retainFarmProof(self,members,castLock)
+        local q=self.farmValidation
+        if not farmProofContext(q)or q.sentAt or q.farmSent then return end
+        local anchor=q.object
+        if anchor and(anchor.networkID~=q.targetID or anchor.handle~=q.targetHandle)then return end
+        q.farmProof={members=members,anchor=anchor,anchorNet=q.targetID,anchorHandle=q.targetHandle,
+            castLock=finiteNumber(castLock)and castLock>=0 and castLock or nil,
+            gameAt=g.Game.Timer(),at=self.adapter:Now()}
+    end
+    -- The SDK owns current receipt capacity. Old or unreadable capability
+    -- metadata retains the first set-capable provider's smaller bound.
+    function C:FarmKillSetMemberLimit()
+        local health=sdk.HealthPrediction
+        if health and type(health.GetFarmKillSetCapabilities)=='function'then
+            local ok,limit=pcall(function()
+                local capabilities=health:GetFarmKillSetCapabilities()
+                return type(capabilities)=='table'and capabilities.maxMembers
+            end)
+            if ok and finiteNumber(limit)and limit>0 and limit%1==0 then return limit end
+        end
+        -- The first set-capable provider accepted five members. Missing or
+        -- malformed newer metadata cannot authorize a larger receipt.
+        return 5
+    end
+    -- Pure set preservation query outside final validation. Only a validated
+    -- cast retains copied kill facts; its exact provider send activates them.
+    -- allowUnknown preserves an adapter's existing independent permission.
+    function C:FarmKillSet(rows,opts)
+        opts=opts or {}
+        local q=self.farmValidation
+        if q and not q.sentAt and not q.farmSent then q.farmProof=nil end
+        if type(rows)~='table'or #rows<1 then return false,'invalid_members'end
+        if #rows>self:FarmKillSetMemberLimit()then return nil,'member_overflow'end
+        local castLock=opts.castLock
+        if castLock==nil and q then castLock=q.farmCastLock end
+        if castLock~=nil and(not finiteNumber(castLock)or castLock<0)then return false,'invalid_cast_lock'end
+        local members,seen={},{}
+        for i=1,#rows do
+            local row=rows[i];local unit=type(row)=='table'and row.unit
+            if not unit or unit.type~=g.Obj_AI_Minion or unit.team==300 or unit.team==g.myHero.team
+                or unit.networkID==nil or unit.handle==nil or not env.IsValid(unit)
+                or row.net~=nil and row.net~=unit.networkID or row.handle~=nil and row.handle~=unit.handle
+                or seen[unit.handle]then return false,'member_identity'end
+            if not finiteNumber(row.impact)or row.impact<0 or not finiteNumber(row.damage)or row.damage<=0 then return false,'invalid_member_timing'end
+            local hp=self:UnshieldedLegacyForecast(unit,row.impact)
+            local regen=unit.hpRegen
+            if not finiteNumber(hp)or hp<=0 or not finiteNumber(regen)or regen<0
+                or row.damage<hp+regen*row.impact then return false,'member_not_lethal'end
+            seen[unit.handle]=true
+            members[i]={unit=unit,net=unit.networkID,handle=unit.handle,impact=row.impact,damage=row.damage}
+        end
+        local health=sdk.HealthPrediction;local planned,reason
+        if health and type(health.FarmKillSet)=='function'then
+            local ok,value,why=pcall(health.FarmKillSet,health,members,castLock,opts.policy or 'preserve')
+            if ok then planned,reason=value,why else reason='set_query_failed'end
+        else reason='set_query_unavailable'end
+        if planned==false or planned~=true and opts.allowUnknown~=true then return planned,reason end
+        retainFarmProof(self,members,castLock)
+        return true,reason
+    end
+    function C:Rescue(unit,impact,damage,opts)
+        local yes=rescueDecision(self,unit,impact,damage,opts)
+        local q=self.farmValidation
+        -- Decision queries never reserve a target. Retain proof only while the
+        -- exact cast's final validator is running, for its original identity.
+        -- Empowerment damage still needs a later attack. Its preparation send
+        -- cannot claim that damage or block the attack that must deliver it.
+        if farmProofContext(q)and not q.sentAt and not q.farmSent and q.object==unit and unit and unit.type==g.Obj_AI_Minion and unit.team~=300
+            and unit.networkID~=nil and unit.handle~=nil and q.targetID==unit.networkID and q.targetHandle==unit.handle
+            then
+            local castLock=opts and opts.castLock
+            if castLock==nil then castLock=q.farmCastLock end
+            if yes and not(opts and opts.requiresAttack==true)and finiteNumber(impact)and impact>=0 then
+                retainFarmProof(self,{{unit=unit,net=unit.networkID,handle=unit.handle,impact=impact}},castLock)
+            else q.farmProof=nil end
+        end
+        return yes
     end
     -- A rescue cast is time-critical. Farming contexts carry priority
     -- 'background', which the provider dispatches only after the orbwalker's
@@ -1945,6 +2049,7 @@ return function(g, modules, champion)
         local now=g.Game.Timer()
         if ours and p.owner~=owner and p.unit~=unit and now<p.untilAt then return false,'preference_owned'end
         walker.ForceTarget=unit
+        walker.ForceTargetPreference=unit
         self.attackPreference={owner=owner,unit=unit,id=C.id(unit),handle=unit.handle,untilAt=now+math.max(.05,math.min(seconds or .25,1))}
         return true
     end
@@ -1956,12 +2061,16 @@ return function(g, modules, champion)
     function C:ReleaseAttackPreference(owner)
         local p=self.attackPreference;if not p or owner and p.owner~=owner then return false end
         if sdk.Orbwalker.ForceTarget==p.unit then sdk.Orbwalker.ForceTarget=nil end
+        if sdk.Orbwalker.ForceTargetPreference==p.unit then sdk.Orbwalker.ForceTargetPreference=nil end
         self.attackPreference=nil;return true
     end
     function C:MaintainAttackPreference()
         local p=self.attackPreference;if not p then return end
         local u=p.unit
-        if sdk.Orbwalker.ForceTarget~=u then self.attackPreference=nil;return end
+        if sdk.Orbwalker.ForceTarget~=u then
+            if sdk.Orbwalker.ForceTargetPreference==u then sdk.Orbwalker.ForceTargetPreference=nil end
+            self.attackPreference=nil;return
+        end
         if g.Game.Timer()>p.untilAt or not env.IsValid(u)or C.id(u)~=p.id or u.handle~=p.handle
             or sdk.Data:IsInAutoAttackRange(hero,u)~=true then self:ReleaseAttackPreference()end
     end
@@ -2592,6 +2701,14 @@ return function(g, modules, champion)
         if not finish or finish~=finish or finish<=now then return 0 end
         return math.min(finish-now,1.5)
     end
+    -- Attack windup and projectile flight from an optional prepared origin.
+    -- Dash follow-ups use their resolved endpoint; ordinary attacks use the hero.
+    function C:AttackImpact(target,origin,preparedStage)
+        local attack=sdk.Attack
+        if not attack or type(attack.GetImpactTime)~='function'then return nil end
+        local impact=attack:GetImpactTime(target,origin,preparedStage)
+        return impact
+    end
     -- Seconds until the player's next basic attack may start (0: ready now), or
     -- nil when the orbwalker's attack timer is unavailable.
     function C:AttackReadyIn()
@@ -3018,6 +3135,53 @@ return function(g, modules, champion)
         for _,offer in ipairs(mobilityOffers(self.mobility))do if offer.slot==slot then return nil end end
         return seconds
     end
+    function C:TrackFarmSpell(q)
+        local health=sdk.HealthPrediction
+        if q.farmTracked or not q.farmProof or not nativeSendGameTime
+            or not health or type(health.TrackFarmSpell)~='function'then return end
+        q.farmTracked=health:TrackFarmSpell(q,function()
+            if not self:Current()or q.cancelled or q.ambiguous or q.farmFinished and not q.observedAt then return false end
+            if not q.id then return nil end
+            local r=A:Poll(q.id)or(q.observedAt and q.farmReceipt)
+            if not r or r.jobCancelled or r.state=='cancelled_before_send'or r.state=='send_uncertain'
+                or r.interrupted or r.competitor then return false end
+            local proof=q.farmProof
+            local clock=A:Now()
+            if not proof then
+                if clock<=q.expires then return nil end
+                return false
+            end
+            local anchor=proof.anchor
+            if q.object~=anchor or q.targetID~=proof.anchorNet or q.targetHandle~=proof.anchorHandle
+                or anchor and(anchor.networkID~=proof.anchorNet or anchor.handle~=proof.anchorHandle)then return false end
+            if clock<proof.at then return false end
+            if not finiteNumber(r.sentAt)then
+                if clock<=q.expires then return nil end
+                return false
+            end
+            local sent=r.sentGameTime;local now=g.Game.Timer()
+            if not finiteNumber(sent)or sent<proof.gameAt or now<sent or r.sentAt<proof.at or clock<r.sentAt then return false end
+            if q.farmSentProof~=proof then
+                q.farmSentProof=proof
+                local members={}
+                for i=1,#proof.members do
+                    local member=proof.members[i]
+                    members[i]={unit=member.unit,net=member.net,handle=member.handle,expires=sent+member.impact}
+                end
+                q.farmSent={members=members,lockUntil=proof.castLock and sent+proof.castLock or nil}
+            end
+            -- An attributed native cast end supersedes a declared duration.
+            -- Neither the target's impact delay nor flight supplies this lock.
+            local cast=g.myHero.activeSpell
+            if cast and cast.valid and not cast.isStopped and not self:IsAttackCast(cast)and cast.name==q.spellName
+                and finiteNumber(cast.startTime)and cast.startTime>=sent and cast.startTime<=now
+                and cast.startTime~=q.previousCastStart and cast.startTime~=q.dispatchCastStart
+                and finiteNumber(cast.castEndTime)and cast.castEndTime>=cast.startTime then
+                q.farmSent.lockUntil=cast.castEndTime
+            end
+            return q.farmSent
+        end)==true
+    end
     function C:Cast(key,target,options)
         options=options or {};local binding=target and prediction.bindings[target]
         if options.type=='two_point' and (binding or options.resolve or options.prevalidateWorldCast or options.prevalidateWorldMove)then
@@ -3100,6 +3264,11 @@ return function(g, modules, champion)
             callbacks={},stamp=stamp,spellName=spell and spell.name,logicalSlot=logicalSlot,waitingKey=reusable and options.waitingKey or nil,
             deferAttackWindup=options.deferAttackWindup,
             toggleState=spell and spell.toggleState,ammo=spell and spell.ammo,cooldown=spell and spell.currentCd,requestGameTime=g.Game.Timer(),previousCastStart=g.myHero.activeSpell and g.myHero.activeSpell.startTime,requestedAt=now,range=options.range or binding and binding.settings.Range,objectRange=options.objectRange,itemID=logicalSlot and logicalSlot>=6 and (g.myHero:GetItemData(logicalSlot)or{}).itemID}
+        -- Only an explicit profile/caller cast duration is an attack lock.
+        -- Prediction delay and projectile flight are not cast durations.
+        local farmCastLock=options.castTime
+        if farmCastLock==nil and slot~=nil then farmCastLock=self.castTimes[slot]end
+        if finiteNumber(farmCastLock)and farmCastLock>=0 then q.farmCastLock=farmCastLock end
         q.observe=options.observe
         q.prediction=binding
         q.world=minimapWorld
@@ -3157,10 +3326,21 @@ return function(g, modules, champion)
             return validate(resolved)
         end
         local mechanical=q.mechanical;q.mechanical=function(resolved)
-            local valid,reason=self:Fresh(mechanical,resolved)
+            local prior,wasValidating=self.farmValidation,self.validating
+            self.farmValidation=q;self.validating=true
+            if not q.sentAt and not q.farmSent then q.farmProof=nil end
+            local result=pack(pcall(mechanical,resolved))
+            self.farmValidation=prior;self.validating=wasValidating
+            if not result[1]then
+                if not q.sentAt and not q.farmSent then q.farmProof=nil end
+                error(result[2],0)
+            end
+            local valid,reason=result[2],result[3]
+            if not valid and not q.sentAt and not q.farmSent then q.farmProof=nil end
             if valid and not q.sentAt then
                 local cast=g.myHero.activeSpell
                 q.dispatchCastStart=cast and cast.startTime;q.dispatchGameTime=g.Game.Timer()
+                self:TrackFarmSpell(q)
             end
             q.lastValidationReason=not valid and (reason or 'champion_condition_changed') or nil
             return valid,reason
@@ -3202,13 +3382,15 @@ return function(g, modules, champion)
         -- Deduplication supplies the detached receipt it just read. Nothing has
         -- dispatched or called the host between admission and this consumption.
         local initial=id and(admittedReceipt or A:Poll(id))
-        if not id then self.metrics.rejected=self.metrics.rejected+1;self.diagnostics.lastReject=reason;return false end
+        if not id then q.farmFinished=true;self.metrics.rejected=self.metrics.rejected+1;self.diagnostics.lastReject=reason;return false end
         if initial and initial.state=='cancelled_before_send' then
+            q.farmFinished=true
             self.metrics.rejected=self.metrics.rejected+1;self.diagnostics.lastReject=initial.reason or initial.state
             A:Finish(id)
             return false
         end
         if reason=='deduplicated' then
+            q.farmFinished=true
             local previous=previousObservation
             if not previous or previous.id~=id then
                 self.diagnostics.lastReject='deduplicated_outside_controller_ownership'
@@ -3385,6 +3567,7 @@ return function(g, modules, champion)
     end
     function C:FinishIntent(q,r)
         local key=q.key
+        q.farmFinished=true;q.farmReceipt=r
         if not q.sentAt and r and r.sentAt then q.sentAt=r.sentAt;self.metrics.sent=self.metrics.sent+1 end
         q.outcome=q.outcome or (q.observedAt and 'mechanically_observed' or not q.sentAt and 'rejected_before_send' or 'unobserved')
         A:Finish(q.id)

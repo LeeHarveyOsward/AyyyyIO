@@ -17,7 +17,10 @@ function L:Request(owner,slot,rank,allowed)
     -- down), which casts the spell instead of learning it (live 2026-09-29).
     local id,why=client:Submit({type='chord',kind='none',keys={g.HK_LUS or 17,c.actions:key(slot)},
         owner='level:'..owner,resource='skill_allocation',priority='background',expires=client:Now()+250,
-        mechanical=valid,reconcile=function()return type(c:spell(slot).level)=='number'end})
+        mechanical=valid,reconcile=function()
+            local level=c:spell(slot).level
+            return type(level)=='number'and level>rank
+        end})
     if not id then return false,why end
     self.requests[owner]={id=id,slot=slot,rank=rank};return true,id
 end

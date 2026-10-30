@@ -107,8 +107,7 @@ function V:Current(row,app,now)
 end
 -- Clip projected edges, not world contours. Both endpoints can be outside
 -- while a long projectile still crosses the viewport.
-local function clip(a,b,width,height)
-    local ax,ay,bx,by=a.x,a.y,b.x,b.y
+local function clip(ax,ay,bx,by,width,height)
     if ax<0 and bx<0 or ax>width and bx>width or ay<0 and by<0 or ay>height and by>height then return end
     if ax>=0 and ax<=width and ay>=0 and ay<=height
         and bx>=0 and bx<=width and by>=0 and by<=height then return ax,ay,bx,by end
@@ -160,20 +159,25 @@ function V:Mesh(mesh,color,width,height,shift,offsetX,offsetY,offsetZ,probe)
     local tail=shift and shift>0 and mesh.tail
     local first,last=tail and tail.first or 0,tail and tail.last or -1
     local sx,sz=tail and tail.dx*shift or 0,tail and tail.dz*shift or 0
-    -- Prepared vertices are finite world points; ScreenXYZ rechecks x/z.
+    -- Copy scalar coordinates into reusable storage. Host projection objects
+    -- do not escape this vertex read; every Draw still projects fresh points.
     for i,p in ipairs(mesh.vertices)do
-        if i>=first and i<=last then projected[i]=self:ScreenXYZ(p.x+sx+offsetX,p.y+offsetY,p.z+sz+offsetZ)or false
-        else projected[i]=self:ScreenXYZ(p.x+offsetX,p.y+offsetY,p.z+offsetZ)or false end
+        local q
+        if i>=first and i<=last then q=self:ScreenXYZ(p.x+sx+offsetX,p.y+offsetY,p.z+sz+offsetZ)
+        else q=self:ScreenXYZ(p.x+offsetX,p.y+offsetY,p.z+offsetZ)end
+        projected[i*2-1]=q and q.x or false;projected[i*2]=q and q.y or false
     end
     local d=self.display or self.g.Draw
     local line=d.Line;if not line then return false end
     local drawn=false
-    for _,edge in ipairs(mesh.edges)do local a,b=projected[edge[1]],projected[edge[2]]
-        if a and b then
+    for _,edge in ipairs(mesh.edges)do
+        local a,b=edge[1]*2,edge[2]*2
+        local ax,ay,bx,by=projected[a-1],projected[a],projected[b-1],projected[b]
+        if ax and bx then
             if width then
-                local ax,ay,bx,by=clip(a,b,width,height)
+                ax,ay,bx,by=clip(ax,ay,bx,by,width,height)
                 if ax then line(ax,ay,bx,by,1,color);drawn=true end
-            else line(a.x,a.y,b.x,b.y,1,color);drawn=true end
+            else line(ax,ay,bx,by,1,color);drawn=true end
         end
     end
     local circles,vector=mesh.circles,self.g.Vector

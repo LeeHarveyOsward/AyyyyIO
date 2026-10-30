@@ -13,7 +13,8 @@ function F:hp(u,delay)return self.c.sdk.HealthPrediction:GetPrediction(u,delay)e
 function F:impact(u)
     local c=self.c;local attack=c.sdk.Attack
     local wait=math.max(0,(attack.ServerStart or -10)+attack:GetAnimation()-Game.Timer())
-    return wait+attack:GetWindup()+U.dist(c.hero,u)/math.max(1,attack:GetProjectileSpeed())
+    local impact=attack:GetImpactTime(u)
+    return impact and wait+impact
 end
 function F:aa(u,color)
     local raw=self.c.combat:packet(u,color,self.c.state.eReady)
@@ -25,10 +26,10 @@ function F:attackChoice(mode)
     for _,u in ipairs(s.minions)do
         examined=examined+1;if examined>128 then break end
         if self:eligible(u,mode) and U.dist(c.hero,u)<=c.sdk.Data:GetAutoAttackRange(c.hero,u)then
-            local at=self:impact(u);local hp=self:hp(u,at)
+            local at=self:impact(u);local hp=self:hp(u,at or 0)
             if hp>0 then
                 if not best or hp<bestHP then best=u;bestHP=hp end
-                if hp<=self:aa(u,s.stage=='held' and s.color or nil)then
+                if at and hp<=self:aa(u,s.stage=='held' and s.color or nil)then
                     local losesWindow=self:hp(u,at+c.profile.q.delay)<=0
                     if not hit or losesWindow and not urgent or losesWindow==urgent and hp<hitHP then
                         hit=u;hitHP=hp;urgent=losesWindow
@@ -69,8 +70,8 @@ function F:diagnostics(mode)
             tracked[U.id(u)]={unit=u,health=u.health,at=now}
             c:record('farm_minion',{id=U.id(u),handle=u.handle,name=u.charName,team=u.team,health=u.health,
                 maxHealth=u.maxHealth,distance=U.dist(c.hero,u),range=c.sdk.Data:GetAutoAttackRange(c.hero,u),
-                aaImpact=at,hpAA=self:hp(u,at),aaDamage=self:aa(u,s.stage=='held' and s.color or nil),
-                hpAfterQCast=self:hp(u,at+c.profile.q.delay),qImpact=c.profile.q.delay+U.dist(c.hero,u)/c.profile.q.speed,
+                aaImpact=at,hpAA=at and self:hp(u,at),aaDamage=self:aa(u,s.stage=='held' and s.color or nil),
+                hpAfterQCast=at and self:hp(u,at+c.profile.q.delay),qImpact=c.profile.q.delay+U.dist(c.hero,u)/c.profile.q.speed,
                 hpQ=self:hp(u,c.profile.q.delay+U.dist(c.hero,u)/c.profile.q.speed),qDamage=c.combat:qDamage(u),
                 sdkLastHittable=row and row.LastHitable,sdkPredictedHP=row and row.PredictedHP,
                 sdkUnkillable=row and row.Unkillable})
@@ -109,10 +110,10 @@ function F:qWorth(u,mode,attackWindowChecked,evaluation)
     end
     if mode=='LASTHIT' then
         local aaTime=self:impact(u)
-        local hpAA=self:hp(u,aaTime)
+        local hpAA=aaTime and self:hp(u,aaTime)
         if c.effects:hasUnknownSplash()then return false end
         local inRange=U.dist(c.hero,u)<=c.sdk.Data:GetAutoAttackRange(c.hero,u)
-        if inRange and hpAA>0 and hpAA<=self:aa(u,s.stage=='held' and s.color or nil) then return false end
+        if inRange and hpAA and hpAA>0 and hpAA<=self:aa(u,s.stage=='held' and s.color or nil) then return false end
         return kills>0 and c.hero.mana>=s:cost(0)+s:reserve(0)
     end
     return total>0 and (kills>0 or #plan.hits>=2 or mode=='JUNGLECLEAR') and c.hero.mana>=s:cost(0)+s:reserve(0),kills,total
@@ -145,7 +146,9 @@ function F:redCentre(mode)
         examined=examined+1;if examined>128 or #units>=24 then break end
         if self:eligible(u,mode)and U.dist(c.hero,u)<=c.sdk.Data:GetAutoAttackRange(c.hero,u)+radius then
             local at=self:impact(u)
-            units[#units+1]=u;positions[#units]=u.GetPrediction and u:GetPrediction(1500,math.max(windup,at))or u.pos
+            if at then
+                units[#units+1]=u;positions[#units]=u.GetPrediction and u:GetPrediction(1500,math.max(windup,at))or u.pos
+            end
         end
     end
     local best,count=nil,0
@@ -173,7 +176,8 @@ function F:tick(mode,modeID)
     local function attack(u)
         self:decision(urgent and 'save_aa_window' or 'aa_last_hit',u)
         return c.combat:attack(u,modeID,'farm_attack',function()
-            local hp=self:hp(u,self:impact(u));local color=c.state.stage=='held' and c.state.color or nil
+            local at=self:impact(u);if not at then return false end
+            local hp=self:hp(u,at);local color=c.state.stage=='held' and c.state.color or nil
             return self:eligible(u,mode) and hp>0 and hp<=self:aa(u,color)
         end)
     end
@@ -210,6 +214,7 @@ function F:tick(mode,modeID)
             c:record('red_planned',{target=U.id(centre),count=count,radius=c.profile.redRadius,held=true})
             return c.combat:attack(centre,modeID,'farm_attack',function()
                 return self:eligible(centre,mode)and c.state.stage=='held'and c.state.color=='red'
+                    and self:impact(centre)~=nil
             end)
         end
     end
@@ -219,14 +224,16 @@ function F:tick(mode,modeID)
         c.level:sample(mode,{attack=true,period=c.sdk.Attack:GetAnimation(),
             q=qOpportunity and #qOpportunity.hits>=2 and true or nil,controlValue=0})
     end
-    local bestHP=self:hp(best,self:impact(best))
+    local bestImpact=self:impact(best)
+    local bestHP=bestImpact and self:hp(best,bestImpact)
     self:decision('provider_clear_or_wait',best)
     if not spells or c.cards.manual or not c.config:get(mode..'W') or s.stage=='held' or not s:ready(1,s.stage=='selecting')then return end
     local blue=self:aa(best,'blue')
     if mode=='LASTHIT' then
-        if not c.effects:hasUnknownSplash() and bestHP<=blue and c.cards:waitFor('blue')<.4
+        if bestHP and not c.effects:hasUnknownSplash() and bestHP<=blue and c.cards:waitFor('blue')<.4
             and c.hero.mana>=s:cost(1)+s:reserve(1)then c.cards:auto('blue','save_cs',function()
-                local hp=self:hp(best,self:impact(best)+c.cards:waitFor('blue'))
+                local at=self:impact(best);if not at then return false end
+                local hp=self:hp(best,at+c.cards:waitFor('blue'))
                 return self:eligible(best,mode) and hp>0 and hp<=self:aa(best,'blue')
             end)end
     else
@@ -250,7 +257,10 @@ function F:tick(mode,modeID)
         local recovery=color=='blue' and P.Rank(c.profile.blueRestore,s.spells[1].level) or 0
         if c.hero.mana>=s:cost(1) and math.min(c.hero.maxMana,c.hero.mana-s:cost(1)+recovery)>=s:reserve(1)then
             self:decision(color..'_card',unit)
-            c.cards:auto(color,'clear',function()return self:eligible(unit,mode) and U.dist(c.hero,unit)<=c.sdk.Data:GetAutoAttackRange(c.hero,unit)end)
+            c.cards:auto(color,'clear',function()
+                return self:eligible(unit,mode) and U.dist(c.hero,unit)<=c.sdk.Data:GetAutoAttackRange(c.hero,unit)
+                    and (color~='red'or self:impact(unit)~=nil)
+            end)
         end
     end
 end

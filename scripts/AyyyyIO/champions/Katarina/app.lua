@@ -96,7 +96,8 @@ function App:available()
     if _G.AyyyyIO and _G.AyyyyIO.Allows and not _G.AyyyyIO:Allows()then return false end
     return self.active and self.sdk==SDK and self.hero==myHero and myHero.charName==self.profile.hero and self.config:get('enabled')
         and not myHero.dead and not Game.IsChatOpen()and Game.IsOnTop()
-        and not U.buff(myHero,{recall=true,recallimproved=true,zhonyasringshield=true},Game.Timer())
+        and not self.sdk.IsRecalling(myHero,true)
+        and not U.buff(myHero,{zhonyasringshield=true},Game.Timer())
 end
 function App:anchorValid(o,origin)
     local d=self.state.daggers[U.id(o)]

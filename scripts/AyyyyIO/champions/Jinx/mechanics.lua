@@ -30,6 +30,8 @@ return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
  -- conservative 0.5 + d/1750 + 0.5 until the jinx_e_land trace measures it (wiki: no cast time, lands after 0.4 s).
  eRange=D.JinxE.castRange,eArm=D.JinxE.GrenadeArmTime,eDuration=D.JinxE.GrenadeDuration,eSpeed=D.JinxE.missileSpeed,eDelay=.5,eRadius=D.JinxEHit.mMissileWidth,eEffect=225,
  rMin=D.JinxR.BaseDamage,rMax=D.JinxR.MaxDamage,rMinAD=.12,rMaxAD=1.2,rMissing={D.JinxR.PercentDamage[1]/100,D.JinxR.PercentDamage[2]/100,D.JinxR.PercentDamage[3]/100},rSplash=D.JinxR.AoERadius,rSecondary=D.JinxR.AoEDamageMult,
+ -- Native JinxR positions: FamilyTelemetry-v2-17 and119, documented in docs/JINX-RECALL-SNIPE.md.
+ rMotion={speed=D.JinxR.mSpeed,minSpeed=D.JinxR.mSpeed,maxSpeed=2200,speedStep={at=1350,speed=2200}},
  -- rMonsterCap: missing-health part against monsters (spells.json JinxR MonsterExecuteMax 1200; wiki V26.16).
  rMonsterCap=D.JinxR.MonsterExecuteMax,rRange=D.JinxR.castRange,rRadius=D.JinxR.mMissileWidth,rDelay=D.JinxR.mCastTime,rSpeed=D.JinxR.mSpeed,rDamageDistance=1500}}
 

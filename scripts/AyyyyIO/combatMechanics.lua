@@ -401,6 +401,17 @@ profiles['Jade_Caitlyn'].combat={id='classic',champion='Caitlyn',names={{'Jade_C
   r={range=D.Jade_CaitlynR.castRange,delay=1,speed=D.Jade_CaitlynRMissile.mSpeed,radius=D.Jade_CaitlynRMissile.mMissileWidth,type='physical',base=D.Jade_CaitlynR.RBaseDamage,bonusAD=D.Jade_CaitlynR.RADRatio},qPierceStep=D.Jade_CaitlynQ.ExtraHitPercentReduction,qPierceMin=D.Jade_CaitlynQ.MinimumDamagePercent,
   headshotNames={'Jade_CaitlynHeadshot'},headshotCountNames={'Jade_CaitlynHeadshotCount'},trapNames={'Jade_CaitlynYordleTrapDebuff'},trapObjectNames={'Jade_CaitlynTrap'},headshotBonus=.5,headshotNonChampion=1.5,headshotAttacks={8,7,6},trapLifetimeUnknown=true}
 local normal,classic=profiles.Caitlyn.combat,profiles.Jade_Caitlyn.combat
+-- Normal extracted CaitlynBasicAttack/CritAttack missileSpeed=2500 and
+-- CaitlynPassiveMissile=3000 (research/family-assets/Caitlyn/spells.json).
+normal.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=normal.headshotNames}},
+ casts={CaitlynBasicAttack='basic',CaitlynCritAttack='basic',CaitlynPassiveMissile='headshot'},
+ source='Normal extracted basic/crit/PassiveMissile missileSpeed; separate from Classic data'}
+-- Units/s. Classic extracted Basic/Crit missileSpeed=2500, Headshot=3000:
+-- research/26.20-five-champions/Jade_Caitlyn/spells.json; independently matched
+-- in live 1062-1068 (107 basic/crit and 15 Headshot missiles). Not Normal defaults.
+classic.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=classic.headshotNames}},
+ casts={Jade_CaitlynBasicAttack='basic',Jade_CaitlynCritAttack='basic',Jade_CaitlynHeadshotMissile='headshot'},
+ source='Classic extracted basic/crit/Headshot missileSpeed; live 1062-1068 native corroboration'}
 normal.e.mobilitySource='https://wiki.leagueoflegends.com/en-us/Caitlyn 90 Caliber Net: recoils 390 units, cast time 0.15, speed 1600 / 1000 (missile / recoil), read 2026-10-08'
 normal.e.mobility=true;classic.e.mobility=true;normal.w.requiresAmmo=true
 local function modifier(p,raw,s,slot,rank,stats,target,options,finite)
@@ -1311,6 +1322,8 @@ return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
  -- conservative 0.5 + d/1750 + 0.5 until the jinx_e_land trace measures it (wiki: no cast time, lands after 0.4 s).
  eRange=D.JinxE.castRange,eArm=D.JinxE.GrenadeArmTime,eDuration=D.JinxE.GrenadeDuration,eSpeed=D.JinxE.missileSpeed,eDelay=.5,eRadius=D.JinxEHit.mMissileWidth,eEffect=225,
  rMin=D.JinxR.BaseDamage,rMax=D.JinxR.MaxDamage,rMinAD=.12,rMaxAD=1.2,rMissing={D.JinxR.PercentDamage[1]/100,D.JinxR.PercentDamage[2]/100,D.JinxR.PercentDamage[3]/100},rSplash=D.JinxR.AoERadius,rSecondary=D.JinxR.AoEDamageMult,
+ -- Native JinxR positions: FamilyTelemetry-v2-17 and119, documented in docs/JINX-RECALL-SNIPE.md.
+ rMotion={speed=D.JinxR.mSpeed,minSpeed=D.JinxR.mSpeed,maxSpeed=2200,speedStep={at=1350,speed=2200}},
  -- rMonsterCap: missing-health part against monsters (spells.json JinxR MonsterExecuteMax 1200; wiki V26.16).
  rMonsterCap=D.JinxR.MonsterExecuteMax,rRange=D.JinxR.castRange,rRadius=D.JinxR.mMissileWidth,rDelay=D.JinxR.mCastTime,rSpeed=D.JinxR.mSpeed,rDamageDistance=1500}}
 
@@ -3117,10 +3130,11 @@ local pair=(function()
 -- shows after Q under R is recorded by the vayne_stealth_buffs development trace (not live-verified).
 
 -- Condemn's stationary cast time is declared to the shared cast-time gate.
+-- Empowered attack aliases: profile-matched installed spells.json entries.
 return {
- Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
+ Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qAttackNames={Jade_VayneQ_Attack=true,Jade_VayneQ_UltAttack=true},qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
   eBase=D.Jade_VayneE.FirstHitDamage,eAD=.5,eTerrain=D.Jade_VayneE.SecondHitDamage,eTerrainAD=.5,eCastTime=.25},
- Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qRatio=D.VayneTumble.TotalADRatio,qAP=D.VayneTumble.APRatio,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=D.VayneCondemn.castRange,eKnockback=D.VayneCondemn.KnockbackDistance,
+ Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qAttackNames={VayneTumbleAttack=true,VayneTumbleUltAttack=true},qRatio=D.VayneTumble.TotalADRatio,qAP=D.VayneTumble.APRatio,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=D.VayneCondemn.castRange,eKnockback=D.VayneCondemn.KnockbackDistance,
   eBase=D.VayneCondemn.Damage,eAD=.5,eTerrain={75,127.5,180,232.5,285},eTerrainAD=.75,eCastTime=.25},
 }
 

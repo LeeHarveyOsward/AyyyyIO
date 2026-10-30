@@ -190,10 +190,15 @@ return function(g, manifest, read, digest,storage)
     end
     function family:Boot(name)
         assert(valid(),'Family instance changed')
-        if manifest.development and not self.diagnostics and not self.diagnosticError then
+        if (manifest.development or manifest.modules['Family.diagnostics']) and not self.diagnostics and not self.diagnosticError then
             local ok,reason=pcall(function()
-                self.diagnostics=self:Require('Family.diagnostics')(g,self,manifest)
-                self.development=self:Require('Family.development')(g,self)
+                -- Every runtime starts with recording off, including saved menu values.
+                self.diagnostics=self:Require('Family.diagnostics')(g,self,{generation=manifest.generation,
+                    dataRevision=manifest.dataRevision,development=manifest.development,
+                    diagnostics={enabled=false,sampleMs=1000,flushMs=500,batchRows=64}})
+                if manifest.modules['Family.recording_store']then
+                    self.diagnostics.recordingStore=self:Require('Family.recording_store')(g,g.COMMON_PATH or g.SCRIPT_PATH or '')
+                end
                 if manifest.modules['Family.support']then self.support=self:Require('Family.support')(g,self)end
             end)
             if not ok then self.diagnosticError=tostring(reason);if g.print then g.print('[Family diagnostics] '..self.diagnosticError)end end
@@ -231,6 +236,7 @@ return function(g, manifest, read, digest,storage)
         if not ok then
             self:ClosePreparation(name)
             record.state='failed';record.reason=tostring(value)
+            if self.diagnostics then self.diagnostics:Event('component_failed',{component=name,reason=record.reason})end
             if g.print then g.print('['..name..'] '..record.reason) end
             return nil,'failed'
         end
@@ -251,9 +257,12 @@ return function(g, manifest, read, digest,storage)
             end
         end
         if name~='Orbama'then self:GetPreparationScope(name,'component')end
-        if self.development then
+        if self.development and not self.diagnostics.instrumentationError then
             local attached,reason=pcall(self.development.OnBoot,name,value)
-            if not attached then pcall(self.diagnostics.Event,self.diagnostics,'instrumentation_error',{component=name,reason=tostring(reason)})end
+            if not attached then
+                self.diagnostics:Event('instrumentation_error',{component=name,reason=tostring(reason)})
+                self.diagnostics.instrumentationError=tostring(reason);self.diagnostics:SetEnabled(false)
+            end
         end
         if self.guide and value and manifest.modules['Guide.services'] then
             self:Require('Guide.services').Register(self.guide,name,value)
@@ -270,7 +279,22 @@ return function(g, manifest, read, digest,storage)
         if not valid() then self:Shutdown('runtime_identity_changed');return end
         if g.SDK and g.SDK.OrbamaVersion and g.SDK.Actions then
             if self.diagnostics then
-                if self.development and self.diagnosticProvider~=g.SDK then
+                if manifest.development and self.diagnostics.enabled and not self.development and not self.diagnostics.instrumentationError then
+                    local ok,why=pcall(function()
+                        self.development=self:Require('Family.development')(g,self)
+                        self.development.OnBoot('Orbama',g.SDK);self.diagnosticProvider=g.SDK
+                        for _,component in ipairs(bootOrder)do
+                            local record=self.components[component]
+                            if record and record.state=='ready'then self.development.OnBoot(component,record.value)end
+                        end
+                    end)
+                    if not ok then
+                        self.diagnosticError=tostring(why)
+                        self.diagnostics:Event('instrumentation_error',{reason=tostring(why)})
+                        self.diagnostics.instrumentationError=tostring(why);self.diagnostics:SetEnabled(false)
+                    end
+                end
+                if self.development and self.diagnosticProvider~=g.SDK and not self.diagnostics.instrumentationError then
                     local attached,why=pcall(self.development.OnBoot,'Orbama',g.SDK)
                     if attached then self.diagnosticProvider=g.SDK else self.diagnosticError=tostring(why)end
                 end

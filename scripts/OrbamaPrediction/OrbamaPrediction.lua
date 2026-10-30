@@ -29,17 +29,22 @@ local SPELLTYPE_LINE = 0
 local SPELLTYPE_CIRCLE = 1
 local SPELLTYPE_CONE = 2
 local ProjectileMotion=(function()
-if _G.OrbamaFamily then return _G.OrbamaFamily:Require("2d5cfc805e63c733edec2d00ddd809a46bb9e5db0284653b6674ff4af9615f10") end
+if _G.OrbamaFamily then return _G.OrbamaFamily:Require("06fbdc8a07528935e1404d6223757f86c9a4a58b716fb3fde4e1084e2cd806c2") end
 -- World units and seconds. Shared by prediction, forecasts and Evade.
 local M={};local min,max,sqrt=math.min,math.max,math.sqrt
 local function finite(n)return type(n)=='number'and n==n and n>-math.huge and n<math.huge end
 function M.Valid(s)
  return type(s)=='table'and finite(s.speed)and s.speed>0 and finite(s.acceleration or 0)
   and finite(s.minSpeed)and finite(s.maxSpeed)and s.minSpeed>0 and s.minSpeed<=s.speed and s.speed<=s.maxSpeed
+  and(s.speedStep==nil or type(s.speedStep)=='table'and(s.acceleration or 0)==0
+   and finite(s.speedStep.at)and s.speedStep.at>=0 and finite(s.speedStep.speed)
+   and s.speedStep.speed>=s.minSpeed and s.speedStep.speed<=s.maxSpeed)
 end
 function M.Travel(s,dt)
  if s.speedUncertain then return nil end
- dt=max(0,dt);local v=s.speed or 0;local a=s.acceleration or 0
+ dt=max(0,dt);local step=s.speedStep
+ if step then local first=min(dt,step.at/s.speed);return s.speed*first+step.speed*(dt-first)end
+ local v=s.speed or 0;local a=s.acceleration or 0
  local floor,ceiling=s.minSpeed or 0,s.maxSpeed or math.huge;v=max(floor,min(ceiling,v))
  local limit=a>0 and ceiling or floor
  local ramp=a~=0 and max(0,(limit-v)/a)or math.huge;local first=min(dt,ramp)
@@ -48,6 +53,8 @@ end
 function M.Time(s,distance)
  if s.speedUncertain then return nil end
  if distance<=0 then return 0 end
+ local step=s.speedStep
+ if step then return min(distance,step.at)/s.speed+max(0,distance-step.at)/step.speed end
  local v,a=s.speed or 0,s.acceleration or 0
  if a==0 then return v>0 and distance/v or math.huge end
  local floor,ceiling=s.minSpeed or 0,s.maxSpeed or math.huge;v=max(floor,min(ceiling,v))
@@ -1968,6 +1975,7 @@ function Prediction:SpellPrediction(args)
 		if args.Motion~=nil then
 			assert(ProjectileMotion.Valid(args.Motion),'Invalid projectile motion')
 			c.Motion={speed=args.Motion.speed,acceleration=args.Motion.acceleration or 0,minSpeed=args.Motion.minSpeed,maxSpeed=args.Motion.maxSpeed,speedUncertain=args.Motion.speedUncertain or nil}
+            if args.Motion.speedStep then c.Motion.speedStep={at=args.Motion.speedStep.at,speed=args.Motion.speedStep.speed}end
 		end
 		if args.Collision ~= nil then
 			c.Collision = args.Collision

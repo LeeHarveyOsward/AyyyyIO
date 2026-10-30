@@ -14,6 +14,8 @@ return function(require)
 -- cast keeps the earlier readyMin, so it is never drawn as ready.
 -- Assumptions recorded for live review: summoners and zero-cost spells are not
 -- inferred in fog; a recall during fog means nothing was cast.
+-- Allies (see Tick) report native cooldowns; their states exist only while the
+-- ally panel is shown and never hold summoners for debuff attribution.
 local U=require('utils.util')
 local M=require('CombatProfiles.cooldowns')
 local K={};K.__index=K
@@ -138,12 +140,32 @@ function K:RefreshSlots(s,h,now)
             if sl.name~=name or not sl.lower then sl.lower=lower(name)end
             sl.name=name;sl.level=level;sl.cost=d.mana
             -- A positive host value (allies; enemies read 0) wins over observed casts.
-            local cd=d.currentCd;local hostReady=type(cd)=='number'and cd>0 and cd<1e6 and now+cd or nil
+            local cd=d.currentCd;local validCd=finite(cd)and cd>=0 and cd<1e6
+            local hostReady=validCd and cd>0 and now+cd or nil
+            -- A missing sample does not erase a previously reported deadline.
+            -- An explicit zero still clears it immediately, including resets.
+            if not validCd and sl.hostReady and sl.hostReady>now then hostReady=sl.hostReady end
             if(hostReady==nil)~=(sl.hostReady==nil)or hostReady and math.abs(hostReady-sl.hostReady)>.05 then self.revision=self.revision+1 end
             sl.hostReady=hostReady
+            -- Native trust: a positive remaining time within the slot's reported
+            -- length shows the host reports this hero's cooldowns (live 2026-10-10
+            -- probe: allies and the player do, enemies always read 0). Only then is
+            -- a fresh native 0 read as ready. A cast seen without the native
+            -- cooldown starting marks the slot unreliable until it reports again.
+            local total=d.cd
+            if s.ally and validCd and cd>=.05 and finite(total)and total>0 and cd<=total+1 then
+                s.nativeAt=now;sl.nativePositiveAt=now;sl.hostTotal=total;sl.nativeLost=nil
+            elseif not hostReady then sl.hostTotal=nil end
+            if (sl.hostAt~=nil)~=validCd then self.revision=self.revision+1 end
+            sl.hostAt=validCd and now or nil
+            local row=s.nativeAt and slot<=3 and self.rows[s.id][slot]
+            if row and row.source=='cast'and not hostReady and not sl.nativeLost and(not sl.nativePositiveAt or sl.nativePositiveAt<row.castAt)and now>=row.castAt+.6 and finite(row.readyMin)and row.readyMin>now+1 then
+                sl.nativeLost=true;self.revision=self.revision+1
+            end
+            -- Holders are enemies only: debuffs on our heroes are credited to them.
             if slot>=4 then
                 local key=summonerKey(name);sl.key=key
-                holders[key]=holders[key]or {};holders[key][s.id]=slot
+                if not s.ally then holders[key]=holders[key]or {};holders[key][s.id]=slot end
             end
         end
     end
@@ -450,7 +472,17 @@ function K:Visibility(s,h,now,visible,dead)
 end
 
 -- Tick ----------------------------------------------------------------------
-function K:Tick(heroes,myTeam,now)
+-- trackAllies: also keep states for our team (the player included) while the
+-- ally panel is shown. Their native cooldowns are read; of the inferences only
+-- their own visible casts and Flash jumps are used, as a fallback for a slot
+-- whose native value stopped reporting.
+function K:Tick(heroes,myTeam,now,trackAllies)
+    trackAllies=trackAllies==true
+    if self.trackAllies and not trackAllies then
+        for id,s in pairs(self.states)do if s.ally then self.states[id]=nil;self.rows[id]=nil end end
+        self.revision=self.revision+1
+    end
+    self.trackAllies=trackAllies
     local index=self.heroIndex or {};for k in pairs(index)do index[k]=nil end;self.heroIndex=index
     local allies=self.allies;for k=#allies,1,-1 do allies[k]=nil end
     -- Identity and team are read once per hero per tick and reused below.
@@ -471,8 +503,20 @@ function K:Tick(heroes,myTeam,now)
         for _,list in pairs(self.holders)do for k in pairs(list)do if not index[k]then list[k]=nil end end end
     end
     for i=1,count do
-        local h=heroes[i];local id=ids[i];local name=id and teams[i]~=myTeam and h.charName
-        if type(name)=='string'then
+        local h=heroes[i];local id=ids[i];local ally=teams[i]==myTeam
+        local name=id and(trackAllies or not ally)and h.charName
+        if type(name)=='string'and ally then
+            local s=self:State(h,id,name);s.ally=true
+            if now>=s.nextSlots or not next(s.slots)then
+                s.nextSlots=now+SLOT_PERIOD+(s.slotPhase or 0);s.slotPhase=nil
+                self:RefreshSlots(s,h,now)
+            end
+            if now>=s.nextItems then s.nextItems=now+ITEM_PERIOD;self:Items(s,h)end
+            local visible,dead=h.visible==true,h.dead==true
+            if visible~=s.visible then s.visible=visible;self.revision=self.revision+1 end
+            if visible and not dead then self:Cast(s,h,now)end
+            self:Position(s,h,now,visible,dead)
+        elseif type(name)=='string'then
             local s=self:State(h,id,name)
             -- Each hero keeps its own slot and buff periods, started at a staggered
             -- phase, so the scans spread over ticks instead of landing in one.

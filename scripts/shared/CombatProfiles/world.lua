@@ -1,6 +1,8 @@
 return function(require)
 -- Extracted from the LHO profile. Preserve its documented verification limits.
 local P={}
+-- Native recall aliases; timing always comes from that channel or its event.
+P.recallNames=require('CombatProfiles.recall').names
 -- Every inventory item whose active places a ward an ally can jump to, per
 -- profile. The one table for all ward-jumping champions (ChampionMobility/wards
 -- reads it through the champion profile; OrbamaUtils' ward service directly).

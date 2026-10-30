@@ -14,15 +14,15 @@ local groups={
     {'Smite','Smite',{'autosmite','smiteBosses','smiteBuffs','smiteOther','smiteReserve'}},
     {'Activator','Items and summoner spells',{'items','potions','potionHP','cleanse','shield','shieldHP','stasis','stasisHP','summonerDefense','offense','ignite','level'}},
     {'Tracking','Tracking',{'lastSeenRetention','recallSelf','wards','cooldowns','recalls','turrets','awareness','waypoints','experience'}},
-    {'Drawings','Appearance',{'draw','scale','minimapSeconds'}}}
-local labels={minimapSeconds='Missing-enemy timer on the minimap',recallSelf='Show my own recall',lastSeenRetention='Keep missing markers (0 = until seen or dead)',
+    {'Drawings','Appearance',{'draw','scale'}}}
+local labels={minimapSeconds='Time missing on the minimap',recallSelf='Show my own recall',lastSeenRetention='Keep missing markers (0 = until seen or dead)',
     autosmite='Automatic Smite',smiteBosses='Bosses (dragon, Baron, grubs, Herald)',smiteBuffs='Red and blue buffs',smiteOther='Other jungle camps',smiteReserve='Keep one Smite charge near objectives',
     items='Use items automatically',potions='Drink health potions',potionHP='Potion below health %',cleanse='Remove crowd control (Cleanse, QSS, Mikael)',
     shield='Use shield items',shieldHP='Shield below health %',stasis='Use stasis (Zhonya) in emergencies',stasisHP='Stasis below health %',
     summonerDefense='Heal / Barrier when threatened',offense='Use damage and speed items while fighting',ignite='Ignite enemies it will kill',
-    level='Level up abilities automatically',wards='Wards',cooldowns='Enemy cooldowns',recalls='Recalls and teleports',
+    level='Level up abilities automatically',wards='Wards',cooldowns='Cooldowns',recalls='Recalls and teleports',
     turrets='Turret range and aggro warning',awareness='Last seen position in fog',wardVision='Ward vision radius',
-    waypoints='Enemy movement paths',experience='Level and experience',trinket='Trinket cooldown',draw='Enable drawings',scale='UI scale %'}
+    waypoints='Movement paths',experience='Level and experience',trinket='Trinket cooldown',draw='Enable drawings',scale='UI scale %'}
 function C.new(g)
     local self={values={},entries={},g=g};local saved=g.OrbamaUtilsConfig or {}
     local migration=require('Orbama.menus');local stored=migration.saved or {}
@@ -65,6 +65,13 @@ function C.new(g)
             local group=map[k];entry=group and group.Enabled
             if k=='trinket'then entry=tracker and tracker.SpellTracker and tracker.SpellTracker.TrackTrinket end
             if not entry and k=='level'then entry=stored.OrbamaTwistedFate and stored.OrbamaTwistedFate.level end
+        end
+        -- The minimap timer moved under Appearance > Last seen position in fog; its
+        -- new saved value wins over one saved at the old Appearance level.
+        if k=='minimapSeconds'then
+            local moved=stored.OrbamaUtils and stored.OrbamaUtils.Appearance and stored.OrbamaUtils.Appearance.awareness
+            moved=type(moved)=='table'and moved.minimapSeconds
+            if type(moved)=='table'and type(moved.__active)=='boolean'then entry=moved end
         end
         local value=entry and entry[k=='smiteKey'and '__key'or '__active']
         self.values[k]=type(value)==type(v)and value or v
@@ -116,12 +123,21 @@ function C.new(g)
                 if type(value)==type(default)then return value end
                 return default
             end
-            parent:MenuElement({id='Screen',name='On screen',value=true})
-            if name~='recalls'and name~='cooldowns'then
-                parent:MenuElement({id='Minimap',name='On minimap',value=name=='wards'or name=='awareness'})
+            -- A feature drawn in one place has one switch; one drawn in the world and
+            -- on the minimap names both places.
+            local single=name=='recalls'or name=='cooldowns'or name=='experience'
+            parent:MenuElement({id='Screen',name=single and 'Enable'or 'In the world',value=true})
+            if not single then
+                parent:MenuElement({id='Minimap',name='On the minimap',value=name=='wards'or name=='awareness'})
             end
+            if name=='awareness'then
+                parent:MenuElement({id='minimapSeconds',name=labels.minimapSeconds,value=self.values.minimapSeconds})
+                self.entries.minimapSeconds=parent.minimapSeconds
+            end
+            -- Enemies on, allies off by default. The ally cooldown panel is new: no
+            -- older script's ally switch turns it on.
             parent:MenuElement({id='Enemies',name='Enemies',value=preference('Enemies','TEnemies',true)})
-            if name~='cooldowns'then parent:MenuElement({id='Allies',name='Allies',value=preference('Allies','TAllies',self.values.allies)})end
+            parent:MenuElement({id='Allies',name=name=='cooldowns'and 'Allies (including me)'or 'Allies',value=preference('Allies',name~='cooldowns'and 'TAllies'or nil,self.values.allies)})
             if name=='recalls'and self.migrateRecall then parent.Allies:Value(false);parent.Enemies:Value(true)end
             if name~='cooldowns'then parent:MenuElement({id='Distance',name='Only within this distance (0 = everywhere)',value=0,min=0,max=15000,step=250})end
             if name=='waypoints'then
@@ -145,7 +161,7 @@ function C.new(g)
                 local entry=newNode and newNode[option]or oldNode and oldNode[option]
                 local value=option=='TimerDisplay'or option=='MinimapDisplay'or option=='VisionDisplay'and self.values.wardVision
                 if entry and type(entry.__active)=='boolean'then value=entry.__active end
-                local labels={ScreenDisplay='Name',OwnerDisplay='Owner',TimerDisplay='Lifetime',VisionDisplay='Sight radius',MinimapDisplay='On minimap'}
+                local labels={ScreenDisplay='Name',OwnerDisplay='Owner',TimerDisplay='Lifetime',VisionDisplay='Sight radius',MinimapDisplay='On the minimap'}
                 node:MenuElement({id=option,name=labels[option],value=value})
             end
         end

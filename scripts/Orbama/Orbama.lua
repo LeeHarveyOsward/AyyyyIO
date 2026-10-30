@@ -4954,6 +4954,8 @@ Health = {
 	OnTick = function(self)
 		local attackRange, structures, pos, speed, windup, time, anim
 		local healthTimer = GameTimer()
+        self.FarmPlan = nil
+        if self.MarkFarmForecast then self:MarkFarmForecast(healthTimer) end
         self.AttackerFacts = nil
         self.IncomingReady = false
         self.PendingUnkillable = nil
@@ -5091,36 +5093,43 @@ Health = {
 		end
 		-- ON ATTACK
 		local timer = GameTimer()
+        self:BeginIncoming(timer)
 		for handle, obj in pairs(self.Handles) do
 			local s = obj.activeSpell
-			if s and s.valid and s.isAutoAttack then
+			if s and s.valid and (s.isAutoAttack or (type(s.name) == "string" and Data:IsAttack(s.name))) then
 				local endTime = s.endTime
 				local speed = s.speed
 				local animation = s.animation
 				local windup = s.windup
 				local target = s.target
+				local castEnd = s.castEndTime
 				if obj.type == Obj_AI_Turret then
 					local ad = obj.attackData
 					local adWindup = ad and ad.windUpTime
-					if adWindup and adWindup > 0 then
+					if type(adWindup) == "number" and adWindup > 0 then
 						windup = adWindup
 					end
+                    if type(speed) ~= "number" or speed <= 0 then speed = ad and ad.projectileSpeed end
+                    if type(animation) ~= "number" or animation <= 0 then animation = ad and ad.animationTime end
 				end
-				if endTime and speed and animation and windup and target and endTime > timer then
+				if endTime and speed and animation and windup and target and castEnd and castEnd > 0 and endTime > timer then
 					self.ActiveAttacks[handle] = {
 						Speed = speed,
 						EndTime = endTime,
 						AnimationTime = animation,
 						WindUpTime = windup,
-						StartTime = endTime - animation,
+						StartTime = castEnd - windup,
+						CastEndTime = castEnd,
 						Target = target,
 					}
+                    self:ObserveIncoming(handle, obj, self.ActiveAttacks[handle], timer)
 				end
 			end
 		end
+        self:FinishIncoming(timer)
 		-- SET FARM MINIONS
 		pos = myHero.pos
-		speed = Attack:GetProjectileSpeed()
+		speed, self.FarmProjectileSpeedKnown = Attack:GetProjectileSpeed()
 		windup = Attack:GetWindup()
 		time = windup - self.ExtraFarmDelay:Value() * 0.001 --why is this -getlatency here? i isbjorn might try removing it -- - Data:GetLatency()
 		anim = Attack:GetAnimation()
@@ -5175,6 +5184,10 @@ Health = {
 		health = self.TargetsHealth[handle]
 		for attackerHandle, attack in pairs(self:GetIncoming(handle)) do
             self.PredictionWork.candidates = self.PredictionWork.candidates + 1
+            if attack.Retained then
+                local endT = self:RetainedImpact(attack, target, pos, timer)
+                if endT and endT > 0 and endT < time then health = health - attack.Damage end
+            end
 			local c = 0
 			local attacker = self.Handles[attackerHandle]
 			if attacker and attack.Target == handle then
@@ -5199,6 +5212,15 @@ Health = {
 		end
 		return health
 	end,
+
+    -- Damage of a launched incoming hit, shared with this tick's forecast cache.
+    GetIncomingDamage = function(self, handle, source, targetHandle, target)
+        local rows = self.AttackersDamage[handle]
+        if rows == nil then rows = {}; self.AttackersDamage[handle] = rows end
+        local damage = rows[targetHandle]
+        if damage == nil then damage = Damage:GetAutoAttackDamage(source, target); rows[targetHandle] = damage end
+        return damage
+    end,
 
     -- Per-handle attacker reads; shared only inside Health.AttackerFacts.
     GetAttackerFacts = function(self, handle, obj)
@@ -5244,7 +5266,7 @@ Health = {
         return source
     end,
 
-	LocalGetPrediction = function(self, target, time)
+	LocalGetPrediction = function(self, target, time, out)
 		local timer, pos, team, handle, health, attackers, turretAttacked
 		turretAttacked = false
 		timer = GameTimer()
@@ -5255,8 +5277,20 @@ Health = {
 		end
 		health = self.TargetsHealth[handle]
 		local handles = {}
+        if out and self:IncomingOverflowed(handle) then out.overflow = true end
 		for attackerHandle, attack in pairs(self:GetIncoming(handle)) do
             self.PredictionWork.candidates = self.PredictionWork.candidates + 1
+            if attack.Retained then
+                local endT = self:RetainedImpact(attack, target, pos, timer)
+                if endT and endT > 0 and endT < time then
+                    if attack.AttackerHandle == self.AllyTurretHandle then
+                        turretAttacked = true
+                    else
+                        health = health - attack.Damage
+                    end
+                    if out then out:Add(endT, attack.Damage, 1) end
+                end
+            end
 			local attacker = self.Handles[attackerHandle]
             local facts = attacker and self:GetAttackerFacts(attackerHandle, attacker)
 			if facts and facts.live and attack.Target == handle then
@@ -5265,8 +5299,10 @@ Health = {
 				startT = attack.StartTime
 				flyT = speed > 0 and GetDistance(self:GetAttackerPos(facts), pos) / speed or 0
 				endT = (startT + attack.WindUpTime + flyT) - timer
+				local committed = true
 				-- laneClear
 				if endT < 0 and timer - attack.EndTime < 1.25 then
+					committed = false
 					endT = attack.WindUpTime + flyT
 					endT = timer > attack.EndTime and endT or endT + (attack.EndTime - timer)
 					startT = timer > attack.EndTime and timer or attack.EndTime
@@ -5289,10 +5325,11 @@ Health = {
 						else
 							health = health - damage
 						end
+						if out then out:Add(endT, damage, (c == 1 and committed) and 1 or 2) end
 						endT = (startT + attack.WindUpTime + flyT + c * attack.AnimationTime) - timer
 						c = c + 1
 						if c > 10 then
-							--print("ERROR LANECLEAR!")
+							if out then out.overflow = true end
 							health = self.TargetsHealth[handle]
 							break
 						end
@@ -5332,10 +5369,11 @@ Health = {
 							local c = 1
 							while endT < time do
 								health = health - damage
+								if out then out:Add(endT, damage, 3) end
 								endT = aaData.windUpTime + flyT + c * aaData.animationTime
 								c = c + 1
 								if c > 10 then
-									--print("ERROR LANECLEAR!")
+									if out then out.overflow = true end
 									health = self.TargetsHealth[handle]
 									break
 								end
@@ -5363,7 +5401,7 @@ Health = {
 			damage=({50, 67, 84, 101, 118})[myHero:GetSpellData(_W).level] + 0.6 * myHero.ap
 		end
 		-- unkillable
-		if health < 0 then
+		if health <= 0 then
 			unkillable = true
 			for i = 1, #self.OnUnkillableC do
 				self.PendingUnkillable = self.PendingUnkillable or {}
@@ -5377,10 +5415,11 @@ Health = {
 				Minion = target,
 				AlmostAlmost = almostalmost,
 				Time = time,
+				Damage = damage,
 			}
 		end
 		-- lasthitable
-		if health - damage < 0 then
+		if health - damage <= 0 and self.FarmProjectileSpeedKnown ~= false and not self:IncomingOverflowed(handle) then
 			lastHitable = true
 			self.IsLastHitable = true
 			return {
@@ -5391,6 +5430,7 @@ Health = {
 				Minion = target,
 				AlmostAlmost = almostalmost,
 				Time = time,
+				Damage = damage,
 			}
 		end
 		-- almost lasthitable
@@ -5418,7 +5458,7 @@ Health = {
 				almostalmost = true
 			end
 		end
-		-- under turret, turret attackdata: 1.20048 0.16686 1200
+		-- Under turret: expose native timing only when it is available.
 		if
 			turretAttacked
 			or (turretAttack and turretAttack.target == handle)
@@ -5434,9 +5474,14 @@ Health = {
 			nearTurret = true
 			isTurretTarget = turretAttack ~= nil and turretAttack.target == handle
 			maxHP = target.maxHealth
-			startTime = turretAttack and turretAttack.endTime and turretAttack.endTime - 1.20048 or 0
-			windUpTime = 0.16686
-			flyTime = GetDistance(self.AllyTurret, target) / 1200
+            local nativeAttack = self.ActiveAttacks[self.AllyTurretHandle]
+            local nativeWindup = turretAttack and turretAttack.windUpTime
+            windUpTime = type(nativeWindup) == "number" and nativeWindup > 0 and nativeWindup or nil
+            startTime = nativeAttack and nativeAttack.StartTime or nil
+            local nativeSpeed = turretAttack and turretAttack.projectileSpeed
+            if type(nativeSpeed) ~= "number" or nativeSpeed <= 0 then nativeSpeed = nativeAttack and nativeAttack.Speed end
+            flyTime = self.AllyTurret and type(nativeSpeed) == "number" and nativeSpeed > 0
+                and GetDistance(self.AllyTurret, target) / nativeSpeed or nil
 			turretDamage = Damage:GetAutoAttackDamage(self.AllyTurret, target)
 			turretHits = 1
 			while maxHP > turretHits * turretDamage do
@@ -5455,6 +5500,7 @@ Health = {
 				Minion = target,
 				AlmostAlmost = almostalmost,
 				Time = time,
+				Damage = damage,
 				-- turret
 				NearTurret = nearTurret,
 				IsTurretTarget = isTurretTarget,
@@ -5473,6 +5519,7 @@ Health = {
 			Minion = target,
 			AlmostAlmost = almostalmost,
 			Time = time,
+			Damage = damage,
 		}
 	end,
 
@@ -5515,26 +5562,7 @@ Health = {
 	end,
 
 	GetLastHitTarget = function(self)
-		local bestPriority = math.huge
-		local min = math.huge
-		local result = nil
-		for i = 1, #self.FarmMinions do
-			local minion = self.FarmMinions[i]
-			local unit = minion.Minion
-			if
-				Object:IsValid(unit)
-				and minion.LastHitable
-				and (Data:IsInAutoAttackRange(myHero, unit) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(unit)))
-			then
-				local priority = self:GetFarmTargetPriority(minion)
-				local predictedHP = minion.PredictedHP or math.huge
-				if priority < bestPriority or (priority == bestPriority and predictedHP < min) then
-					bestPriority = priority
-					min = predictedHP
-					result = unit
-				end
-			end
-		end
+		local result = self:PlanLastHitTarget()
 		if result then
 			self.LastHitHandle = result.handle
 			self.LastHitHandleExpire = GameTimer() + math_max(0.25, Attack:GetAnimation() + Data:GetLatency() + 0.1)
@@ -5555,7 +5583,7 @@ Health = {
 			if self.IsLastHitable then
 				return self:GetLastHitTarget()
 			end
-			if LastHitPriority and not self:ShouldWait() then
+			if LastHitPriority and self:FarmSpare(structure) then
 				return structure
 			end
 		else
@@ -5568,9 +5596,9 @@ Health = {
 			if self.IsLastHitable then
 				return self:GetLastHitTarget()
 			end
-			if LastHitPriority and not self:ShouldWait() then
+			if LastHitPriority then
 				local hero = Target:GetComboTarget()
-				if hero ~= nil then
+				if hero ~= nil and self:FarmSpare(hero) then
 					return hero
 				end
 			end
@@ -5583,6 +5611,7 @@ Health = {
 		for i = 1, #self.FarmMinions do
 			local minion = self.FarmMinions[i]
 			if Object:IsValid(minion.Minion) and not minion.Unkillable and minion.PredictedHP > 0
+                and not (self.IsFarmSpellClaimed and self:IsFarmSpellClaimed(minion.Minion))
                 and (Data:IsInAutoAttackRange(myHero, minion.Minion) or (Object.IsAzir and ChampionInfo:IsInAzirSoldierRange(minion.Minion))) then
 				if minion.PredictedHP < num and not minion.AlmostAlmost and not minion.AlmostLastHitable then --and (self.AllyTurret == nil or minion.CanUnderTurret) then
 					num = minion.PredictedHP
@@ -5609,7 +5638,7 @@ Health = {
 			if other ~= nil then
 				return other
 			end
-			if LastHitPriority and not self:ShouldWait() then
+			if LastHitPriority and self:FarmSpare(structure) then
 				return structure
 			end
 		else
@@ -5622,7 +5651,7 @@ Health = {
 			if self.IsLastHitable then
 				return self:GetLastHitTarget()
 			end
-			if self:ShouldWait() then
+			if not self:FarmSpare() then
 				return nil
 			end
 			if LastHitPriority and LaneClearHeroes then
@@ -5638,7 +5667,7 @@ Health = {
 			end
 			-- lane minion
 			local laneMinion = self:GetLaneMinion()
-			if laneMinion ~= nil then
+			if laneMinion ~= nil and self:FarmSpare(laneMinion) then
 				self.LaneClearHandle = laneMinion.handle
 				self.LaneClearHandleExpire = GameTimer() + math_max(0.25, Attack:GetAnimation() + Data:GetLatency() + 0.1)
 				return laneMinion
@@ -5755,7 +5784,7 @@ do
 			if not Movement.AfterAttack and Cursor.PlayerWorldKnown~=false and myHero.pathing.hasMovePath and GetDistance(Cursor:GetPlayerPosition(), myHero.pathing.endPos) < Menu.Main.Humanizer:Value() then
 				return false
 			end
-			if not Cursor:MoveAtCursor() and not Cursor:MoveAroundHover(Movement:GetHumanizer()) then return false end
+			if not Cursor:MoveAtCursor(Movement.AfterAttack==true) and not Cursor:MoveAroundHover(Movement:GetHumanizer()) then return false end
 		end
 		Movement.MoveTimer = GetTickCount() + Movement:GetHumanizer()
 		Movement.AfterAttack = nil
@@ -6064,9 +6093,97 @@ return function(cursor,env)
     -- 54 sent in one evening. The adaptive path remains when it is switched off.
     cursor.GGCompatible=env.ggCompatible==true
     cursor.Metrics={events={},eventHead=1,eventCount=0,lostEvents=0,sequence=0,hostCalls=0,hostDuration=0,hostDurationMax=0,unknown=0,misdirected=0,interruptions=0}
-    function cursor:record()end
-    function cursor:GetDiagnosticEvents()return {},0 end
-    function cursor:GetDiagnosticErrors()return {},0 end
+    function cursor:record(kind,action,reason,fields)
+        if self.DiagnosticsEnabled==false then return end
+        local events=self.Metrics.events;local details=self.DetailedDiagnostics~=false or nil
+        local button=action and action.mouseButton and self.Buttons[action.mouseButton]
+        self.Metrics.sequence=self.Metrics.sequence+1
+        local event={kind=kind,session=self.SessionID,sequence=self.Metrics.sequence,at=env.clock(),id=action and action.id,owner=action and action.owner,
+            scope=action and action.publicScope,priorityClass=action and action.priorityClass,actionType=action and action.publicType,
+            targetID=action and action.targetID,targetType=action and action.target and action.target.type,
+            commandKey=action and action.keys and action.keys[1],
+            -- Detailed diagnostics only: a chord's final key (level-up attribution).
+            commandKey2=details and action and action.keys and action.keys[2] or nil,
+            sendCompletedAt=action and action.sendCompletedAt,holdUntil=action and action.holdUntil,
+            mouseButton=action and action.mouseButton,buttonPending=button~=nil,
+            buttonRetries=button and button.retries,buttonPhysical=button and button.manual,
+            buttonReleaseCompletedAt=action and action.buttonReleaseCompletedAt,
+            hostDuration=self.Metrics.hostDuration,hostDurationMax=self.Metrics.hostDurationMax,
+            budgetEnd=action and action.budgetEnd,predecessorID=action and action.predecessorID,handoffStatus=action and action.handoffStatus,
+            interferenceID=action and action.interferenceID,interferenceAt=action and action.interferenceAt,interferenceCause=action and action.interferenceCause,
+            reason=reason,state=action and action.state,requestedAt=action and action.requestedAt,waitBlock=action and action.waitBlock,
+            acquiredAt=action and action.acquiredAt,positionedAt=action and action.positionedAt,
+            preparationBudget=action and action.preparationBudget,preparationMs=action and action.preparationMs,
+            positionPasses=action and action.positionPasses,nativePlacementConfirmedAt=action and action.nativePlacementConfirmedAt,
+            screenPlacementConfirmedAt=action and action.screenPlacementConfirmedAt,
+            observedAt=action and action.observedAt,returnRequestedAt=action and action.returnRequestedAt,
+            returnObservedAt=action and action.returnObservedAt,manualAt=action and action.manualAt,
+            preparedAt=action and action.preparedAt,warpStartedAt=action and action.warpStartedAt,
+            gameplayValidatedAt=action and action.gameplayValidatedAt,commitValidatedAt=action and action.commitValidatedAt,
+            prevalidateWorldCast=action and action.prevalidateWorldCast or nil,
+            pointerMove=action and action.pointerMove or nil,
+            returnTarget=details and copy(action and action.returnTarget),returnBefore=details and copy(action and action.returnBefore),
+            returnSample=details and copy(action and action.returnSample),returnAccepted=action and action.returnAccepted,
+            sentAt=action and action.sentAt,releasedAt=action and action.releasedAt,
+            observation=action and action.observation,hold=action and action.hold,
+            class=action and action.class,space=action and action.space,
+            requestedWorld=details and copy(action and action.world),actionScreen=details and copy(action and action.actionScreen),
+            playerScreen=details and copy(action and action.playerScreen or self.PlayerScreen),
+            playerWorld=details and copy(action and action.playerWorld or self.PlayerWorld),
+            screenAtSend=details and copy(action and action.screenAtSend),worldAtSend=details and copy(action and action.worldAtSend),
+            observedEndpoint=details and copy(action and action.observedEndpoint),beforePath=details and copy(action and action.beforePath),
+            pathObservedAt=action and action.pathObservedAt,pathResult=action and action.pathResult,
+            expectedError=action and action.expectedError,playerError=action and action.playerError,
+            interrupted=action and action.interrupted,competitor=action and action.competitor,
+            inputEdge=self.LastInputEdge and {
+                message=self.LastInputEdge.message,param=self.LastInputEdge.param,at=self.LastInputEdge.at,
+                classification=self.LastInputEdge.classification},
+            uncertain=self.Uncertain==true,reconstructedScreen=details and copy(self.ReconstructedScreen)}
+        if details and (kind=='position_unconfirmed' or kind=='player_motion_ambiguous' or kind=='return_discontinuity') then
+            event.screenSample=details and copy(env.screen());event.worldSample=details and copy(env.world())
+        end
+        if fields then for k,v in pairs(fields) do if type(v)~='table' then event[k]=v end end end
+        if kind=='aim_failed' or kind=='aborted' or kind=='submission_uncertain' or kind=='position_unconfirmed'
+            or kind=='return_discontinuity' or kind=='button_release_failed' then
+            local errors=self.DiagnosticErrors;errors.sequence=errors.sequence+1
+            local row={};for k,v in pairs(event) do row[k]=v end
+            row.inputSequence=event.sequence;row.sequence=errors.sequence
+            if errors.count<64 then errors.rows[(errors.head+errors.count-1)%64+1]=row;errors.count=errors.count+1
+            else errors.rows[errors.head]=row;errors.head=errors.head%64+1;errors.lost=errors.lost+1 end
+        end
+        local m=self.Metrics
+        if m.eventCount<256 then
+            events[(m.eventHead+m.eventCount-1)%256+1]=event;m.eventCount=m.eventCount+1
+        else
+            events[m.eventHead]=event;m.eventHead=m.eventHead%256+1;m.lostEvents=m.lostEvents+1
+        end
+    end
+    local function eventCopy(row)
+        local out={};for k,v in pairs(row) do
+            if type(v)=='table' then local t={};for a,b in pairs(v) do t[a]=b end;out[k]=t else out[k]=v end
+        end;return out
+    end
+    function cursor:GetDiagnosticErrors(after,limit)
+        local errors=self.DiagnosticErrors;local out={};after=after or 0;limit=limit or 64
+        local oldest=errors.rows[errors.head]
+        if not oldest then return out,0 end
+        for offset=0,errors.count-1 do
+            local row=errors.rows[(errors.head+offset-1)%64+1]
+            if row.sequence>after and #out<limit then out[#out+1]=eventCopy(row) end
+        end
+        return out,math.max(0,oldest.sequence-after-1)
+    end
+    function cursor:GetDiagnosticEvents(after,limit)
+        local m=self.Metrics;local out={};after=after or 0;limit=limit or 16
+        local oldest=m.events[m.eventHead]
+        if not oldest then return out,0 end
+        local start=math.max(0,math.floor(after-oldest.sequence+1))
+        for offset=start,math.min(m.eventCount-1,start+limit-1) do
+            local row=m.events[(m.eventHead+offset-1)%256+1]
+            out[#out+1]=eventCopy(row)
+        end
+        return out,math.max(0,oldest.sequence-after-1)
+    end
     function cursor:GetPendingButtons()
         local out={}
         for vk,row in pairs(self.Buttons) do
@@ -6075,11 +6192,31 @@ return function(cursor,env)
         end
         return out
     end
-    function cursor:GetDiagnostics()return {pendingButtons=self:GetPendingButtons()}end
+    function cursor:GetDiagnostics()
+        local out={events={},sequence=self.Metrics.sequence,lostEvents=self.Metrics.lostEvents,
+            detailed=self.DetailedDiagnostics~=false,pendingButtons=self:GetPendingButtons(),
+            hostDuration=self.Metrics.hostDuration,hostDurationMax=self.Metrics.hostDurationMax,
+            hostCalls=self.Metrics.hostCalls,cursorReads=self.Metrics.cursorReads,unknown=self.Metrics.unknown,
+            misdirected=self.Metrics.misdirected,interruptions=self.Metrics.interruptions,timing=self.Timing:summary(),
+            uncertain=self.Uncertain==true,playerScreen=copy(self.PlayerScreen),reconstructedScreen=copy(self.ReconstructedScreen)}
+        out.events=self:GetDiagnosticEvents(0,256)
+        return out
+    end
     function cursor:call(fn,...)
+        if self.DiagnosticsEnabled==false then
+            self.InFlight=(self.InFlight or 0)+1
+            local ok,value=pcall(fn,...);self.InFlight=self.InFlight-1
+            return ok and value~=false,value
+        end
+        self.Metrics.hostCalls=self.Metrics.hostCalls+1
         self.InFlight=(self.InFlight or 0)+1
-        local ok,value=pcall(fn,...);self.InFlight=self.InFlight-1
-        return ok and value~=false,value
+        local started=env.clock();local ok,result=pcall(fn,...)
+        local duration=env.clock()-started
+        if not finite(duration) or duration<0 then self.Metrics.invalidDurations=(self.Metrics.invalidDurations or 0)+1;duration=0 end
+        self.Metrics.hostDuration=self.Metrics.hostDuration+duration
+        self.Metrics.hostDurationMax=math.max(self.Metrics.hostDurationMax,duration)
+        self.InFlight=self.InFlight-1
+        return ok and result~=false,result
     end
     local canonicalKey={[160]=16,[161]=16,[162]=17,[163]=17,[164]=18,[165]=18}
     local keyFamilies={[16]={16,160,161},[17]={17,162,163},[18]={18,164,165}}
@@ -6235,6 +6372,7 @@ return function(cursor,env)
         return key,self.CommandGenerations[key]
     end
     function cursor:CallKey(key,down,action,releasedLease)
+        local preparation=action and action.publicType=='chord' and not action.sentAt and key~=action.keys[2]
         if not down and action and (action.publicType=='charge_release' or action.publicType=='two_point')
             and not action.releaseSendStarted then
             -- The release commits these transports. Cleanup retries cannot move
@@ -6259,10 +6397,10 @@ return function(cursor,env)
         end
         local row=self:ExpectKey(key,down) -- Before synchronous host callbacks.
         row.lease=releasedLease or self.KeyLeases and self.KeyLeases[key]
-        if action then action.sentAt=action.sentAt or env.clock();action.state='sent' end
+        if action and not preparation then action.sentAt=action.sentAt or env.clock();action.state='sent' end
         self:Interfere(action,down and "key down" or "key up")
         local ok,result=self:call(down and env.down or env.up,key)
-        if action then action.sendCompletedAt=env.clock() end
+        if action and not preparation then action.sendCompletedAt=env.clock() end
         if not ok then
             for i=#self.KeyEchoes,1,-1 do
                 if self.KeyEchoes[i]==row then table.remove(self.KeyEchoes,i);break end
@@ -6271,6 +6409,7 @@ return function(cursor,env)
         return ok,result
     end
     function cursor:AcquireKey(key,owner,action)
+        if self.Active and self.Active.chordPhase and action~=self.Active then return false end
         if not key then return false end
         if self.Uncertain or not self:Available() then return false end
         if self.KeysOwned[key] then
@@ -6297,7 +6436,9 @@ return function(cursor,env)
                 action.keyLeases=action.keyLeases or {};action.keyLeases[key]=self.KeyLeaseSerial
             end
         end
-        if action then action.sentAt=action.sentAt or env.clock();action.state='sent' end
+        if action and not(action.publicType=='chord' and key==action.keys[1])then
+            action.sentAt=action.sentAt or env.clock();action.state='sent'
+        end
         local ok=self:CallKey(key,true,action)
         if not ok then self:ReleaseKey(key,owner,action) end
         return ok
@@ -6341,6 +6482,7 @@ return function(cursor,env)
         return true
     end
     function cursor:SendKeys(keys,owner)
+        if self.Active and self.Active.chordPhase then return false end
         local r=self:newAction{keys=keys,owner=owner,critical=true,class='key'}
         self.LastActionID=r.id
         if not self:valid(r) then r.state='aborted';r.abortedAt=env.clock();return false end
@@ -6830,6 +6972,11 @@ return function(cursor,env)
                 -- new click and the game stops following the cursor; the player's next press steers again.
                 if not self:InputBudget(r) then return false end
                 self:CallMouse(up,vk,false,r);r.heldButtonReleased=true
+                -- That up's echo cannot be told apart from the player's own release, and the host may deliver only
+                -- one of them (live s900: a dodge consumed the only 517 as its echo and every move after it was
+                -- refused for 16 s). From now on, two released host samples settle the player's hold; a new
+                -- genuine press ends the review.
+                if self.Physical[vk] then self.PhysicalReview=self.PhysicalReview or {};self.PhysicalReview[vk]=false end
                 self:record('held_button_released_for_move',r,tostring(vk))
             end
             for _=1,r.leftClicks or 1 do
@@ -6883,6 +7030,7 @@ return function(cursor,env)
         return keyBlocked
     end
     function cursor:dispatch(r,predecessor)
+        if self.Active and self.Active.chordPhase and self.Active~=r then return false end
         if r.prepareGuard then
             local ok,allowed,why=pcall(r.prepareGuard)
             if not ok or allowed~=true then
@@ -7081,6 +7229,7 @@ return function(cursor,env)
             return false
         end
         self.Timer=r.holdUntil or env.clock()+r.hold
+        if r.sentAt and r.moveIntentScreen then self:RememberCursorMove(r.moveIntentScreen)end
         self:record(r.sentAt and 'sent' or 'cursor_aimed',r)
         return true
     end
@@ -7191,7 +7340,11 @@ return function(cursor,env)
     -- to that spot needs no click (live 2026-10-07: 20 detours in 10 s, each
     -- aborted by the player's own mouse motion). The pointer must rest first.
     local HOVER_REST_MS,HOVER_REST_PIXELS,HOVER_NEAR=150,12,250
-    function cursor:MoveAtCursor()
+    function cursor:RememberCursorMove(p)
+        local intent=self.CursorMoveIntent or {};self.CursorMoveIntent=intent
+        intent.x=p.x;intent.y=p.y;intent.effect=self.LastEffectAction
+    end
+    function cursor:MoveAtCursor(afterAttack)
         -- Only the no-argument Control.Move path uses this. Explicit world
         -- targets, attacks and plugin movement retain positioned dispatch.
         self.HoverObstruction=nil
@@ -7199,10 +7352,15 @@ return function(cursor,env)
             or self.Uncertain or env.clock()<self.NotBefore or not self:Available() then return false end
         self:SamplePlayer()
         if self.Step>0 or self.Active or self.PendingReturn or self.Uncertain then return false end
-        local p=copy(env.screen());local world=copy(env.world())
+        local p=copy(env.screen());local rawWorld,worldKnown=env.world();local world=copy(rawWorld)
         if not p or not world or not near(p,self.PlayerScreen) then return false end
         local bounds=env.resolution and env.resolution()
         if not finite(p.x) or not finite(p.y) or bounds and (p.x<0 or p.y<0 or p.x>=bounds.x or p.y>=bounds.y) then return false end
+        local intent=self.CursorMoveIntent
+        -- One command is enough until the player changes the physical pixel or
+        -- another input can have interrupted movement. World API drift and a
+        -- moving camera alone do not create another request for the same pixel.
+        if not afterAttack and intent and intent.x==p.x and intent.y==p.y and intent.effect==self.LastEffectAction then return false end
         local r=self:newAction({owner='orbwalker',keys={env.moveKey},target=world,critical=false,class='move'})
         r.pointerMove=true;r.publicType='move';r.hold=0;r.ggCompatible=false
         r.rootAt=env.clock();r.budgetEnd=r.expires;r.acquiredAt=r.rootAt
@@ -7212,13 +7370,14 @@ return function(cursor,env)
         local ok=self:SendPositioned(r,true)
         if self.Active==r then self:release(ok and 'current_cursor_click_complete' or r.reason or 'current_cursor_click_uncertain') end
         self.LastActionID=r.id
+        if ok then self:RememberCursorMove(p)end
         if not ok and not r.sentAt and r.hoverObject and r.reason=='ground_hover_obstructed' then
             local now=env.clock();local streak=self.HoverStreak
             if not streak or now-streak.last>300 or screenDistance(streak.screen,p)>HOVER_REST_PIXELS then
                 streak={since=now,screen=copy(p)};self.HoverStreak=streak
             end
             streak.last=now
-            self.HoverObstruction={object=r.hoverObject,world=world,at=now,id=r.id,rested=now-streak.since}
+            self.HoverObstruction={object=r.hoverObject,world=world,worldKnown=worldKnown~=false,screen=p,at=now,id=r.id,rested=now-streak.since}
         else self.HoverStreak=nil end
         r.hoverObject=nil
         return ok
@@ -7233,10 +7392,13 @@ return function(cursor,env)
         local now=env.clock()
         if not o or now-o.at>50 or now<(self.HoverFallbackNotBefore or 0) then return false end
         if (o.rested or 0)<HOVER_REST_MS or self:PositionBackoff('orbwalker',env.moveKey) then return false end
-        local hero=env.hero and env.hero.pos;local w=o.world
+        local hero=env.hero and env.hero.pos
+        local okPos,center,radius=pcall(function()return o.object.pos,o.object.boundingRadius end)
+        -- The hovered unit supplies real geometry when cursor-world memory is
+        -- unavailable. Never derive the detour direction from a hero fallback.
+        local w=o.worldKnown==false and center or o.world
         local okPath,dest=pcall(function()local path=env.hero.pathing;return path and path.hasMovePath and path.endPos or env.hero.pos end)
         if okPath and worldDistance(dest,w)<=HOVER_NEAR then return false end
-        local okPos,center,radius=pcall(function()return o.object.pos,o.object.boundingRadius end)
         if not okPos or not hero or not center or not finite(center.x) or not finite(center.z)
             or not finite(hero.x) or not finite(hero.z) or not finite(w.x) or not finite(w.z) then return false end
         local dx,dz=w.x-hero.x,w.z-hero.z;local len=math.sqrt(dx*dx+dz*dz)
@@ -7256,14 +7418,18 @@ return function(cursor,env)
         local ok,issued=pcall(self.Add,self,env.moveKey,point)
         self.NextIntent=previous
         local r=self.Records[self.LastActionID]
-        if r and r.groundHover then r.hoverDetour={side=side,from=copy(w)} end
+        if r and r.groundHover then
+            r.hoverDetour={side=side,from=copy(w)};r.moveIntentScreen=copy(o.screen)
+        end
         local success=ok and issued==true
+        if success and r and r.sentAt and o.screen then self:RememberCursorMove(o.screen)end
         -- An obstructed detour tries the other side at the next cadence.
         self.HoverFallbackSide=(not success and r and r.reason=='ground_hover_obstructed') and -side or nil
         return success
     end
     function cursor:release(reason)
         local r=self.Active;if not r then return end
+        if r.chordPhase then return self:ReleaseChord(r,reason)end
         if r.followup then
             r.followup.state='aborted';r.followup.reason=reason;r.followup.abortedAt=env.clock()
             self:record('aborted',r.followup,reason);r.followup=nil
@@ -7320,6 +7486,9 @@ return function(cursor,env)
         if self.Active and (not owner or self.Active.owner==owner) then
             self.Active.interrupted=true;self:release(reason or 'cancelled')
         end
+        if self.Active and self.Active.chordPhase and (not owner or self.Active.owner==owner)then
+            self:ReleaseChord(self.Active,reason,true);return
+        end
         -- An explicit cancellation gets one last owned release even if automatic
         -- retries exhausted; it must still be possible to recover after host input
         -- becomes available again. Regular Prepare/OnTick calls stay bounded.
@@ -7336,6 +7505,7 @@ return function(cursor,env)
     -- TCO lease. Focus/chat/death/disable/shutdown and a physical TCO press still
     -- release it (live: ~233 release/re-acquire flaps, 645 TCO echoes).
     function cursor:CancelAll(reason,pointerOnly,movementOnly,keepModeLease)
+        self.CursorMoveIntent=nil
         local previousGeneration=self.Generation;local active=self.Active
         local resume=active and not active.sentAt and active.publicScope
             and (pointerOnly and active.survivePointerMotion or movementOnly and active.surviveMovementCommands)
@@ -7458,6 +7628,8 @@ return function(cursor,env)
             local vk=(msg==513 or msg==514) and 1 or (msg==516 or msg==517) and 2 or 4
             freshPress=mouseDown and not self.Physical[vk]
             self.Physical[vk]=mouseDown or nil
+            -- A genuine press is fresh evidence of a hold; only a release may clear it again.
+            if mouseDown and self.PhysicalReview then self.PhysicalReview[vk]=nil end
             if self.Buttons[vk] then
                 if mouseDown then self.Buttons[vk].manual=true;self:record('button_physical_takeover',self.Buttons[vk].action,tostring(vk))
                 elseif mouseUp then self.Buttons[vk].manual=nil end
@@ -7515,6 +7687,10 @@ return function(cursor,env)
             self.Suspended=true;return
         end
         self.Suspended=false;self:ReconcilePhysical();self:SamplePlayer()
+        if self.Active and self.Active.chordPhase then
+            self:AdvanceChord()
+            if self.Active and self.Active.chordPhase then return end
+        end
         if self.Active and self.Active.followup and not self.Active.followup.publicScope and env.clock()>=(self.Active.holdUntil or 0) then
             local previous=self.Active;local nextAction=previous.followup;previous.followup=nil
             local ok,accepted=pcall(self.dispatch,self,nextAction,previous)
@@ -7559,7 +7735,8 @@ end)()
         world=function()
             local function onMap(p)
                 return p and type(p.x)=='number' and type(p.z)=='number' and p.x==p.x and p.z==p.z
-                    and math.abs(p.x)<=20000 and math.abs(p.z)<=20000 and p or nil
+                    and math.abs(p.x)<=20000 and math.abs(p.z)<=20000
+                    and (math.abs(p.x)>=1 or math.abs(p.z)>=1) and p or nil
             end
             if type(Game.mousePos)=='function' then
                 local ok,p=pcall(Game.mousePos)
@@ -7881,7 +8058,7 @@ end
 return R
 
 end)())
-    Cursor.DiagnosticsEnabled=({}).enabled==true
+    Cursor.DiagnosticsEnabled=(_G.OrbamaFamily and _G.OrbamaFamily.active~=false and _G.OrbamaFamily.diagnostics and _G.OrbamaFamily.diagnostics.enabled==true and not _G.OrbamaFamily.diagnostics.closed) or (not _G.OrbamaFamily and false) or false
     GameIsChatOpen=function()return Cursor:IsChatOpen()end
     Control.KeyDown=function(key)return Cursor:AcquireKey(key,'control')end
     Control.KeyUp=function(key)return Cursor:ReleaseKey(key,'control')end
@@ -8088,22 +8265,6 @@ Attack = {
 		return 1 / self:GetAttackSpeed()
 	end,
 
-	GetProjectileSpeed = function(self)
-		if Data.IsHeroMelee or (Data.IsHeroSpecialMelee and Data.IsHeroSpecialMelee()) then
-			return math_huge
-		end
-		if Data.SpecialMissileSpeed then
-			local speed = Data.SpecialMissileSpeed()
-			if speed then
-				return speed
-			end
-		end
-		local speed = myHero.attackData.projectileSpeed
-		if speed > 0 then
-			return speed
-		end
-		return math_huge
-	end,
 
 	IsReady = function(self)
 		if self.IsAphelios and self.CrescendumMissilePhase then
@@ -8409,6 +8570,7 @@ Orbwalker = {
 	GetTarget = function(self)
 		if
 			Object:IsValid(self.ForceTarget)
+            and self:AttackPreferenceAllowed(self.ForceTarget)
 			and ChampionInfo:CustomIsTargetable(self.ForceTarget)
 			and (Object:IsHeroImmortal(self.ForceTarget, true)==false or (Object.IsKindred and (self:KindredETarget(self.ForceTarget))))
 		then
@@ -8566,18 +8728,29 @@ return function(data,hero,game,clock,keyDown,keyUp,profiles,slotKeys)
  -- reset before that attack. A profile may declare the self buff the spell
  -- applies; its appearance after an admitted key, absent at that key, is the
  -- fresh native proof. Name is compared before other fields are read.
- local function empowered(name)
+ local function readEmpower(names)
   local count=hero.buffCount
-  if not name or not finite(count)or count<0 or count>128 then return false end
-  local now=game.Timer()
+  if not names or not finite(count)or count<0 or count>128 or count%1~=0 or type(hero.GetBuff)~='function'then return nil end
+  local now=game.Timer();local unknown=false
   for i=0,count do
-   local b=hero:GetBuff(i)
-   if b and b.name==name and(b.count or 0)>0 then
-    local expiry=finite(b.expireTime)and b.expireTime>0 and b.expireTime or b.endTime
-    if not finite(expiry)or expiry<=0 or expiry>now then return true end
+   local b=hero:GetBuff(i);local name=b and b.name
+   local matched=type(name)=='string'and(type(names)=='table'and(names[name]or names[name:lower()])or name==names)
+   if matched then
+    local amount=b.count
+    if not finite(amount)then unknown=true
+    elseif amount>0 then
+     local expiry=finite(b.expireTime)and b.expireTime>0 and b.expireTime or b.endTime
+     if not finite(expiry)or expiry<=0 or expiry>now then return true end
+    end
    end
   end
+  if unknown then return nil end
   return false
+ end
+ local function empowered(names)
+  local ok,present=pcall(readEmpower,names)
+  if ok then return present end
+  return nil
  end
  function data:WndMsg(msg,key)
   local config,snapshot
@@ -8587,7 +8760,7 @@ return function(data,hero,game,clock,keyDown,keyUp,profiles,slotKeys)
      local spell=hero:GetSpellData(row.Slot)
      if spell and(not row.Name or spell.name==row.Name)then
       config=row;snapshot={name=spell.name,cd=spell.currentCd,castStart=hero.activeSpell and hero.activeSpell.startTime,gameTime=game.Timer(),
-       buffBefore=row.EmpowerBuff and empowered(row.EmpowerBuff)}
+       buffBefore=(row.EmpowerBuff or row.Buff)and empowered(row.EmpowerBuff or row.Buff)}
       break
      end
     end
@@ -8634,8 +8807,8 @@ return function(data,hero,game,clock,keyDown,keyUp,profiles,slotKeys)
   -- itself, sent together with a pre-attack key) needs no reset; granting one
   -- during its windup would permit a duplicate attack command.
   local after=cast and cast.valid and not matching and finite(cast.startTime)and cast.startTime>=witness.gameTime
-  local buffed=config.EmpowerBuff and witness.buffBefore==false and not after and spell and spell.name==witness.name
-   and empowered(config.EmpowerBuff)
+  local buffed=(config.EmpowerBuff or config.Buff)and witness.buffBefore==false and not after and spell and spell.name==witness.name
+   and empowered(config.EmpowerBuff or config.Buff)
   if not started and not cooldown and not buffed then return false end
   if config.CanCancel and config.OnCast and(not spell or not finite(spell.castTime)or not finite(spell.cd))then return false end
   -- Keep the base's buff/OnCast delay requirements. The new witness supplies
@@ -8812,7 +8985,7 @@ return function(Damage,Health,Buff,Data,Attack,hero,clock,profile,menu,Object,no
     function Health:GetLaneMinion()
         local chosen=original(self)
         if not chosen or not menu.PreserveSilverBolts:Value() or self.IsLastHitable then return chosen end
-        local speed=Attack:GetProjectileSpeed();local impact=Attack:GetWindup()+chosen.distance/speed
+        local impact=Attack:GetImpactTime(chosen);if not impact then return chosen end
         local function estimate(unit,hp,at)
             local stacks,proc=Damage:GetSilverBoltsState(hero,unit,clock()+at)
             local aa=Damage:GetAutoAttackDamageAt(hero,unit,at,self.StaticAutoAttackDamage)
@@ -8824,9 +8997,9 @@ return function(Damage,Health,Buff,Data,Attack,hero,clock,profile,menu,Object,no
             local row=self.FarmMinions[i];local unit=row.Minion
             if Object:IsValid(unit) and Data:IsInAutoAttackRange(hero,unit)
                 and not row.AlmostAlmost and not row.AlmostLastHitable and row.PredictedHP>0 then
-                local at=Attack:GetWindup()+unit.distance/speed
-                local stacks=Damage:GetSilverBoltsState(hero,unit,clock()+at)
-                if stacks>0 then
+                local at=Attack:GetImpactTime(unit)
+                local stacks=at and Damage:GetSilverBoltsState(hero,unit,clock()+at)
+                if stacks and stacks>0 then
                     local hits=estimate(unit,row.PredictedHP,at)
                     if hits<math.huge and hits<=count then best=unit;count=hits end
                 end
@@ -9421,125 +9594,7 @@ end)(),Obj_AI_Hero,Obj_AI_Minion)
 end
 
 do
-local install=(function()
--- Shared profile-matched attack contributions. No input or speculative activation.
-return function(Damage,Buff,clock,P,heroType,minionType,Data,hero,itemSlots,patchProfiles)
- -- Resolve current spell data at dispatch, never the stage captured at admission.
- function Data:GetStationaryCastTime(from,slot)
-  if not from or type(from.GetSpellData)~='function'then return nil,'unknown_caster'end
-  local ok,spell=pcall(from.GetSpellData,from,slot)
-  if not ok or not spell then return nil,'unknown_stage'end
-  return P.StationaryCastTime(from.charName,slot,spell.name)
- end
- local function active(from,names,owned,target,at)
-  for _,name in ipairs(names or {})do local b=Buff:GetBuff(target or from,name)
-   if b and P.Finite(b.count)and b.count>0 then
-    local expires=P.Finite(b.expireTime)and b.expireTime>0 and b.expireTime or b.endTime
-    if P.Finite(expires)and expires>(at or clock())then
-     if not owned then return b end
-     local known=false;local foreign=false
-     for _,field in ipairs({'source','sourcenID','owner','ownerID'})do local id=b[field]
-      if type(id)=='table'or type(id)=='userdata'then id=id.networkID or id.handle end
-      if id and id~=0 then if id~=from.networkID and id~=from.handle then foreign=true else known=true end end
-     end
-     if known and not foreign then return b end
-    end
-   end
-  end;return false
- end
- local function stats(from)return {totalDamage=from.totalDamage,bonusDamage=from.bonusDamage,ap=from.ap,
-  level=from.levelData and from.levelData.lvl,critChance=from.critChance,critDamage=Damage:GetCriticalStrikePercent(from),heroType=heroType}end
- function Damage:GetProfileAttackContribution(from,target,at)
-  local p=from and P.Get(from.charName)
-  if not p or not target or(target.type~=heroType and target.type~=minionType)or target.type==minionType and(target.maxHealth or 0)<=6 then return 0,0,0 end
-  local raw,kind=0
-  if p.champion=='Irelia'then
-   if p.id=='normal'and active(from,p.passiveNames,nil,nil,at)then raw,kind=P.Passive(from.charName,stats(from),target)
-   elseif p.id=='classic'and active(from,p.wNames,nil,nil,at)then raw,kind=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target)end
-   elseif p.champion=='Quinn'and active(from,p.markNames,true,target,at)then raw,kind=P.Passive(from.charName,stats(from),target)
-  elseif p.champion=='Caitlyn'then
-    local trapped=p.id=='normal'and active(from,p.trapNames,true,target,at)
-    local net=p.id=='normal'and active(from,p.netNames,true,target,at)
-   if from==hero and Data and Data.CaitlynConsumedMarks then
-    local identity=target.networkID
-    if trapped and(not P.Finite(trapped.startTime)or trapped.startTime<=0 or Data.CaitlynConsumedMarks.W[identity]==trapped.startTime)then trapped=false end
-    if net and(not P.Finite(net.startTime)or net.startTime<=0 or Data.CaitlynConsumedMarks.E[identity]==net.startTime)then net=false end
-   end
-    if active(from,p.headshotNames,nil,nil,at)or trapped or net then raw,kind=P.Passive(from.charName,stats(from),target)end
-   if trapped then local bonus=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target);raw=raw+bonus;kind='physical'end
-  elseif p.champion=='Aatrox'then
-    if p.id=='normal'and active(from,{'AatroxPassiveReady'},nil,nil,at)then raw,kind=P.Passive(from.charName,stats(from),target)
-    elseif p.id=='classic'and active(from,{'Jade_AatroxWONHAttackPower'},nil,nil,at)then raw,kind=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target)end
-  end
-  return kind=='physical'and raw or 0,kind=='magical'and raw or 0,kind=='true'and raw or 0
- end
- function Damage:GetIreliaQOnHitDamage(from,target,options)
-  options=options or {}
-  local p=from and P.Get(from.charName)
-  if not p or p.champion~='Irelia'then return 0,'unsupported_profile'end
-  local physical,magical,trueDamage=self:GetProfileAttackContribution(from,target,options.at)
-  return self:CalculateDamage(from,target,1,physical)+self:CalculateDamage(from,target,2,magical)+trueDamage
-   +self:GetAbilityItemOnHitDamage(from,target,options),'observed_champion_and_reviewed_item_onhit'
- end
- -- Reuse provider item functions for reviewed on-hit triggers. Crit, attack-only
- -- procs, projectile bolts, invented activation and unobserved Spellblade are excluded.
- local abilityItems={['normal']={[3115]=true,[3091]=true,[3124]=true,[3302]=true,[3153]=true,[3057]=true,[6662]=true,[3078]=true,[3100]=true,[2510]=true},['classic']={}}
- local spellblade={[3057]={"sheen"},[6662]={"6662buff"},[3078]={"3078trinityforce"},[3100]={"lichbane"},[2510]={"2510_sheenhands"}}
- function Damage:GetAbilityItemOnHitDamage(from,target,options)
-  options=options or {}
-  local p=from and P.Get(from.charName);local allowed=p and abilityItems[p.id]
-  if not allowed or not target or(target.type~=heroType and target.type~=minionType)or target.type==minionType and(target.maxHealth or 0)<=6 then return 0 end
-  local args={From=from,Target=target,RawTotal=0,RawPhysical=0,RawMagical=0,CalculatedTrue=0,CalculatedPhysical=0,CalculatedMagical=0,DamageType=1,TargetIsMinion=target.type==minionType}
-  local seen={};for _,slot in ipairs(itemSlots or {})do local item=from:GetItemData(slot);local itemID=item and item.itemID
-   if allowed[itemID]and not seen[itemID]then
-    seen[itemID]=true
-    if not spellblade[itemID]or not options.spentSpellblade and active(from,spellblade[itemID],nil,nil,options.at)then
-     local before=args.RawPhysical;self:SetItemStaticDamage(itemID,args);self:SetItemPassiveDamage(itemID,args)
-     -- Confirmed future health can only reduce this current-health contribution.
-     if itemID==3153 and P.Finite(options.targetHealth)and P.Finite(target.health)and target.health>0 then
-      args.RawPhysical=before+(args.RawPhysical-before)*math.max(0,math.min(1,options.targetHealth/target.health))
-     end
-    end
-   end
-  end
-  return self:CalculateDamage(from,target,1,args.RawPhysical)+self:CalculateDamage(from,target,2,args.RawMagical)
-   +args.CalculatedTrue+args.CalculatedPhysical+args.CalculatedMagical
- end
- if Data and hero and hero.charName=='Caitlyn'then
-  Data.ExtraAttackRanges.Caitlyn=function(target)
-   if not target then return 0 end
-   local p=P.Get('Caitlyn');local identity=target.networkID
-   local net=active(hero,p.netNames,true,target);local trap=active(hero,p.trapNames,true,target)
-   local e=net and P.Finite(net.startTime)and net.startTime>0 and Data.CaitlynConsumedMarks.E[identity]~=net.startTime
-   local w=trap and P.Finite(trap.startTime)and trap.startTime>0 and Data.CaitlynConsumedMarks.W[identity]~=trap.startTime
-   if e or w then return math.max(0,1300-hero.range-hero.boundingRadius-target.boundingRadius)end;return 0
-  end
-  function Data:ConsumeCaitlynMark(target)
-   if not target then return end;local p=P.Get('Caitlyn');local identity=target.networkID
-   for _,row in ipairs({{'E',p.netNames},{'W',p.trapNames}})do local buff=active(hero,row[2],true,target)
-    if buff and P.Finite(buff.startTime)and buff.startTime>0 and self.CaitlynConsumedMarks[row[1]][identity]~=buff.startTime then
-     self.CaitlynConsumedMarks[row[1]][identity]=buff.startTime;return
-    end
-   end
-  end
- end
-  -- Yunara remains installed by its maintained shared profile module.
- local function apply(args)
-  local physical,magical,trueDamage=Damage:GetProfileAttackContribution(args.From,args.Target)
-  args.RawPhysical=args.RawPhysical+physical;args.RawMagical=args.RawMagical+magical;args.CalculatedTrue=args.CalculatedTrue+trueDamage
- end
- Damage.HeroPassiveDamage.Jade_Fizz=function(args)
-  local p=patchProfiles.Jade_Fizz;local spell=args.From:GetSpellData(1);local rank=spell and spell.level
-  if P.Finite(rank)and rank%1==0 and p.wBase[rank]and P.Finite(args.From.ap)and active(args.From,{'Jade_FizzWActive'})then
-   args.RawMagical=args.RawMagical+p.wBase[rank]+p.wAP*args.From.ap
-  end
- end
- Damage.HeroStaticDamage.Caitlyn=nil -- Re-evaluate recipient marks rather than cache or double-credit Headshot.
- for _,name in ipairs({'Aatrox','Jade_Aatrox','Caitlyn','Jade_Caitlyn','Irelia','Jade_Irelia','Quinn','Jade_Quinn'})do Damage.HeroPassiveDamage[name]=apply end
-end
-
-end)()
-install(Damage,Buff,GameTimer,(function()
+local mechanics=(function()
 -- Current profile data: implementation/family/current-patch.json.
 -- Units: world units, seconds, raw damage.
 -- Runtime aliases and gameplay outcomes require live acceptance; retained rows are not stages.
@@ -9942,6 +9997,17 @@ profiles['Jade_Caitlyn'].combat={id='classic',champion='Caitlyn',names={{'Jade_C
   r={range=D.Jade_CaitlynR.castRange,delay=1,speed=D.Jade_CaitlynRMissile.mSpeed,radius=D.Jade_CaitlynRMissile.mMissileWidth,type='physical',base=D.Jade_CaitlynR.RBaseDamage,bonusAD=D.Jade_CaitlynR.RADRatio},qPierceStep=D.Jade_CaitlynQ.ExtraHitPercentReduction,qPierceMin=D.Jade_CaitlynQ.MinimumDamagePercent,
   headshotNames={'Jade_CaitlynHeadshot'},headshotCountNames={'Jade_CaitlynHeadshotCount'},trapNames={'Jade_CaitlynYordleTrapDebuff'},trapObjectNames={'Jade_CaitlynTrap'},headshotBonus=.5,headshotNonChampion=1.5,headshotAttacks={8,7,6},trapLifetimeUnknown=true}
 local normal,classic=profiles.Caitlyn.combat,profiles.Jade_Caitlyn.combat
+-- Normal extracted CaitlynBasicAttack/CritAttack missileSpeed=2500 and
+-- CaitlynPassiveMissile=3000 (research/family-assets/Caitlyn/spells.json).
+normal.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=normal.headshotNames}},
+ casts={CaitlynBasicAttack='basic',CaitlynCritAttack='basic',CaitlynPassiveMissile='headshot'},
+ source='Normal extracted basic/crit/PassiveMissile missileSpeed; separate from Classic data'}
+-- Units/s. Classic extracted Basic/Crit missileSpeed=2500, Headshot=3000:
+-- research/26.20-five-champions/Jade_Caitlyn/spells.json; independently matched
+-- in live 1062-1068 (107 basic/crit and 15 Headshot missiles). Not Normal defaults.
+classic.attackTravel={speed=2500,stages={headshot={speed=3000,buffs=classic.headshotNames}},
+ casts={Jade_CaitlynBasicAttack='basic',Jade_CaitlynCritAttack='basic',Jade_CaitlynHeadshotMissile='headshot'},
+ source='Classic extracted basic/crit/Headshot missileSpeed; live 1062-1068 native corroboration'}
 normal.e.mobilitySource='https://wiki.leagueoflegends.com/en-us/Caitlyn 90 Caliber Net: recoils 390 units, cast time 0.15, speed 1600 / 1000 (missile / recoil), read 2026-10-08'
 normal.e.mobility=true;classic.e.mobility=true;normal.w.requiresAmmo=true
 local function modifier(p,raw,s,slot,rank,stats,target,options,finite)
@@ -10852,6 +10918,8 @@ return {Jinx={id='normal',q='JinxQ',w='JinxW',e='JinxE',r='JinxR',
  -- conservative 0.5 + d/1750 + 0.5 until the jinx_e_land trace measures it (wiki: no cast time, lands after 0.4 s).
  eRange=D.JinxE.castRange,eArm=D.JinxE.GrenadeArmTime,eDuration=D.JinxE.GrenadeDuration,eSpeed=D.JinxE.missileSpeed,eDelay=.5,eRadius=D.JinxEHit.mMissileWidth,eEffect=225,
  rMin=D.JinxR.BaseDamage,rMax=D.JinxR.MaxDamage,rMinAD=.12,rMaxAD=1.2,rMissing={D.JinxR.PercentDamage[1]/100,D.JinxR.PercentDamage[2]/100,D.JinxR.PercentDamage[3]/100},rSplash=D.JinxR.AoERadius,rSecondary=D.JinxR.AoEDamageMult,
+ -- Native JinxR positions: FamilyTelemetry-v2-17 and119, documented in docs/JINX-RECALL-SNIPE.md.
+ rMotion={speed=D.JinxR.mSpeed,minSpeed=D.JinxR.mSpeed,maxSpeed=2200,speedStep={at=1350,speed=2200}},
  -- rMonsterCap: missing-health part against monsters (spells.json JinxR MonsterExecuteMax 1200; wiki V26.16).
  rMonsterCap=D.JinxR.MonsterExecuteMax,rRange=D.JinxR.castRange,rRadius=D.JinxR.mMissileWidth,rDelay=D.JinxR.mCastTime,rSpeed=D.JinxR.mSpeed,rDamageDistance=1500}}
 
@@ -12658,10 +12726,11 @@ local pair=(function()
 -- shows after Q under R is recorded by the vayne_stealth_buffs development trace (not live-verified).
 
 -- Condemn's stationary cast time is declared to the shared cast-time gate.
+-- Empowered attack aliases: profile-matched installed spells.json entries.
 return {
- Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
+ Jade_Vayne={id='classic',wBuff='Jade_VayneW_Debuff',qBuff={'Jade_VayneQ_Bonus'},qSdkBuff='jade_vayneq_bonus',qAttackNames={Jade_VayneQ_Attack=true,Jade_VayneQ_UltAttack=true},qRatio=D.Jade_VayneQ_Bonus.ScalingDamage,qRatioUlt=D.Jade_VayneQ_Bonus.scalingDamageUlt,qAP=0,rBuff='Jade_VayneR',stealth={'Jade_VayneInquisitionStealth','Jade_VayneQ_Fade'},eRange=D.Jade_VayneE.castRange,eKnockback=475,
   eBase=D.Jade_VayneE.FirstHitDamage,eAD=.5,eTerrain=D.Jade_VayneE.SecondHitDamage,eTerrainAD=.5,eCastTime=.25},
- Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qRatio=D.VayneTumble.TotalADRatio,qAP=D.VayneTumble.APRatio,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=D.VayneCondemn.castRange,eKnockback=D.VayneCondemn.KnockbackDistance,
+ Vayne={id='normal',wBuff='VayneSilveredDebuff',qBuff={'VayneTumble','VayneTumbleBonus'},qSdkBuff='vaynetumblebonus',qAttackNames={VayneTumbleAttack=true,VayneTumbleUltAttack=true},qRatio=D.VayneTumble.TotalADRatio,qAP=D.VayneTumble.APRatio,rBuff='VayneInquisition',stealth={'VayneInquisitionStealth','VayneTumbleFade'},eRange=D.VayneCondemn.castRange,eKnockback=D.VayneCondemn.KnockbackDistance,
   eBase=D.VayneCondemn.Damage,eAD=.5,eTerrain={75,127.5,180,232.5,285},eTerrainAD=.75,eCastTime=.25},
 }
 
@@ -12947,7 +13016,126 @@ function P.ApplyCatalog(identity,set)
 end
 return P
 
-end)(),Obj_AI_Hero,Obj_AI_Minion,Data,myHero,ItemSlots,(function()
+end)()
+local install=(function()
+-- Shared profile-matched attack contributions. No input or speculative activation.
+return function(Damage,Buff,clock,P,heroType,minionType,Data,hero,itemSlots,patchProfiles)
+ -- Resolve current spell data at dispatch, never the stage captured at admission.
+ function Data:GetStationaryCastTime(from,slot)
+  if not from or type(from.GetSpellData)~='function'then return nil,'unknown_caster'end
+  local ok,spell=pcall(from.GetSpellData,from,slot)
+  if not ok or not spell then return nil,'unknown_stage'end
+  return P.StationaryCastTime(from.charName,slot,spell.name)
+ end
+ local function active(from,names,owned,target,at)
+  for _,name in ipairs(names or {})do local b=Buff:GetBuff(target or from,name)
+   if b and P.Finite(b.count)and b.count>0 then
+    local expires=P.Finite(b.expireTime)and b.expireTime>0 and b.expireTime or b.endTime
+    if P.Finite(expires)and expires>(at or clock())then
+     if not owned then return b end
+     local known=false;local foreign=false
+     for _,field in ipairs({'source','sourcenID','owner','ownerID'})do local id=b[field]
+      if type(id)=='table'or type(id)=='userdata'then id=id.networkID or id.handle end
+      if id and id~=0 then if id~=from.networkID and id~=from.handle then foreign=true else known=true end end
+     end
+     if known and not foreign then return b end
+    end
+   end
+  end;return false
+ end
+ local function stats(from)return {totalDamage=from.totalDamage,bonusDamage=from.bonusDamage,ap=from.ap,
+  level=from.levelData and from.levelData.lvl,critChance=from.critChance,critDamage=Damage:GetCriticalStrikePercent(from),heroType=heroType}end
+ function Damage:GetProfileAttackContribution(from,target,at)
+  local p=from and P.Get(from.charName)
+  if not p or not target or(target.type~=heroType and target.type~=minionType)or target.type==minionType and(target.maxHealth or 0)<=6 then return 0,0,0 end
+  local raw,kind=0
+  if p.champion=='Irelia'then
+   if p.id=='normal'and active(from,p.passiveNames,nil,nil,at)then raw,kind=P.Passive(from.charName,stats(from),target)
+   elseif p.id=='classic'and active(from,p.wNames,nil,nil,at)then raw,kind=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target)end
+   elseif p.champion=='Quinn'and active(from,p.markNames,true,target,at)then raw,kind=P.Passive(from.charName,stats(from),target)
+  elseif p.champion=='Caitlyn'then
+    local trapped=p.id=='normal'and active(from,p.trapNames,true,target,at)
+    local net=p.id=='normal'and active(from,p.netNames,true,target,at)
+   if from==hero and Data and Data.CaitlynConsumedMarks then
+    local identity=target.networkID
+    if trapped and(not P.Finite(trapped.startTime)or trapped.startTime<=0 or Data.CaitlynConsumedMarks.W[identity]==trapped.startTime)then trapped=false end
+    if net and(not P.Finite(net.startTime)or net.startTime<=0 or Data.CaitlynConsumedMarks.E[identity]==net.startTime)then net=false end
+   end
+    if active(from,p.headshotNames,nil,nil,at)or trapped or net then raw,kind=P.Passive(from.charName,stats(from),target)end
+   if trapped then local bonus=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target);raw=raw+bonus;kind='physical'end
+  elseif p.champion=='Aatrox'then
+    if p.id=='normal'and active(from,{'AatroxPassiveReady'},nil,nil,at)then raw,kind=P.Passive(from.charName,stats(from),target)
+    elseif p.id=='classic'and active(from,{'Jade_AatroxWONHAttackPower'},nil,nil,at)then raw,kind=P.Raw(from.charName,1,from:GetSpellData(1).level,stats(from),target)end
+  end
+  return kind=='physical'and raw or 0,kind=='magical'and raw or 0,kind=='true'and raw or 0
+ end
+ function Damage:GetIreliaQOnHitDamage(from,target,options)
+  options=options or {}
+  local p=from and P.Get(from.charName)
+  if not p or p.champion~='Irelia'then return 0,'unsupported_profile'end
+  local physical,magical,trueDamage=self:GetProfileAttackContribution(from,target,options.at)
+  return self:CalculateDamage(from,target,1,physical)+self:CalculateDamage(from,target,2,magical)+trueDamage
+   +self:GetAbilityItemOnHitDamage(from,target,options),'observed_champion_and_reviewed_item_onhit'
+ end
+ -- Reuse provider item functions for reviewed on-hit triggers. Crit, attack-only
+ -- procs, projectile bolts, invented activation and unobserved Spellblade are excluded.
+ local abilityItems={['normal']={[3115]=true,[3091]=true,[3124]=true,[3302]=true,[3153]=true,[3057]=true,[6662]=true,[3078]=true,[3100]=true,[2510]=true},['classic']={}}
+ local spellblade={[3057]={"sheen"},[6662]={"6662buff"},[3078]={"3078trinityforce"},[3100]={"lichbane"},[2510]={"2510_sheenhands"}}
+ function Damage:GetAbilityItemOnHitDamage(from,target,options)
+  options=options or {}
+  local p=from and P.Get(from.charName);local allowed=p and abilityItems[p.id]
+  if not allowed or not target or(target.type~=heroType and target.type~=minionType)or target.type==minionType and(target.maxHealth or 0)<=6 then return 0 end
+  local args={From=from,Target=target,RawTotal=0,RawPhysical=0,RawMagical=0,CalculatedTrue=0,CalculatedPhysical=0,CalculatedMagical=0,DamageType=1,TargetIsMinion=target.type==minionType}
+  local seen={};for _,slot in ipairs(itemSlots or {})do local item=from:GetItemData(slot);local itemID=item and item.itemID
+   if allowed[itemID]and not seen[itemID]then
+    seen[itemID]=true
+    if not spellblade[itemID]or not options.spentSpellblade and active(from,spellblade[itemID],nil,nil,options.at)then
+     local before=args.RawPhysical;self:SetItemStaticDamage(itemID,args);self:SetItemPassiveDamage(itemID,args)
+     -- Confirmed future health can only reduce this current-health contribution.
+     if itemID==3153 and P.Finite(options.targetHealth)and P.Finite(target.health)and target.health>0 then
+      args.RawPhysical=before+(args.RawPhysical-before)*math.max(0,math.min(1,options.targetHealth/target.health))
+     end
+    end
+   end
+  end
+  return self:CalculateDamage(from,target,1,args.RawPhysical)+self:CalculateDamage(from,target,2,args.RawMagical)
+   +args.CalculatedTrue+args.CalculatedPhysical+args.CalculatedMagical
+ end
+ if Data and hero and hero.charName=='Caitlyn'then
+  Data.ExtraAttackRanges.Caitlyn=function(target)
+   if not target then return 0 end
+   local p=P.Get('Caitlyn');local identity=target.networkID
+   local net=active(hero,p.netNames,true,target);local trap=active(hero,p.trapNames,true,target)
+   local e=net and P.Finite(net.startTime)and net.startTime>0 and Data.CaitlynConsumedMarks.E[identity]~=net.startTime
+   local w=trap and P.Finite(trap.startTime)and trap.startTime>0 and Data.CaitlynConsumedMarks.W[identity]~=trap.startTime
+   if e or w then return math.max(0,1300-hero.range-hero.boundingRadius-target.boundingRadius)end;return 0
+  end
+  function Data:ConsumeCaitlynMark(target)
+   if not target then return end;local p=P.Get('Caitlyn');local identity=target.networkID
+   for _,row in ipairs({{'E',p.netNames},{'W',p.trapNames}})do local buff=active(hero,row[2],true,target)
+    if buff and P.Finite(buff.startTime)and buff.startTime>0 and self.CaitlynConsumedMarks[row[1]][identity]~=buff.startTime then
+     self.CaitlynConsumedMarks[row[1]][identity]=buff.startTime;return
+    end
+   end
+  end
+ end
+  -- Yunara remains installed by its maintained shared profile module.
+ local function apply(args)
+  local physical,magical,trueDamage=Damage:GetProfileAttackContribution(args.From,args.Target)
+  args.RawPhysical=args.RawPhysical+physical;args.RawMagical=args.RawMagical+magical;args.CalculatedTrue=args.CalculatedTrue+trueDamage
+ end
+ Damage.HeroPassiveDamage.Jade_Fizz=function(args)
+  local p=patchProfiles.Jade_Fizz;local spell=args.From:GetSpellData(1);local rank=spell and spell.level
+  if P.Finite(rank)and rank%1==0 and p.wBase[rank]and P.Finite(args.From.ap)and active(args.From,{'Jade_FizzWActive'})then
+   args.RawMagical=args.RawMagical+p.wBase[rank]+p.wAP*args.From.ap
+  end
+ end
+ Damage.HeroStaticDamage.Caitlyn=nil -- Re-evaluate recipient marks rather than cache or double-credit Headshot.
+ for _,name in ipairs({'Aatrox','Jade_Aatrox','Caitlyn','Jade_Caitlyn','Irelia','Jade_Irelia','Quinn','Jade_Quinn'})do Damage.HeroPassiveDamage[name]=apply end
+end
+
+end)()
+install(Damage,Buff,GameTimer,mechanics,Obj_AI_Hero,Obj_AI_Minion,Data,myHero,ItemSlots,(function()
 -- Primary: Riot patch 26.20; current active BIN calculations pinned in research/26.20-five-champions.
 -- Separate profiles; damage raw, ratios scalar, durations seconds.
 return {
@@ -12962,6 +13150,83 @@ return {
 }
 
 end)())
+local installSpeed=(function()
+-- Shared native and profile-backed AA flight. The second return distinguishes
+-- real instant attacks from unavailable ranged timing (legacy infinity).
+return function(attack,data,buff,hero,profiles)
+ local huge=math.huge
+ local function finite(n)return type(n)=='number'and n==n and n>0 and n<huge end
+ local function number(n)return type(n)=='number'and n==n and n>-huge and n<huge end
+ -- Windup plus center-to-center flight, without readiness or approach time.
+ -- Prepared origins/stages describe the next attack; launched hits use cast end.
+ function attack:GetImpactTime(target,origin,preparedStage)
+  local ok,windup,speed,known,x,z,tx,tz=pcall(function()
+   local from,to=origin or hero.pos,target and target.pos
+   local speed,known=self:GetProjectileSpeed(nil,preparedStage)
+   return self:GetWindup(),speed,known,from and from.x,from and from.z,to and to.x,to and to.z
+  end)
+  if not ok or known==false or not number(windup)or windup<0 or type(speed)~='number'or speed~=speed or speed<=0
+   or not number(x)or not number(z)or not number(tx)or not number(tz)then return nil end
+  local dx,dz=x-tx,z-tz;local impact=windup+math.sqrt(dx*dx+dz*dz)/speed
+  if number(impact)then return impact,windup end
+ end
+ function attack:GetProjectileSpeed(cast,preparedStage)
+  -- A planned follow-up names an explicitly declared future stage, rather
+  -- than borrowing the player's current native/basic attack state.
+  if preparedStage~=nil then
+   local p=profiles.Get(hero.charName);local t=p and p.attackTravel
+   local stage=t and t.stages and t.stages[preparedStage]
+   local speed=preparedStage=='basic'and t and t.speed or stage and stage.speed
+   if finite(speed)then return speed,true,'profile_prepared_stage' end
+   return huge,false,'prepared_stage_unknown'
+  end
+  if data.IsHeroMelee then return huge,true,'melee' end
+  if data.IsHeroSpecialMelee then
+   local ok,melee=pcall(data.IsHeroSpecialMelee)
+   if not ok then return huge,false,'form_unknown' end
+   if melee then return huge,true,'melee_form' end
+  end
+  if data.SpecialMissileSpeed then
+   local ok,speed=pcall(data.SpecialMissileSpeed)
+   if ok and (finite(speed)or speed==huge)then return speed,true,'native_stage' end
+  end
+  local nativeOK,native=pcall(function()local a=hero.attackData;return a and a.projectileSpeed end)
+  if nativeOK and finite(native)then return native,true,'native_attack' end
+  local profile=profiles.Get(hero.charName)
+  local travel=profile and profile.attackTravel
+  if not travel then return huge,false,'ranged_speed_unknown' end
+  if not finite(travel.speed)or type(travel.casts)~='table'or type(travel.stages)~='table'then
+   return huge,false,'profile_speed_unknown'
+  end
+  if cast then
+   local stage=travel.casts[cast.name]
+   if stage=='basic'then return travel.speed,true,'profile_cast' end
+   local row=stage and travel.stages[stage]
+   if row and finite(row.speed)then return row.speed,true,'profile_cast' end
+   return huge,false,'attack_stage_unknown'
+  end
+  -- Native cast names identify consumed stages. The next attack uses current
+  -- buffs instead, never the previous attack's Headshot state.
+  local count=hero.buffCount
+  if type(count)~='number'or count~=count or count<0 or count>256 or count%1~=0
+   or type(hero.GetBuff)~='function'then return huge,false,'buff_stage_unknown' end
+  local ok,buffs=pcall(buff.GetBuffs,buff,hero)
+  if not ok or type(buffs)~='table'then return huge,false,'buff_stage_unknown' end
+  for _,b in ipairs(buffs)do
+   if type(b.name)~='string'then return huge,false,'buff_stage_unknown' end
+   local name=b.name:lower()
+   for _,stage in pairs(travel.stages)do
+    for _,alias in ipairs(stage.buffs)do
+     if name==alias:lower()then return stage.speed,true,'profile_buff' end
+    end
+   end
+  end
+  return travel.speed,true,'profile_basic'
+ end
+end
+
+end)()
+installSpeed(Attack,Data,Buff,myHero,mechanics)
 end
 
 do
@@ -13012,9 +13277,33 @@ do
 local prepare = (function()
 -- Internal preparation; public callback lists and their ordering are untouched.
 return function(cached, item, health, orb, input, env)
+    -- A controller's champion preference can choose among safe harass attacks,
+    -- but cannot override the shared farm policy. Foreign force targets retain
+    -- their explicit priority. Read the ordinary selector so its toggles,
+    -- structure priority and bounded last-hit schedule remain the authority.
+    function orb:AttackPreferenceAllowed(unit)
+        if unit~=self.ForceTargetPreference or not unit or unit.type~=env.hero.type then return true end
+        local modes=self.Modes or {}
+        if modes[env.combo] then return true end
+        if modes[env.lastHit] or modes[env.laneClear] or modes[env.jungleClear] then return false end
+        if modes[env.harass] then
+            local target=health:GetHarassTarget()
+            return target~=nil and target.type==env.hero.type
+        end
+        return true
+    end
     local attack=orb.Attack
     if type(attack)=='function' then
         function orb:Attack(unit,record)
+            if not self:AttackPreferenceAllowed(unit) then return false end
+            local modes=self.Modes or {}
+            local farming=not modes[env.combo] and (modes[env.harass] or modes[env.lastHit]
+                or modes[env.laneClear] or modes[env.jungleClear])
+            local foreign=unit~=nil and unit==self.ForceTarget and unit~=self.ForceTargetPreference
+            if farming and not foreign then
+                if health.FarmSpellLockRemaining and health:FarmSpellLockRemaining()>0 then return false end
+                if unit and health.IsFarmSpellClaimed and health:IsFarmSpellClaimed(unit) then return false end
+            end
             local before=input.LastActionID
             local result=attack(self,unit,record)
             if input.DiagnosticsEnabled then
@@ -13125,6 +13414,150 @@ return function(cached, item, health, orb, input, env)
             for i=1,#self.Spells do self.Spells[i]:Tick() end
         end
     end
+    -- Committed incoming hits (tools/orbama_patches.py incoming_retention).
+    -- ActiveAttacks holds each source's currently observed attack and is rebuilt
+    -- every farm tick. IncomingSources remembers that attack across ticks. The
+    -- same native cast (target, source identity, cast end) still reported at or
+    -- after its cast end is launched; its launch position, target identity and
+    -- damage are copied then. When the source starts another attack, stops
+    -- reporting it, dies or leaves the roster, a launched ranged hit moves to
+    -- Retained until it lands; one never seen launched is discarded. Retained
+    -- hits never repeat and are keyed by negative event ids in the index.
+    local MAX_RETAINED,MAX_PER_SOURCE,SAME_CAST=128,4,.01
+    local function clear(map) for key in pairs(map) do map[key]=nil end end
+    function health:ResetIncoming()
+        self.IncomingSources=self.IncomingSources or {};clear(self.IncomingSources)
+        self.Retained=self.Retained or {};clear(self.Retained)
+        self.RetainedPerSource=self.RetainedPerSource or {};clear(self.RetainedPerSource)
+        self.IncomingOverflow=self.IncomingOverflow or {};clear(self.IncomingOverflow)
+        self.IncomingWork=self.IncomingWork or {launches=0,retained=0,discarded=0,landed=0,overflow=0}
+        self.RetainedSerial=self.RetainedSerial or 0
+    end
+    -- Seconds from now until a retained hit reaches this target, nil for another object.
+    function health:RetainedImpact(attack,target,pos,now)
+        if attack.TargetNet~=target.networkID then return nil end
+        local dx,dz=pos.x-attack.X,pos.z-attack.Z
+        return attack.CastEnd+math.sqrt(dx*dx+dz*dz)/attack.Speed-now
+    end
+    function health:IncomingOverflowed(handle)
+        local overflow=self.IncomingOverflow
+        return overflow~=nil and overflow[handle]~=nil
+            or self.TurretMissileUncertain~=nil and self.TurretMissileUncertain[handle]==true
+    end
+    local function removeRetained(self,i)
+        local list=self.Retained;local r=list[i];local n=#list
+        list[i]=list[n];list[n]=nil
+        local per=self.RetainedPerSource;local source=r.AttackerHandle
+        per[source]=per[source]>1 and per[source]-1 or nil
+        r.Retained=nil
+        return r
+    end
+    local function retire(self,handle,rec,now)
+        local work=self.IncomingWork
+        if not (rec.Launched and rec.Damage and rec.Speed>0) then work.discarded=work.discarded+1;return end
+        local per=self.RetainedPerSource[handle] or 0
+        if #self.Retained>=MAX_RETAINED or per>=MAX_PER_SOURCE then
+            -- A known hit is never dropped silently: its target cannot be certified until it lands.
+            work.overflow=work.overflow+1
+            local target=self.Handles[rec.Target]
+            local land=target and target.pos and self:RetainedImpact(rec,target,target.pos,now)
+            if land then
+                local hold=self.IncomingOverflow;local expires=now+land
+                if (hold[rec.Target] or -math.huge)<expires then hold[rec.Target]=expires end
+            end
+            return
+        end
+        self.RetainedSerial=self.RetainedSerial+1
+        rec.Retained=true;rec.AttackerHandle=handle;rec.Key=-self.RetainedSerial
+        self.Retained[#self.Retained+1]=rec;self.RetainedPerSource[handle]=per+1
+        work.retained=work.retained+1
+    end
+    function health:BeginIncoming(now)
+        if self.IncomingSources==nil or (self.IncomingClock and now<self.IncomingClock) then self:ResetIncoming() end
+        self.IncomingClock=now
+        self.IncomingPass=(self.IncomingPass or 0)+1
+    end
+    -- Called for each fresh ActiveAttacks record of this farm tick.
+    function health:ObserveIncoming(handle,obj,attack,now)
+        local sources=self.IncomingSources
+        local rec=sources[handle];local castEnd=attack.CastEndTime;local net=obj.networkID
+        if rec and (rec.Target~=attack.Target or rec.SourceNet~=net or math.abs(rec.CastEnd-castEnd)>SAME_CAST) then
+            retire(self,handle,rec,now);rec=nil
+        end
+        if rec==nil then
+            -- The same cast reported again after a gap continues its retained record.
+            if self.RetainedPerSource[handle] then
+                local list=self.Retained
+                for i=1,#list do
+                    local r=list[i]
+                    if r.AttackerHandle==handle and r.Target==attack.Target and r.SourceNet==net
+                        and math.abs(r.CastEnd-castEnd)<=SAME_CAST then rec=removeRetained(self,i);break end
+                end
+            end
+            rec=rec or {Target=attack.Target,SourceNet=net,CastEnd=castEnd}
+            sources[handle]=rec
+        end
+        rec.Pass=self.IncomingPass;rec.Speed=attack.Speed
+        rec.StartTime=attack.StartTime;rec.WindUpTime=attack.WindUpTime
+        rec.EndTime=attack.EndTime;rec.AnimationTime=attack.AnimationTime;rec.CastEndTime=castEnd
+        if not rec.Launched and now>=castEnd then
+            rec.Launched=true;self.IncomingWork.launches=self.IncomingWork.launches+1
+            local target=attack.Speed>0 and self.Handles[attack.Target]
+            local pos=target and obj.pos
+            if pos then
+                rec.X,rec.Z,rec.TargetNet=pos.x,pos.z,target.networkID
+                rec.Damage=self:GetIncomingDamage(handle,obj,attack.Target,target)
+            end
+        end
+        attack.SourceNet=net;attack.TargetNet=rec.TargetNet
+    end
+    -- Our own ranged shot is one committed event, never an NPC-style repeat.
+    -- A send request is insufficient: require the native attack to persist past
+    -- its cast end, exactly as the incoming-source launch witness above does.
+    function health:ObserveOwnIncoming(now)
+        local hero=env.hero
+        if not env.attack or not hero or hero.dead or hero.handle==nil or hero.networkID==nil then return end
+        local s=hero.activeSpell
+        if not (s and s.valid and (s.isAutoAttack or env.isAttack and env.isAttack(s.name))) then return end
+        local castEnd,endTime=s.castEndTime,s.endTime
+        if type(castEnd)~='number' or castEnd~=castEnd or castEnd<=0 or castEnd>now
+            or type(endTime)~='number' or endTime~=endTime or endTime>=math.huge or endTime<=now then return end
+        local target=self.Handles[s.target]
+        if not target or target.dead or target.networkID==nil then return end
+        local speed=env.attack:GetProjectileSpeed(s)
+        if type(speed)~='number' or speed~=speed or speed<=0 or speed>=math.huge then return end
+        local windup=env.attack:GetWindup()
+        if type(windup)~='number' or windup~=windup or windup<0 or windup>=math.huge then return end
+        local a=self.OwnIncomingAttack or {};self.OwnIncomingAttack=a
+        a.Target=s.target;a.CastEndTime=castEnd;a.Speed=speed;a.WindUpTime=windup
+        a.StartTime=castEnd-windup;a.EndTime=endTime;a.AnimationTime=s.animation
+        self:ObserveIncoming(hero.handle,hero,a,now)
+        local rec=self.IncomingSources[hero.handle]
+        if rec and rec.Launched and rec.Damage and rec.TargetNet then
+            rec.Retained=true;rec.Own=true;rec.AttackerHandle=hero.handle
+            self.ActiveAttacks[hero.handle]=rec
+        end
+    end
+    -- Retire sources not observed this tick and prune landed or orphaned hits.
+    function health:FinishIncoming(now)
+        self:ObserveOwnIncoming(now)
+        local pass=self.IncomingPass
+        for handle,rec in pairs(self.IncomingSources) do
+            if rec.Pass~=pass then self.IncomingSources[handle]=nil;retire(self,handle,rec,now) end
+        end
+        local list,handles,work=self.Retained,self.Handles,self.IncomingWork
+        local i=1
+        while i<=#list do
+            local r=list[i];local target=handles[r.Target]
+            local pos=target and not target.dead and target.pos
+            local land=pos and self:RetainedImpact(r,target,pos,now)
+            if land and land>0 then i=i+1 else removeRetained(self,i);work.landed=work.landed+1 end
+        end
+        for target,expires in pairs(self.IncomingOverflow) do
+            if expires<=now then self.IncomingOverflow[target]=nil end
+        end
+        if self.PrepareTurretMissiles then self:PrepareTurretMissiles(now) end
+    end
     function health:GetIncoming(handle)
         self.PredictionWork=self.PredictionWork or {indexVisits=0,candidates=0,queries=0}
         local work=self.PredictionWork
@@ -13134,12 +13567,23 @@ return function(cached, item, health, orb, input, env)
             for id,attack in pairs(self.ActiveAttacks) do
                 work.indexVisits=work.indexVisits+1
                 local target=attack.Target
-                if target then
+                if target and not (self.TurretMissileReplaces and self:TurretMissileReplaces(id,attack)) then
                     local bucket=self.IncomingIndex[target]
                     if not bucket then bucket={};self.IncomingIndex[target]=bucket end
                     bucket[id]=attack
                 end
             end
+            local retained=self.Retained
+            for i=1,retained and #retained or 0 do
+                local attack=retained[i]
+                work.indexVisits=work.indexVisits+1
+                if not (self.TurretMissileReplaces and self:TurretMissileReplaces(attack.AttackerHandle,attack)) then
+                    local bucket=self.IncomingIndex[attack.Target]
+                    if not bucket then bucket={};self.IncomingIndex[attack.Target]=bucket end
+                    bucket[attack.Key]=attack
+                end
+            end
+            if self.IndexTurretMissiles then self:IndexTurretMissiles(self.IncomingIndex,work) end
             -- Empty target buckets do not grow across a long session.
             for id,bucket in pairs(self.IncomingIndex) do if next(bucket)==nil then self.IncomingIndex[id]=nil end end
             self.IncomingReady=true
@@ -13151,7 +13595,792 @@ return function(cached, item, health, orb, input, env)
 end
 
 end)()
-prepare(Cached, Item, Health, Orbwalker, Cursor, {clock=GetTickCount, time=GameTimer, slots=ItemSlots, keys=ItemKeys, control=Control, tco=HK_TCO, combo=ORBWALKER_MODE_COMBO, hero=myHero})
+prepare(Cached, Item, Health, Orbwalker, Cursor, {clock=GetTickCount, time=GameTimer, slots=ItemSlots, keys=ItemKeys, control=Control, tco=HK_TCO, combo=ORBWALKER_MODE_COMBO, harass=ORBWALKER_MODE_HARASS, lastHit=ORBWALKER_MODE_LASTHIT, laneClear=ORBWALKER_MODE_LANECLEAR, jungleClear=ORBWALKER_MODE_JUNGLECLEAR, hero=myHero, attack=Attack, isAttack=function(name)return type(name)=="string" and Data:IsAttack(name)end})
+local installTurret = (function()
+-- Allied turret projectiles supplement native casts when the host exposes the
+-- missile but no usable activeSpell. All timings and speeds come from the host.
+return function(health,env)
+    local game,hero=env.game,env.hero
+    local MAX_SCAN,MAX_TRACKED=64,16
+    -- Captured in FamilyTelemetry-v2-1020:3719 and -977:13033 respectively.
+    local attacks={TurretBasicAttack=true,Jade_TurretBasicAttack=true}
+    local tracked,pairsBySource,uncertain,nativeCounts={},{},{},{}
+    local sourceNets,targetNets={},{}
+    local trackedCount,clock,scanCursor=0,nil,1
+    local slots,slotSeen={},{}
+    local function finite(n) return type(n)=='number' and n==n and n>-math.huge and n<math.huge end
+    local function object(o) return type(o)=='table' or type(o)=='userdata' end
+    local function point(p) return object(p) and finite(p.x) and finite(p.z) and p end
+    local function clear(t) for k in pairs(t) do t[k]=nil end end
+    local function remove(id) tracked[id]=nil;trackedCount=trackedCount-1 end
+    local function launched(a,now)
+        local t=a.CastEndTime or a.StartTime and a.WindUpTime and a.StartTime+a.WindUpTime
+        return finite(t) and t<=now
+    end
+    local function unknownFlights(now)
+        for _,r in pairs(tracked) do
+            if r.Expires and now<r.Expires then uncertain[r.Target]=true end
+        end
+    end
+    health.TurretMissileUncertain=uncertain
+    health.TurretMissileWork={reads=0,moving=0,replaced=0,overflow=0}
+    function health:PrepareTurretMissiles(now)
+        local work=self.TurretMissileWork
+        work.reads,work.moving,work.replaced,work.overflow=0,0,0,0
+        clear(uncertain)
+        clear(sourceNets);clear(targetNets)
+        for _,targets in pairs(pairsBySource) do clear(targets) end
+        for _,targets in pairs(nativeCounts) do clear(targets) end
+        if clock and now<clock then clear(tracked);trackedCount=0 end
+        clock=now
+        for _,r in pairs(tracked) do r.Ready=false;r.Seen=false end
+        -- No host missile enumeration when there is no relevant source or flight.
+        if not self.AllyTurret and trackedCount==0 then return end
+        if type(game.MissileCount)~='function' or type(game.Missile)~='function' then unknownFlights(now);return end
+        local ok,count=pcall(game.MissileCount)
+        if not ok or not finite(count) or count<0 or count%1~=0 then unknownFlights(now);return end
+        local complete=count<=MAX_SCAN
+        if not complete then work.overflow=work.overflow+1 end
+        clear(slots);clear(slotSeen)
+        local budget=math.min(count,MAX_SCAN)
+        -- Remembered slots keep live flights fresh before bounded discovery.
+        -- Identity is still checked below because enumeration slots can change.
+        for _,r in pairs(tracked) do
+            local slot=r.Slot
+            if slot and slot<=count and not slotSeen[slot] then
+                slots[#slots+1]=slot;slotSeen[slot]=true
+            end
+        end
+        if count>0 then
+            local visited=0
+            scanCursor=(scanCursor-1)%count+1
+            while #slots<budget and visited<count do
+                local slot=scanCursor
+                scanCursor=scanCursor%count+1;visited=visited+1
+                if not slotSeen[slot] then slots[#slots+1]=slot;slotSeen[slot]=true end
+            end
+        end
+        for _,slot in ipairs(slots) do
+            work.reads=work.reads+1
+            local read,m=pcall(game.Missile,slot)
+            if not read or not object(m) then m=nil;complete=false end
+            local id=m and (m.networkID or m.handle)
+            local md=m and m.missileData
+            if not finite(id) or id<=0 then id=nil end
+            if not object(md) then md=nil end
+            if id and md and attacks[md.name] and (m.name==nil or m.name==md.name)
+                and not (tracked[id] and tracked[id].Seen) then
+                local owner,target=self.Handles[md.owner],self.Handles[md.target]
+                local r=tracked[id]
+                local sourceOK=owner and owner.type==env.turretType and owner.team==hero.team
+                local targetOK=target and target.team==env.enemyTeam and not target.dead
+                    and target.valid~=false and target.alive~=false
+                    and finite(target.networkID) and target.networkID>0 and target.handle==md.target
+                local p,start=point(m.pos),point(md.startPos)
+                local speed=md.speed
+                if m.dead~=true and targetOK and p and start and finite(speed) and speed>0
+                    and (sourceOK or r and owner==nil) then
+                    if r and (r.AttackerHandle~=md.owner or r.Target~=md.target
+                        or r.TargetNet~=target.networkID or owner and r.SourceNet~=owner.networkID
+                        or r.OriginX~=start.x or r.OriginZ~=start.z or r.Name~=md.name) then
+                        remove(id);r=nil
+                    end
+                    if not r and sourceOK and owner.networkID~=nil then
+                        if trackedCount>=MAX_TRACKED then
+                            -- Expired stationary wrappers cannot occupy every
+                            -- slot while new real shots are being discovered.
+                            for oldID,old in pairs(tracked) do
+                                if not old.Ready and old.Expires and now>=old.Expires then remove(oldID);break end
+                            end
+                        end
+                        if trackedCount<MAX_TRACKED then
+                            self.RetainedSerial=(self.RetainedSerial or 0)+1
+                            r={Retained=true,Missile=true,Key=-self.RetainedSerial,
+                                AttackerHandle=md.owner,SourceNet=owner.networkID,
+                                Target=md.target,TargetNet=target.networkID,Name=md.name,
+                                OriginX=start.x,OriginZ=start.z,X=p.x,Z=p.z,CastEnd=now,
+                                Speed=speed,Damage=self:GetIncomingDamage(md.owner,owner,md.target,target)}
+                            local tp=point(target.pos)
+                            if tp then
+                                local dx,dz=tp.x-p.x,tp.z-p.z
+                                r.Expires=now+math.sqrt(dx*dx+dz*dz)/speed
+                            end
+                            tracked[id]=r;trackedCount=trackedCount+1
+                        else uncertain[md.target]=true;work.overflow=work.overflow+1 end
+                    end
+                    if r then
+                        -- valid=false is observed throughout real flights. Require
+                        -- forward motion in two samples instead of trusting it.
+                        local tp=point(target.pos)
+                        if tp and now>r.CastEnd and (p.x~=r.X or p.z~=r.Z) then
+                            local dx,dz=tp.x-p.x,tp.z-p.z
+                            local oldx,oldz=tp.x-r.X,tp.z-r.Z
+                            if dx*dx+dz*dz<oldx*oldx+oldz*oldz then
+                                r.Moving=true;r.CastEnd=now;r.X=p.x;r.Z=p.z;r.Speed=speed
+                                r.Expires=now+math.sqrt(dx*dx+dz*dz)/speed
+                            else r.Moving=false;r.CastEnd=now;r.X=p.x;r.Z=p.z end
+                        end
+                        r.Seen=true;r.Slot=slot
+                        local impact=tp and self:RetainedImpact(r,target,tp,now)
+                        r.Ready=r.Moving==true and finite(r.Damage) and r.Damage>0 and impact and impact>0
+                            and r.Expires~=nil and now<r.Expires
+                        if not r.Ready and r.Expires and now<r.Expires then uncertain[r.Target]=true end
+                        if r.Ready then
+                            local targets=pairsBySource[r.AttackerHandle]
+                            if not targets then targets={};pairsBySource[r.AttackerHandle]=targets end
+                            targets[r.Target]=(targets[r.Target] or 0)+1
+                            sourceNets[r.AttackerHandle]=r.SourceNet;targetNets[r.Target]=r.TargetNet
+                            work.moving=work.moving+1
+                        end
+                    end
+                elseif r then remove(id) end
+            elseif id and tracked[id] and not tracked[id].Seen then remove(id) end
+        end
+        for id,r in pairs(tracked) do
+            if not r.Seen then
+                if complete or r.Expires and now>=r.Expires then remove(id)
+                else
+                    r.Ready=false
+                    if r.Expires and now<r.Expires then uncertain[r.Target]=true end
+                end
+            end
+        end
+        -- Each exact owner/target pair uses moving missiles for launched shots,
+        -- and native casts for windups. No estimated cast-to-missile time join.
+        local function countNative(source,a)
+            local targets=pairsBySource[source]
+            if targets and targets[a.Target] and sourceNets[source]==a.SourceNet
+                and targetNets[a.Target]==a.TargetNet and launched(a,now) then
+                local counts=nativeCounts[source]
+                if not counts then counts={};nativeCounts[source]=counts end
+                counts[a.Target]=(counts[a.Target] or 0)+1
+            end
+        end
+        for source in pairs(pairsBySource) do
+            local a=self.ActiveAttacks[source]
+            if a then countNative(source,a) end
+        end
+        for _,a in ipairs(self.Retained or {}) do countNative(a.AttackerHandle,a) end
+        for source,targets in pairs(nativeCounts) do
+            for target,n in pairs(targets) do
+                if n>pairsBySource[source][target] then uncertain[target]=true end
+            end
+        end
+        for source,targets in pairs(pairsBySource) do if next(targets)==nil then pairsBySource[source]=nil end end
+        for source,targets in pairs(nativeCounts) do if next(targets)==nil then nativeCounts[source]=nil end end
+    end
+    function health:TurretMissileReplaces(source,attack)
+        local targets=pairsBySource[source]
+        local replaced=targets and targets[attack.Target]~=nil and sourceNets[source]==attack.SourceNet
+            and targetNets[attack.Target]==attack.TargetNet and launched(attack,clock)
+        if replaced then self.TurretMissileWork.replaced=self.TurretMissileWork.replaced+1 end
+        return replaced
+    end
+    function health:IndexTurretMissiles(index,work)
+        for _,r in pairs(tracked) do
+            if r.Ready then
+                local bucket=index[r.Target]
+                if not bucket then bucket={};index[r.Target]=bucket end
+                bucket[r.Key]=r;work.indexVisits=work.indexVisits+1
+            end
+        end
+    end
+end
+
+end)()
+installTurret(Health,{game=Game,hero=myHero,turretType=Obj_AI_Turret,enemyTeam=Data.EnemyTeam})
+end
+
+do
+local farmplan = (function()
+-- Shared last-hit schedule for every champion's basic attack.
+-- Each farm minion gets one window from the forecast's own incoming-hit
+-- timeline: the earliest attack start whose hit is lethal and the latest start
+-- whose hit still lands before allied hits kill it. A bounded search over our
+-- next attacks then decides which confirmed last hit to take now, whether to
+-- wait for a better sequence, and whether a non-farm attack (harass, waveclear,
+-- structure) is spare. Only committed hits and repeats on an attacker's current
+-- target shape a window; an idle ally's possible aggro only marks it uncertain.
+-- The search is bounded by candidates and depth and records truncation; it is
+-- not a proof of the best farm. Dispatch still requires the confirmed
+-- LastHitable forecast.
+return function(health, env)
+    -- One 30 Hz server tick: two hits closer than this have no known order.
+    local MARGIN = 1 / 30
+    local MAX_CANDIDATES, MAX_DEPTH, MAX_INDEX = 5, 3, 128
+    local MAX_MEMBERS = 12
+    local MEMBERSHIP = {1, 2, 4, 8, 16}
+    local huge = math.huge
+
+    -- A witness is installed only by a successful final spell validator. It
+    -- remains inert until its reader finds that exact intent's provider send.
+    -- Readers return nil while waiting, false when invalid, or a sent record.
+    -- The schedule never changes forecast HP or owns an input reservation.
+    local spells, spellClock = {}, nil
+    local function finite(n)
+        return type(n) == 'number' and n == n and n > -huge and n < huge
+    end
+    local function objectLike(unit)
+        local kind = type(unit)
+        return kind == 'table' or kind == 'userdata'
+    end
+    local function refreshSent(rec, sent, now)
+        if type(sent) ~= 'table' or sent.lockUntil ~= nil and not finite(sent.lockUntil) then return false end
+        local rows = sent.members
+        if rows ~= nil and type(rows) ~= 'table' then return false end
+        local n = rows and #rows or 1
+        if n < 1 or n > MAX_MEMBERS then return false end
+        -- Validate the entire receipt before activating any of its members.
+        for j = 1, n do
+            local row = rows and rows[j] or sent
+            if type(row) ~= 'table' or not finite(row.expires) or not objectLike(row.unit)
+                or not finite(row.handle) or not finite(row.net) then return false end
+            for k = 1, j - 1 do
+                local prior = rows and rows[k] or sent
+                if prior.handle == row.handle or prior.net == row.net then return false end
+            end
+        end
+        local stored, changed = rec.sent, false
+        if stored == nil then stored = {members = {}}; rec.sent = stored; changed = true end
+        if stored.n and stored.n ~= n then return false end
+        stored.n = n
+        local active = false
+        for j = 1, n do
+            local row = rows and rows[j] or sent
+            local member = stored.members[j]
+            if member == nil then
+                member = {unit = row.unit, handle = row.handle, net = row.net}
+                stored.members[j] = member
+            end
+            local valid = member.unit == row.unit and member.handle == row.handle and member.net == row.net
+                and row.unit.handle == row.handle and row.unit.networkID == row.net
+                and row.unit.dead ~= true and row.unit.alive ~= false and env.object:IsValid(row.unit)
+                and row.expires > now
+            -- Once a member disappears it cannot be adopted again by this send.
+            if member.active == false then valid = false end
+            if member.active ~= valid or member.expires ~= row.expires then changed = true end
+            member.active, member.expires = valid, row.expires
+            active = active or valid
+        end
+        if stored.lockUntil ~= sent.lockUntil then changed = true end
+        stored.lockUntil = sent.lockUntil
+        return active or (sent.lockUntil or now) > now, changed
+    end
+    local function refreshSpells(self)
+        local now = env.time()
+        if spellClock and now < spellClock then
+            for i = #spells, 1, -1 do spells[i] = nil end
+            self.FarmPlan = nil
+        end
+        spellClock = now
+        for i = #spells, 1, -1 do
+            local rec = spells[i]
+            local ok, sent = pcall(rec.read)
+            local keep, changed = true, false
+            if ok and sent then keep, changed = refreshSent(rec, sent, now) end
+            if not ok or sent == false or not keep then
+                table.remove(spells, i); self.FarmPlan = nil
+            elseif sent then
+                if changed then self.FarmPlan = nil end
+            elseif rec.sent then
+                table.remove(spells, i); self.FarmPlan = nil
+            end
+        end
+    end
+    function health:TrackFarmSpell(intent, read)
+        if type(read) ~= 'function' then return false end
+        refreshSpells(self)
+        for i = 1, #spells do if spells[i].intent == intent then return true end end
+        if #spells >= MAX_CANDIDATES then return false end
+        spells[#spells + 1] = {intent = intent, read = read}
+        return true
+    end
+    local function claimed(unit)
+        if not unit then return false end
+        local now = env.time()
+        for i = 1, #spells do
+            local sent = spells[i].sent
+            if sent then
+                for j = 1, sent.n do
+                    local member = sent.members[j]
+                    if member.active and now < member.expires and unit.handle == member.handle
+                        and unit.networkID == member.net then return true end
+                end
+            end
+        end
+        return false
+    end
+    function health:IsFarmSpellClaimed(unit)
+        refreshSpells(self)
+        return claimed(unit)
+    end
+    function health:FarmSpellLockRemaining()
+        refreshSpells(self)
+        local now, remaining = env.time(), 0
+        for i = 1, #spells do
+            local sent = spells[i].sent
+            if sent and finite(sent.lockUntil) then remaining = math.max(remaining, sent.lockUntil - now) end
+        end
+        return remaining
+    end
+
+    local collector = {n = 0, t = {}, d = {}, c = {}}
+    function collector:Add(t, d, c)
+        local n = self.n + 1
+        self.n = n; self.t[n] = t; self.d[n] = d; self.c[n] = c
+    end
+
+    -- Window in attack-start offsets from now, optionally with one extra hit of
+    -- ours (a waveclear attack) landing at extraT. Events are flat and sorted.
+    local function window(entry, extraT, extraD)
+        local events, damage, land = entry.PlanEvents, entry.Damage, entry.Time
+        local h = entry.PlanHealth
+        local release = h - damage <= 0 and 0 or nil
+        local i, n, pendingExtra = 1, #events, extraT ~= nil
+        while i <= n or pendingExtra do
+            local t, d
+            if pendingExtra and (i > n or extraT <= events[i]) then
+                t, d, pendingExtra = extraT, extraD, false
+            else
+                t, d = events[i], events[i + 1]; i = i + 2
+            end
+            h = h - d
+            if release == nil and h - damage <= 0 then release = t + MARGIN end
+            if h <= 0 then
+                return release and release - land, t - MARGIN - land
+            end
+        end
+        return release and release - land, huge
+    end
+
+    -- Called by SetLastHitable inside the farm loop's shared attacker scope.
+    function health:AddFarmWindow(entry, anim)
+        if self.FarmProjectileSpeedKnown==false then entry.PlanUncertain=true;return end
+        if entry.Unkillable or entry.Damage == nil or entry.IsSennaSoul then return end
+        local target = entry.Minion
+        local c = collector
+        c.n = 0; c.overflow = nil
+        self:LocalGetPrediction(target, entry.Time + MAX_DEPTH * anim, c)
+        local uncertain = c.overflow == true
+        -- Insertion sort by impact time; a target has only a few incoming hits.
+        local order = {}
+        for k = 1, c.n do
+            if c.c[k] == 3 then
+                uncertain = true
+            else
+                local j = #order
+                while j > 0 and c.t[order[j]] > c.t[k] do order[j + 1] = order[j]; j = j - 1 end
+                order[j + 1] = k
+            end
+        end
+        local events = {}
+        for j = 1, #order do
+            local k = order[j]
+            events[#events + 1] = c.t[k]; events[#events + 1] = c.d[k]
+        end
+        entry.PlanEvents = events
+        entry.PlanHealth = self.TargetsHealth[target.handle]
+        entry.PlanValue = 4 - self:GetFarmTargetPriority(entry)
+        entry.PlanUncertain = uncertain
+        entry.PlanOverflow = c.overflow == true
+        local start, deadline = window(entry)
+        -- The confirmed forecast certifies a hit started now. An allied hit
+        -- within MARGIN of ours still leaves its deadline at or below zero.
+        if entry.LastHitable then start = 0 end
+        entry.PlanStart, entry.PlanDeadline = start, deadline
+    end
+
+    local setLastHitable = health.SetLastHitable
+    function health:SetLastHitable(target, anim, time, damage)
+        local entry = setLastHitable(self, target, anim, time, damage)
+        self:AddFarmWindow(entry, anim)
+        return entry
+    end
+
+    -- Seconds until our next attack can start, read like Attack:IsReady.
+    local function readyIn(now)
+        local attack = env.attack
+        if attack:IsReady() then return 0 end
+        local base = attack.CastEndTime > attack.LocalStart and attack.ServerStart - env.latency() or attack.LocalStart
+        local wait = base + attack:GetAnimation() - now
+        return wait > 0 and wait or 0
+    end
+
+    -- Most last hits, then most of the minions that would otherwise die to
+    -- allied hits, then value.
+    local function better(c, u, v, bc, bu, bv)
+        return c > bc or (c == bc and (u > bu or (u == bu and v > bv)))
+    end
+
+    -- Best schedule of up to depth attacks starting no earlier than offset at.
+    -- alt replaces one entry's window (or adds it when alt.extra).
+    local function search(plan, used, at, depth, skip, alt, required, capture)
+        local covered = true
+        if required then
+            for i = 1, plan.n do if required[i] and not used[i] then covered = false; break end end
+        end
+        if depth == 0 then return covered and 0 or -huge, 0, 0 end
+        local list, period = plan.list, plan.period
+        local bestCount, bestUrgent, bestValue = covered and 0 or -huge, 0, 0
+        local bestPath
+        for i = 1, plan.n + ((alt and alt.extra) and 1 or 0) do
+            if not used[i] and i ~= skip and not (type(skip) == 'table' and skip[i]) then
+                plan.nodes = plan.nodes + 1
+                local e = list[i] or alt.entry
+                local s, dl = e.PlanStart, e.PlanDeadline
+                if alt and alt.entry == e then s, dl = alt.start, alt.deadline end
+                if s ~= nil then
+                    if at > s then s = at end
+                    if s < dl then
+                        used[i] = true
+                        local count, urgent, value, path = search(plan, used, s + period, depth - 1, skip, alt, required, capture)
+                        used[i] = false
+                        count, value = count + 1, value + e.PlanValue
+                        if dl < huge then urgent = urgent + 1 end
+                        if better(count, urgent, value, bestCount, bestUrgent, bestValue) then
+                            bestCount, bestUrgent, bestValue = count, urgent, value
+                            if capture then bestPath = MEMBERSHIP[i] + (path or 0) end
+                        end
+                    end
+                end
+            end
+        end
+        return bestCount, bestUrgent, bestValue, bestPath
+    end
+
+    -- Planned minions that die to allied hits inside the horizon.
+    local function doomed(plan, alt)
+        local n = 0
+        for i = 1, plan.n do
+            local e = plan.list[i]
+            local dl = (alt and alt.entry == e) and alt.deadline or e.PlanDeadline
+            if dl < huge then n = n + 1 end
+        end
+        if alt and alt.extra and alt.deadline < huge then n = n + 1 end
+        return n
+    end
+
+    function health:CanReachFarmMinion(unit)
+        local object = env.object
+        return object:IsValid(unit) and (env.data:IsInAutoAttackRange(env.hero, unit)
+            or (object.IsAzir and env.champion:IsInAzirSoldierRange(unit)))
+    end
+
+    -- Cursor dispatch precedes Health:OnTick. A rescue query during that phase
+    -- must fall back to its caller rather than use last frame's forecast.
+    function health:MarkFarmForecast(now)
+        self.FarmForecastTime=now
+        self.FarmForecastEpoch=env.epoch and env.epoch()or now
+    end
+
+    -- One plan per farm tick; Health:OnTick clears it.
+    function health:GetFarmPlan()
+        local lock = self:FarmSpellLockRemaining()
+        local plan = self.FarmPlan
+        -- IsReady consumes reset evidence. Reuse this tick's plan rather than
+        -- asking it again on every spare/rescue query.
+        if plan then return plan end
+        local ready = math.max(readyIn(env.time()), lock)
+        plan = {list = {}, spare = {}, n = 0, nodes = 0, truncated = false, ready = ready,
+            period = env.attack:GetAnimation()}
+        local list = plan.list
+        local waiting = self:ShouldWait()
+        for i = 1, #self.FarmMinions do
+            local e = self.FarmMinions[i]
+            if not claimed(e.Minion) and self:CanReachFarmMinion(e.Minion) then
+                -- Idle aggro cannot certify a last hit, but it can make spending
+                -- our attack unsafe. Preserve the old speculative hold separately.
+                if e.PlanUncertain and (waiting or e.AlmostLastHitable or e.AlmostAlmost or e.PlanOverflow) then
+                    plan.uncertainWait = true
+                end
+                if e.PlanStart ~= nil and e.PlanDeadline > plan.ready then list[#list + 1] = e end
+            end
+        end
+        table.sort(list, function(a, b)
+            if a.PlanDeadline ~= b.PlanDeadline then return a.PlanDeadline < b.PlanDeadline end
+            return a.Minion.handle < b.Minion.handle
+        end)
+        if #list > MAX_CANDIDATES then
+            plan.truncated = true
+            for i = #list, MAX_CANDIDATES + 1, -1 do list[i] = nil end
+        end
+        plan.n = #list
+        plan.bestCount, plan.bestUrgent, plan.bestValue, plan.baselineMask = search(plan, {}, plan.ready, MAX_DEPTH, nil, nil, nil, true)
+        plan.lost = doomed(plan) - plan.bestUrgent
+        self.FarmPlan = plan
+        return plan
+    end
+
+    -- The confirmed last hit to attack now, or nil when waiting collects more.
+    function health:PlanLastHitTarget()
+        local plan = self:GetFarmPlan()
+        if plan.lastHit ~= nil then return plan.lastHit or nil end
+        local result, rc, ru, rv, ro, rp, rh, soul
+        for i = 1, #self.FarmMinions do
+            local e = self.FarmMinions[i]
+            local unit = e.Minion
+            if e.LastHitable and not claimed(unit) and self:CanReachFarmMinion(unit) then
+                if e.IsSennaSoul then
+                    soul = soul or unit
+                elseif e.PlanStart ~= nil then
+                    local skip
+                    for k = 1, plan.n do if plan.list[k] == e then skip = k end end
+                    local count, urgent, value = search(plan, {}, plan.ready + plan.period, MAX_DEPTH - 1, skip)
+                    -- A hit tied with an allied kill is taken only when it costs nothing.
+                    local own = e.PlanDeadline > plan.ready
+                    if own then
+                        count, value = count + 1, value + e.PlanValue
+                        if e.PlanDeadline < huge then urgent = urgent + 1 end
+                    end
+                    local priority, hp = self:GetFarmTargetPriority(e), e.PredictedHP or huge
+                    local tied = count == rc and urgent == ru and value == rv
+                    if result == nil or better(count, urgent, value, rc, ru, rv)
+                        or (tied and own and not ro)
+                        or (tied and own == ro and (priority < rp or (priority == rp and hp < rh))) then
+                        result, rc, ru, rv, ro, rp, rh = unit, count, urgent, value, own, priority, hp
+                    end
+                end
+            end
+        end
+        if result and (rc < plan.bestCount or (rc == plan.bestCount and ru < plan.bestUrgent)) then
+            -- A later window keeps more last hits than any hit now.
+            plan.wait = true
+            result = nil
+        elseif result == nil and soul and self:FarmSpare(soul) then
+            result = soul
+        end
+        plan.lastHit = result or false
+        return result
+    end
+
+    local function rescue(self, plan, unit, impact, castLock)
+        local handle, net, e = unit.handle, unit.networkID, nil
+        for i = 1, #self.FarmMinions do
+            local m = self.FarmMinions[i].Minion
+            if m and m.handle == handle and m.networkID == net then e = self.FarmMinions[i]; break end
+        end
+        if e == nil or e.IsSennaSoul or e.PlanEvents == nil then return nil, 'not_planned' end
+        -- The schedule does not model approach; the caller's rule does.
+        if not self:CanReachFarmMinion(e.Minion) then return nil, 'out_of_range' end
+        if e.PlanOverflow then return false, 'incoming_overflow' end
+        local deadline = e.PlanDeadline
+        if deadline == huge then return false, 'not_dying' end
+        local latest=deadline+e.Time
+        if impact~=nil and impact>latest then return false,'lands_late' end
+        if plan.truncated then return nil,'truncated' end
+        local k
+        for i = 1, plan.n do if plan.list[i] == e then k = i end end
+        local reason = 'aa_cannot_take'
+        if k then
+            reason = 'aa_loses_it'
+        elseif e.PlanStart ~= nil and deadline > plan.ready then
+            return nil, 'truncated'
+        end
+        -- A known cast lock ends before flight. Unknown timing retains the
+        -- conservative impact wait. Both overlap the existing attack cooldown.
+        local ready=math.max(plan.ready,castLock or impact or 0)
+        if k or ready>plan.ready then
+            plan.used=plan.used or {}
+            local count,urgent=search(plan,plan.used,ready,MAX_DEPTH,k)
+            if count<plan.bestCount or urgent<plan.bestUrgent then return false,'aa_takes_it' end
+        end
+        -- This query does not claim the minion. Only a sent, validated spell
+        -- can remove it from a later attack decision.
+        if e.LastHitable and deadline>plan.ready and self:PlanLastHitTarget() == e.Minion then return false, 'aa_next' end
+        return true, reason, deadline + e.Time
+    end
+
+    -- Whether a spell kill of unit adds a last hit the basic-attack schedule
+    -- does not collect. true: without unit the schedule keeps its best count
+    -- and its collected dying minions, our next attack is not going to unit,
+    -- and a spell landing in impact seconds (optional) beats the allied kill.
+    -- castLock optionally supplies a known cast duration, excluding flight;
+    -- unknown timing retains the conservative wait until impact.
+    -- false: the schedule needs unit, unit is not dying inside the horizon,
+    -- its incoming hits overflowed or the spell lands too late. nil: unknown
+    -- (not a planned farm entry, out of attack range, truncated, query budget
+    -- spent); the caller keeps its own rule. Lethality is the caller's
+    -- confirmed forecast; this only weighs our attacks. No claim, no input:
+    -- memoised in the current plan, at most MAX_CANDIDATES queries and
+    -- searches (<= 85 nodes each) per plan. Different impact/lock timings use
+    -- distinct query budget.
+    function health:FarmRescue(unit, impact, castLock)
+        if impact~=nil and(type(impact)~='number'or impact~=impact or impact<0 or impact==huge)then return false,'lands_late' end
+        if castLock~=nil and(not finite(castLock)or castLock<0)then return false,'invalid_cast_lock'end
+        if not unit or unit.handle == nil or unit.networkID == nil then return nil, 'not_planned' end
+        if self:IsFarmSpellClaimed(unit) then return false,'spell_sent'end
+        local now=env.time()
+        local epoch=env.epoch and env.epoch()or now
+        if self.FarmForecastTime~=now or self.FarmForecastEpoch~=epoch then return nil,'forecast_not_current' end
+        local plan = self:GetFarmPlan()
+        local memo = plan.queries
+        if memo == nil then memo = {}; plan.queries = memo end
+        local rec
+        for i = 1, #memo do
+            local candidate = memo[i]
+            if candidate.kind == 'single' and candidate.handle == unit.handle and candidate.net == unit.networkID
+                and candidate.impact == impact and candidate.castLock == castLock then rec = candidate; break end
+        end
+        if rec == nil then
+            if #memo >= MAX_CANDIDATES then return nil, 'query_budget' end
+            local value, reason, latest = rescue(self, plan, unit, impact, castLock)
+            rec = {kind = 'single', handle = unit.handle, net = unit.networkID, impact=impact,
+                castLock=castLock, value = value, reason = reason, latest = latest}
+            memo[#memo + 1] = rec
+        end
+        if rec.value and impact ~= nil and not (impact <= rec.latest) then return false, 'lands_late' end
+        return rec.value, rec.reason
+    end
+
+    -- Resolve members once per plan. This cap applies only to set certification;
+    -- ordinary attack preparation and selection retain their existing behavior.
+    local function indexFarmMinions(self, plan)
+        if plan.memberIndex then return plan.memberIndex end
+        local index = {}
+        plan.memberIndex = index
+        if #self.FarmMinions > MAX_INDEX then plan.indexOverflow = true end
+        for i = 1, math.min(#self.FarmMinions, MAX_INDEX) do
+            local e = self.FarmMinions[i]
+            local unit = e.Minion
+            if unit and unit.handle ~= nil then
+                if index[unit.handle] then plan.indexOverflow = true else index[unit.handle] = e end
+            end
+        end
+        return index
+    end
+
+    local function killSet(self, plan, rows, castLock, policy)
+        local index = indexFarmMinions(self, plan)
+        if plan.indexOverflow then return nil, 'member_index_overflow' end
+        local skip, required, urgent, latestImpact = {}, {}, 0, 0
+        local unknown, refusal
+        for j = 1, #rows do
+            local row = rows[j]
+            local e = index[row.handle]
+            if not e or e.Minion ~= row.unit or e.Minion.networkID ~= row.net
+                or e.IsSennaSoul or e.PlanEvents == nil then
+                unknown = unknown or 'not_planned'
+            elseif not self:CanReachFarmMinion(e.Minion) then
+                unknown = unknown or 'out_of_range'
+            elseif not finite(e.Time) or e.Time < 0 or not (finite(e.PlanDeadline) or e.PlanDeadline == huge) then
+                unknown = unknown or 'not_planned'
+            else
+                if e.PlanOverflow then refusal = refusal or 'incoming_overflow'
+                elseif e.PlanUncertain then unknown = unknown or 'forecast_uncertain' end
+                -- PlanDeadline already removes the server-tick ordering margin.
+                if row.impact > e.PlanDeadline + e.Time then refusal = refusal or 'lands_late' end
+                local hp = self:GetPrediction(row.unit, row.impact)
+                if not finite(hp) then unknown = unknown or 'forecast_uncertain'
+                elseif hp <= 0 or hp > row.damage then refusal = refusal or 'not_lethal' end
+                if e.PlanDeadline < huge then urgent = urgent + 1 end
+                latestImpact = math.max(latestImpact, row.impact)
+                local represented = false
+                for i = 1, plan.n do if plan.list[i] == e then skip[i] = true; represented = true; break end end
+                -- A window already lost to cooldown is still a spell rescue.
+                if not represented and e.PlanStart ~= nil and e.PlanDeadline > plan.ready then unknown = unknown or 'not_planned' end
+            end
+        end
+        if unknown then return nil, unknown end
+        if refusal then return false, refusal end
+        if plan.truncated then return nil, 'truncated' end
+        if plan.uncertainWait then return nil, 'forecast_uncertain' end
+        for i = 1, plan.n do
+            if math.floor((plan.baselineMask or 0) / MEMBERSHIP[i]) % 2 == 1
+                and plan.list[i].PlanDeadline < huge and not skip[i] then required[i] = true end
+        end
+        local ready = math.max(plan.ready, castLock or latestImpact)
+        local count, dying = search(plan, {}, ready, MAX_DEPTH, skip, nil, required)
+        if count + #rows < plan.bestCount or dying + urgent < plan.bestUrgent then return false, 'farm_loss' end
+        if policy == 'rescue' and dying + urgent <= plan.bestUrgent then return false, 'no_rescue_gain' end
+        return true, 'farm_preserved'
+    end
+
+    function health:GetFarmKillSetCapabilities()
+        return {maxMembers = MAX_MEMBERS}
+    end
+
+    -- A pure preservation comparison for an adapter's confirmed lethal set.
+    -- Unknown never grants permission to cast; the adapter owns its fallback.
+    function health:FarmKillSet(rows, castLock, policy)
+        if type(rows) ~= 'table' or #rows < 1 then return false, 'invalid_members' end
+        if #rows > MAX_MEMBERS then return nil, 'member_overflow' end
+        if policy ~= 'preserve' and policy ~= 'rescue' then return false, 'invalid_policy' end
+        if castLock ~= nil and (not finite(castLock) or castLock < 0) then return false, 'invalid_cast_lock' end
+        for i = 1, #rows do
+            local row = rows[i]
+            if type(row) ~= 'table' or not objectLike(row.unit) or not finite(row.handle) or not finite(row.net)
+                or not finite(row.impact) or row.impact < 0 or not finite(row.damage) or row.damage <= 0
+                or row.unit.handle ~= row.handle or row.unit.networkID ~= row.net then return false, 'invalid_member' end
+            for j = 1, i - 1 do
+                if rows[j].handle == row.handle or rows[j].net == row.net then return false, 'duplicate_member' end
+            end
+        end
+        refreshSpells(self)
+        for i = 1, #rows do if claimed(rows[i].unit) then return false, 'spell_sent' end end
+        local now = env.time()
+        local epoch = env.epoch and env.epoch() or now
+        if self.FarmForecastTime ~= now or self.FarmForecastEpoch ~= epoch then return nil, 'forecast_not_current' end
+        local plan = self:GetFarmPlan()
+        local memo = plan.queries
+        if memo == nil then memo = {}; plan.queries = memo end
+        for i = 1, #memo do
+            local rec = memo[i]
+            if rec.kind == 'set' and rec.castLock == castLock and rec.policy == policy and #rec.rows == #rows then
+                local same = true
+                for j = 1, #rows do
+                    local row, found = rows[j], false
+                    for k = 1, #rec.rows do
+                        local cached = rec.rows[k]
+                        if cached.unit == row.unit and cached.handle == row.handle and cached.net == row.net
+                            and cached.impact == row.impact and cached.damage == row.damage then found = true; break end
+                    end
+                    if not found then same = false; break end
+                end
+                if same then return rec.value, rec.reason end
+            end
+        end
+        if #memo >= MAX_CANDIDATES then return nil, 'query_budget' end
+        local value, reason = killSet(self, plan, rows, castLock, policy)
+        local copy = {}
+        for i = 1, #rows do
+            local row = rows[i]
+            copy[i] = {unit = row.unit, handle = row.handle, net = row.net, impact = row.impact, damage = row.damage}
+        end
+        memo[#memo + 1] = {kind = 'set', rows = copy, castLock = castLock, policy = policy, value = value, reason = reason}
+        return value, reason
+    end
+
+    -- Whether our next attack can go to a non-last-hit target without losing a
+    -- collectible last hit or leaving one more minion to die to allied hits.
+    -- unit is the intended target (hero, structure or minion); our hit on a
+    -- farm minion moves that minion's own window, possibly into the plan.
+    function health:FarmSpare(unit)
+        if self:IsFarmSpellClaimed(unit) then return false end
+        local plan = self:GetFarmPlan()
+        local key = unit or false
+        if plan.spare[key] ~= nil then return plan.spare[key] end
+        if plan.uncertainWait then plan.spare[key] = false; return false end
+        local alt
+        if unit then
+            for i = 1, #self.FarmMinions do
+                local e = self.FarmMinions[i]
+                if e.Minion == unit and e.PlanEvents then
+                    local start, deadline = window(e, plan.ready + e.Time, e.Damage)
+                    alt = {entry = e, start = start, deadline = deadline, extra = true}
+                    for k = 1, plan.n do if plan.list[k] == e then alt.extra = false end end
+                end
+            end
+        end
+        if plan.bestCount == 0 and (alt == nil or alt.deadline == huge) then plan.spare[key] = true; return true end
+        local count, urgent = search(plan, {}, plan.ready + plan.period, MAX_DEPTH, nil, alt)
+        local spare = count >= plan.bestCount and doomed(plan, alt) - urgent <= plan.lost
+        plan.spare[key] = spare
+        return spare
+    end
+end
+
+end)()
+farmplan(Health, {time=GameTimer, epoch=function() return Cursor.TickSerial end, attack=Attack, data=Data, object=Object, champion=ChampionInfo, hero=myHero, latency=function() return Data:GetLatency() end})
 end
 
 _G.SDK = {
@@ -13185,19 +14414,39 @@ _G.SDK = {
 	ORBWALKER_MODE_JUNGLECLEAR = ORBWALKER_MODE_JUNGLECLEAR,
 	ORBWALKER_MODE_LASTHIT = ORBWALKER_MODE_LASTHIT,
 	ORBWALKER_MODE_FLEE = ORBWALKER_MODE_FLEE,
-	IsRecalling = function(unit)
-		if unit == nil then
-			return false
-		end
-		if Buff:HasBuff(unit, "recall") then
-			return true
-		end
-		local as = unit.activeSpell
-		if as and as.valid and as.name == "recall" then
-			return true
-		end
-		return false
-	end,
+	IsRecalling = (function()
+-- One own-channel guard for the orbwalker, controllers and utilities.
+return function(buffManager,recall)
+ return function(unit,fresh)
+  if not unit then return false end
+  local cast=unit.activeSpell
+  if cast and cast.valid==true and recall.IsName(cast.name)then return true end
+  if fresh then
+   -- Dispatch reads cannot reuse a buff snapshot from before the last input.
+   local count=unit.buffCount
+   if type(count)~='number'or count~=count or count<0 or count>128 or count%1~=0 or not unit.GetBuff then return false end
+   for i=0,count do
+    local b=unit:GetBuff(i)
+    if b and type(b.count)=='number'and b.count>0 and recall.IsName(b.name)then return true end
+   end
+  else
+   local buffs=buffManager:GetBuffs(unit)
+   for i=1,#(buffs or {})do
+    local b=buffs[i]
+    if type(b.count)=='number'and b.count>0 and recall.IsName(b.name)then return true end
+   end
+  end
+  return false
+ end
+end
+
+end)()(Buff,(function()
+-- Native recall identities shared by tracking and every own-channel guard.
+local M={names={recall=true,recallimproved=true,superrecall=true}}
+function M.IsName(name)return type(name)=='string'and M.names[name:lower()]==true end
+return M
+
+end)()),
 }
 
 --[[tickTest = 2
@@ -13354,7 +14603,7 @@ Callback.Add("Load", function()
         Cursor.Timing.enabled=not Cursor.GGCompatible and (Menu.Main.OrbamaLua.AutoMovementTiming:Value() or Menu.Main.OrbamaLua.LearnMoves:Value())
         Cursor.Timing.removeSecondWait=not Cursor.GGCompatible and Menu.Main.OrbamaLua.ReleaseGapTrial:Value() and Cursor.ReleaseGapValidated==true
         Cursor.DetailedDiagnostics=Menu.Main.OrbamaLua.DetailedInput:Value()
-        Cursor.DiagnosticsEnabled=({}).enabled==true
+        Cursor.DiagnosticsEnabled=(_G.OrbamaFamily and _G.OrbamaFamily.active~=false and _G.OrbamaFamily.diagnostics and _G.OrbamaFamily.diagnostics.enabled==true and not _G.OrbamaFamily.diagnostics.closed) or (not _G.OrbamaFamily and false) or false
 		SDK.Preparation:BeginTick()
 		Cached:Reset()
 		SDK.Projectiles:Invalidate()
@@ -13747,7 +14996,7 @@ return function(input, clock, selectCandidate)
             jobCancelledAt=a.cancelledAt,cancellationReason=a.cancellationReason,
             descendantsCancelledAt=a.descendantsCancelledAt,descendantsCancellationReason=a.descendantsCancellationReason,interrupted=r.interrupted,competitor=r.competitor,
             resolution=input.ResolutionSnapshot and input:ResolutionSnapshot(r),positionPasses=r.positionPasses,aim=copy(r.aim),retryAfter=r.retryAfter,positionedAt=r.positionedAt,acquiredAt=r.acquiredAt,
-            commandReceipt=a.type=='cast' and not r.submissionFailed and copy(r.commandReceipt) or nil,
+            commandReceipt=(a.type=='cast' or a.type=='chord') and not r.submissionFailed and copy(r.commandReceipt) or nil,
             interferenceID=r.interferenceID,interferenceAt=r.interferenceAt,interferenceCause=r.interferenceCause,
             generation=r.generation,mechanical=copy(a.mechanical),effect=copy(a.effect),
             resultRetained=a.retainResult==true,acknowledgedAt=a.acknowledgedAt,
@@ -13821,6 +15070,77 @@ return function(input, clock, selectCandidate)
         if not r.sentAt and r.state~='aborted' then r.state='aborted';r.abortedAt=clock();r.reason=why;input:record('aborted',r,why) end
         a.cancelled=true;a.cancelledAt=a.cancelledAt or clock();a.cancellationReason=a.cancellationReason or why
     end
+    -- A chord reserves the existing input owner, without acquiring the cursor.
+    -- Only the final key commits a command. Modifier preparation stays unsent.
+    local function chordOwned(r,key)
+        local lease=r.keyLeases and r.keyLeases[key]
+        return lease and (input.KeysOwned[key]==r.owner and input.KeyLeases and input.KeyLeases[key]==lease
+            or input.PendingUp[key] and input.PendingUp[key].owner==r.owner and input.PendingUp[key].lease==lease)
+    end
+    function input:ReleaseChord(r,why,finalCleanup)
+        if self.Active~=r then return end
+        r.chordPhase='cleanup';r.reason=why or r.reason
+        if not r.sentAt then
+            local a=api.actions[r.id];if a then abort(a,r.reason or 'chord_cancelled')end
+        end
+        -- Keep the modifier until the command key is actually released. Existing
+        -- PendingUp retries remain bounded and keep this same lease exclusive.
+        for i=2,1,-1 do
+            local key=r.keys[i]
+            if chordOwned(r,key) then
+                if not self.PendingUp[key]or finalCleanup then self:ReleaseKey(key,r.owner,r,r.keyLeases[key],finalCleanup)end
+                if chordOwned(r,key)then return end
+            end
+        end
+        self.Active=nil;self.Step=0;self.ActionScreen=nil
+        self.NotBefore=clock();self.Timer=self.NotBefore;r.releasedAt=clock()
+        self:record('released',r,r.reason)
+    end
+    function input:AdvanceChord()
+        local r=self.Active;if not r or not r.chordPhase then return end
+        if r.chordPhase=='cleanup'then self:ReleaseChord(r);return end
+        local a=api.actions[r.id];local scope=a and api.scopes[a.scope]
+        if not a or a.cancelled or not scope or scope.closed or not self:valid(r) then
+            self:ReleaseChord(r,r.reason or 'chord_context_ended');return
+        end
+        if clock()>=r.chordDeadline then self:ReleaseChord(r,'chord_modifier_unconfirmed');return end
+        if self.TickSerial<=r.chordTick or clock()<r.chordReadyAt then return end
+        local modifier=r.keys[1];local ok,held=pcall(self.env.isDown,modifier)
+        if not ok or held~=true then return end
+        if not chordOwned(r,modifier)or self.Physical[modifier]or self.Physical[r.keys[2]]then
+            self:ReleaseChord(r,'chord_ownership_lost');return
+        end
+        -- A host read can invoke callbacks. Recheck ownership/context before the
+        -- one final-key attempt; no retries after that attempt, even on error.
+        if self.Active~=r or not self:valid(r)then self:ReleaseChord(r,r.reason);return end
+        ok,held=pcall(self.env.isDown,modifier)
+        if not ok or held~=true or self.Active~=r or not chordOwned(r,modifier)then
+            self:ReleaseChord(r,'chord_modifier_lost');return
+        end
+        r.chordPhase='command'
+        local worked,sent=pcall(self.PulseKeys,self,r.keys[2],r.owner,r)
+        if not worked or not sent then
+            if r.sentAt then r.submissionFailed=true;r.reason='send_uncertain'
+            else r.reason='chord_command_declined'end
+        end
+        self:ReleaseChord(r,r.reason or 'chord_complete')
+    end
+    function input:BeginChord(r)
+        if self.Active or self.Step>0 or not self:valid(r)then return false end
+        if type(self.env.isDown)~='function'then r.reason='chord_native_state_unavailable';return false end
+        local ok,held=pcall(self.env.isDown,r.keys[1])
+        if not ok or held~=false then r.reason='chord_modifier_not_released';return false end
+        self.Active=r;self.Step=1;r.chordPhase='modifier';r.acquiredAt=clock()
+        r.chordTick=self.TickSerial;r.chordReadyAt=clock()+30
+        r.chordDeadline=math.min(r.expires,clock()+125)
+        local worked,sent=pcall(self.AcquireKey,self,r.keys[1],r.owner,r)
+        if not worked or not sent or self.Active~=r or not chordOwned(r,r.keys[1])then
+            if self.Active==r then self:ReleaseChord(r,'chord_modifier_declined')end
+            return false
+        end
+        self:record('chord_modifier',r,'Preparation only; waiting for a later native held sample')
+        return true
+    end
     local function dependencyGrantValid(token,scope,id,owner)
         local grant=api.dependencyGrants[token]
         local source=grant and api.actions[grant.source]
@@ -13882,6 +15202,25 @@ return function(input, clock, selectCandidate)
         if grant.actionID then self:Cancel(grant.borrower,grant.actionID,why or 'dependency_grant_revoked') end
         self.dependencyGrants[token]=nil;return true
     end
+    -- Finish the existing held-key lease, not a new input action. Failed native
+    -- releases stay pending; publish cleanup only after this lease is gone.
+    local function releaseHeld(a,why)
+        local r=a.record;local key=r.keys[1];local lease=r.keyLease
+        a.releaseReason=a.releaseReason or why
+        if input.KeyLeases and input.KeyLeases[key]==lease and not input.PendingUp[key] then
+            input:ReleaseKey(key,r.owner,nil,lease)
+        end
+        local pending=input.PendingUp[key]
+        if input.KeyLeases and input.KeyLeases[key]==lease or pending and pending.lease==lease then
+            a.releasePending=true;return false
+        end
+        a.releaseDeadline=nil;a.releasePending=nil
+        if not r.heldReleaseReported then
+            r.releasedAt=clock();r.heldReleaseReported=true
+            input:record('released',r,a.releaseReason or 'held_key_released')
+        end
+        return true
+    end
     function api:Cancel(scope,id,why)
         local a=self.actions[id];if not a or a.scope~=scope then return false,'unknown_action' end
         abort(a,why or 'cancelled')
@@ -13889,11 +15228,10 @@ return function(input, clock, selectCandidate)
         a.descendantsCancellationReason=a.descendantsCancellationReason or why or 'cancelled'
         local r=a.record
         if a.type=='charge_begin' and r.keyLease then
-            input:ReleaseKey(r.keys[1],r.owner,nil,r.keyLease)
-            a.releaseDeadline=nil;r.releasedAt=clock()
+            releaseHeld(a,why or 'cancelled')
         end
         if input.Active and input.Active.followup==r then input.Active.followup=nil end
-        if input.Active==r and not r.sentAt then input:release(why or 'cancelled') end
+        if input.Active==r and (not r.sentAt or r.chordPhase) then input:release(why or 'cancelled') end
         -- A sent command keeps its stabilization phase. Only unsent descendants stop.
         for _,b in pairs(self.actions) do if b.dependency==id then self:Cancel(b.scope,b.record.id,why) end end
         return true,r.sentAt and 'already_sent' or 'cancelled_before_send'
@@ -14019,7 +15357,7 @@ return function(input, clock, selectCandidate)
                 or channelSource.channelGrant.actionID or not self:ChannelGrantValid(channelSource) then return nil,'invalid_channel_grant' end
         end
         if (q.type=='key' or q.type=='cast' or q.type=='chord' or q.type=='key_down' or q.type=='key_up') and #keys==0 then return nil,'key_required' end
-        if q.type=='chord' and #keys~=2 then return nil,'invalid_chord' end
+        if q.type=='chord' and (#keys~=2 or keys[1]==keys[2]) then return nil,'invalid_chord' end
         local dependencyGrant
         if q.dependencyGrant then
             dependencyGrant=dependencyGrantValid(q.dependencyGrant,scope,q.dependency,q.owner or 'default')
@@ -14124,7 +15462,7 @@ return function(input, clock, selectCandidate)
             or evidence.at<a.record.sentAt or evidence.at>clock() then return false,'invalid_evidence' end
         if evidence.attribution=='command_key' then
             local receipt=a.record.commandReceipt
-            if evidence.kind~='mechanical' or a.type~='cast' or a.record.submissionFailed or not receipt
+            if evidence.kind~='mechanical' or (a.type~='cast'and a.type~='chord') or a.record.submissionFailed or not receipt
                 or evidence.key~=receipt.key or evidence.generation~=receipt.generation
                 or evidence.session~=receipt.session or clock()>receipt.expiresAt
                 or input:CommandGeneration(receipt.key)~=receipt.generation then
@@ -14161,6 +15499,7 @@ return function(input, clock, selectCandidate)
         input.ResolutionPass=(input.ResolutionPass or 0)+1
         local ok,err=pcall(function()
             self:Prune()
+            if input.Active and input.Active.chordPhase then return end
             -- waitBlock: the last reason a queued action was not dispatched (diagnostics only).
             if not input:Available() or input.Uncertain then
                 if #self.queue>0 then
@@ -14250,14 +15589,11 @@ return function(input, clock, selectCandidate)
                             and input.KeyLeases and input.KeyLeases[r.keys[1]]==r.keyLease then
                             a.releaseDeadline=math.min(r.expires,clock()+(a.maxChargeMs or 500))
                         elseif sent then
-                            input:ReleaseKey(r.keys[1],r.owner,r,r.keyLease)
-                            r.releasedAt=clock();sent=false
+                            releaseHeld(a,'held_key_acquisition_ended');sent=false
                         end
                     elseif a.type=='key_up' then sent=input:ReleaseKey(r.keys[1],r.owner,r)
                     else
-                        sent=input:AcquireKey(r.keys[1],r.owner,r)
-                        if sent then sent=input:PulseKeys(r.keys[2],r.owner,r) end
-                        if not input:ReleaseKey(r.keys[1],r.owner,r) then sent=false end
+                        return input:BeginChord(r)
                     end
                     if a.type~='charge_begin' then r.releasedAt=clock() end
                     return sent
@@ -14324,14 +15660,13 @@ return function(input, clock, selectCandidate)
         -- names and modes; the next Request resumes the ordinary lifecycle.
         if not next(self.actions) and not next(self.sequences) and #self.queue==0 then return end
         for _,a in pairs(self.actions) do
-            if a.type=='charge_begin' and a.releaseDeadline then
+            if a.type=='charge_begin' and a.releaseDeadline and not a.releasePending then
                 local ok,allowed=pcall(a.chargeContinue)
                 if not ok or allowed~=true or a.record.generation~=input.Generation then self:Cancel(a.scope,a.record.id,'charge_context_ended') end
             end
-            if a.releaseDeadline and (not input.KeyLeases or input.KeyLeases[a.record.keys[1]]~=a.record.keyLease
+            if a.releasePending or a.releaseDeadline and (not input.KeyLeases or input.KeyLeases[a.record.keys[1]]~=a.record.keyLease
                 or clock()>=a.releaseDeadline) then
-                input:ReleaseKey(a.record.keys[1],a.record.owner,nil,a.record.keyLease);a.releaseDeadline=nil
-                a.record.releasedAt=clock()
+                releaseHeld(a,'held_key_ended')
             end
         end
         for _,seq in pairs(self.sequences) do self:Advance(seq) end
@@ -16652,6 +17987,7 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
   local d=s:Facade();local scale=self:Scale();local size=math.floor((r.size or 14)*scale)
   if r.valid then local ok,current=pcall(r.valid);if not ok then error(current)end;if not current then return end end
   local x,y=r.x,r.y
+  if r.kind=='path'then return self:Path(r,d,scale,size)end
   if r.anchor=='world'or r.anchor=='minimap'then local p=self:RecordProjection(r,now);if not p then return end;x,y=p.x,p.y end
   if r.kind=='status'then return end
    if r.kind=='detail'and r.lines then
@@ -16711,11 +18047,38 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
     else d.Text(r.timerText..'s',size,x,y+extent,d.Color(225,190,200,210))end
    elseif r.anchor=='minimap'then self:Reserve('portrait:'..s.owner..':'..r.id,x,y,extent,extent)end
   elseif r.kind=='ward'then
-   local extent=(r.anchor=='minimap'and 5 or 9)*scale
-   d.Rect(x-extent/2,y-extent/2,extent,extent,d.Color(210,100,225,205))
-   if r.anchor~='minimap'and r.expiresAt and r.timer then local seconds=math.max(0,math.ceil(r.expiresAt-now));if r.seconds~=seconds then r.seconds=seconds;r.timerText=seconds..'s'end;self:Label(r,x+8*scale,y,r.timerText,size,d)end
-   if r.anchor~='minimap'and r.text and r.text~=''then self:Label(r,x,y-size-10*scale,r.text,size,d)end
-   if r.radius and r.anchor~='minimap'then d.Circle(g.Vector(r.pos),r.radius,1,d.Color(100,100,225,205))end
+   local minimap=r.anchor=='minimap';local extent=(minimap and 8 or 18)*scale
+   -- Cull the vision circle separately: its visible edge can outlive the glyph.
+   if r.radius and not minimap and self:CircleVisible(r.pos.x,r.pos.y or 0,r.pos.z,r.radius)then
+    d.Circle(g.Vector(r.pos),r.radius,1,r.enemy and d.Color(120,230,60,60)or d.Color(100,80,170,255))
+   end
+   if not minimap then local vw,vh=self:Viewport();if x<-extent or y<-extent or x>vw+extent or y>vh+extent*2 then return end end
+   local eye=self:WardGlyph(r,x,y,extent,minimap,d)
+   if not minimap and r.timer then
+    -- Remaining lifetime from the observed expiry; '?' when it is not known.
+    -- Control wards and Farsight wards do not expire, so they show no timer.
+    local text
+    if r.expiresAt then
+     local seconds=math.max(0,math.ceil(r.expiresAt-now))
+     if r.seconds~=seconds then r.seconds=seconds;r.timerText=seconds>=60 and string.format('%d:%02d',math.floor(seconds/60),seconds%60)or seconds..'s'end
+     text=r.timerText
+    elseif not r.permanent then text='?'end
+    if text then self:Label(r,x+extent/2+3*scale,eye-size/2,text,size,d,d.Color(250,250,250,250))end
+   end
+   if not minimap and r.text and r.text~=''then self:Label(r,x-extent/2,eye-extent/2-size-4*scale,r.text,size,d)end
+  elseif r.kind=='level'then
+   -- Level below the champion; the progress bar only with a credible XP fraction.
+   if r.levelValue~=r.level then r.levelValue=r.level;r.levelText='Lv '..tostring(r.level)end
+   local w,h=self:Measure(r.levelText,size);local bar=finite(r.progress)and math.max(w,36*scale)or nil
+   local width=bar or w;local px,py=self:Place(r.id,x-width/2,y+6*scale,width,h+(bar and 5*scale or 0),r.priority)
+   if not px then return end
+   d.Text(r.levelText,size,px+(width-w)/2,py,r.enemy and d.Color(245,255,170,170)or d.Color(245,190,235,255))
+   if bar then
+    local top=py+h+scale;local height=math.max(2,math.floor(3*scale+.5))
+    d.Rect(px,top,bar,height,d.Color(190,12,10,18))
+    local fill=math.floor(bar*clamp(r.progress,0,1)+.5)
+    if fill>=1 then d.Rect(px,top,fill,height,d.Color(235,165,110,255))end
+   end
   elseif r.kind=='damage'then
     local drawn,x,y,anchor=damageDrawing(g,d,r,scale,function(pos)return self:Project(pos)end)
     local metrics=self.metrics
@@ -16759,18 +18122,27 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
   for name,t in pairs(PANEL)do p[name]=color(t[1],t[2],t[3],t[4])end
   self.panelPalette=p;return p
  end
- function O:PanelGeometry(rows,scale)
+ -- Two panels side by side (player request 2026-10-29): allies, including the
+ -- player, on the left; enemies on the right, at the HUD border as before. A
+ -- panel without rows takes no space, so hiding one team leaves no gap. The
+ -- returned x, y, width and height bound both panels; both are bottom-aligned.
+ function O:PanelGeometry(rows,scale,allies)
+  allies=allies or 0
   local g0=self.panelGeometry
   local vw,vh=self:Viewport();local side=self.menu and self.menu.MinimapSide:Value()
   local classic=self:Classic();local hudScale=(display and display.settings or {}).globalscale
-  if g0 and g0.rows==rows and g0.scale==scale and g0.vw==vw and g0.vh==vh and g0.side==side and g0.classic==classic and g0.hudScale==hudScale then return g0 end
+  if g0 and g0.rows==rows and g0.allies==allies and g0.scale==scale and g0.vw==vw and g0.vh==vh and g0.side==side and g0.classic==classic and g0.hudScale==hudScale then return g0 end
   local px=function(n)return math.floor(n*scale+.5)end
-  local geo={rows=rows,scale=scale,vw=vw,vh=vh,side=side,classic=classic,hudScale=hudScale,cw=px(22),ch=px(16),gap=math.max(1,px(2)),pad=px(4),portrait=px(18),row=px(20),
-   font=math.max(9,px(12)),small=math.max(8,px(10)),letter=math.max(8,px(9)),line=math.max(1,px(2))}
-  geo.width=geo.pad*2+geo.portrait+geo.gap*3+4*(geo.cw+geo.gap)+geo.gap*2+2*(geo.ch+geo.gap)-geo.gap
+  local geo={rows=rows,allies=allies,scale=scale,vw=vw,vh=vh,side=side,classic=classic,hudScale=hudScale,cw=px(22),ch=px(16),gap=math.max(1,px(2)),pad=px(4),portrait=px(18),row=px(20),
+   font=math.max(9,px(12)),small=math.max(8,px(10)),letter=math.max(8,px(9)),line=math.max(1,px(2)),split=px(4)}
+  geo.panelWidth=geo.pad*2+geo.portrait+geo.gap*3+4*(geo.cw+geo.gap)+geo.gap*2+2*(geo.ch+geo.gap)-geo.gap
   -- One header line of Q W E R letters above the spell columns.
   geo.header=geo.letter+geo.gap
-  geo.height=geo.pad*2+geo.header+rows*geo.row-(rows>0 and(geo.row-geo.portrait)or 0)
+  local function height(n)return n>0 and geo.pad*2+geo.header+n*geo.row-(geo.row-geo.portrait)or 0 end
+  geo.enemyHeight,geo.allyHeight=height(rows),height(allies)
+  local panels=(rows>0 and 1 or 0)+(allies>0 and 1 or 0)
+  geo.width=panels>0 and panels*geo.panelWidth+(panels-1)*geo.split or geo.panelWidth
+  geo.height=math.max(geo.enemyHeight,geo.allyHeight)
   -- Right edge beside the bottom HUD: the measured HUD when the display matches
   -- the recorded calibration, else the same measurement scaled by height (the
   -- HUD scales with height; recorded left edge 1200 px left of centre at 2160).
@@ -16787,6 +18159,8 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
    -- Above the HUD it also clears the buff-icon row over the panel's left part (~60 px at 2160).
    if geo.x<floor then geo.x=math.max(margin,edge);geo.y=top-math.floor(60*vh/2160*math.max(1,hudScale or 1))-margin-geo.height end
   end
+  geo.allyX=geo.x;geo.enemyX=geo.x+(allies>0 and geo.panelWidth+geo.split or 0)
+  geo.allyY=geo.y+geo.height-geo.allyHeight;geo.enemyY=geo.y+geo.height-geo.enemyHeight
   self.panelGeometry=geo;return geo
  end
  -- The panel's draw list is computed only when what it shows can change: a new
@@ -16810,26 +18184,34 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
   if began then local t=self.timing;t.batch=t.batch+cpu()-began end
   self.metrics.primitives=self.metrics.primitives+batch.n
  end
+ local EMPTY={}
  function O:CooldownPanel(r,d,now,scale)
-  local rows=r.rows;if not rows or #rows==0 then return end
-  local geo=self:PanelGeometry(#rows,scale);local c=self:PanelPalette(g.Draw.Color)
+  local rows,allies=r.rows or EMPTY,r.allyRows or EMPTY;if #rows==0 and #allies==0 then return end
+  local geo=self:PanelGeometry(#rows,scale,#allies);local c=self:PanelPalette(g.Draw.Color)
   local batch=self.panelBatch;if not batch then batch={n=0};self.panelBatch=batch end
   if batch.record~=r or batch.version~=r.version or batch.geo~=geo or batch.palette~=c or batch.assets~=self.assetRevision or now>=batch.nextAt then
-   self:BuildPanel(batch,r,rows,geo,c,now,scale)
+   self:BuildPanel(batch,r,allies,rows,geo,c,now,scale)
   end
-  self:Reserve(r.id,geo.x,geo.y,geo.width,geo.height)
+  if #allies>0 then self:Reserve(r.id..':allies',geo.allyX,geo.allyY,geo.panelWidth,geo.allyHeight)end
+  if #rows>0 then self:Reserve(r.id,geo.enemyX,geo.enemyY,geo.panelWidth,geo.enemyHeight)end
   if self.collecting and d._scope then self:Queue(d._scope,'Batch',self.forcedLayer or 4,batch)
   else self:DrawBatch(batch)end
  end
- function O:BuildPanel(batch,r,rows,geo,c,now,scale)
+ function O:BuildPanel(batch,r,allies,rows,geo,c,now,scale)
   batch.n=0;batch.record=r;batch.version=r.version;batch.geo=geo;batch.palette=c;batch.assets=self.assetRevision
+  batch.nextAt=math.min(self:BuildSide(batch,allies,geo.allyX,geo.allyY,geo.allyHeight,geo,c,now,scale),
+   self:BuildSide(batch,rows,geo.enemyX,geo.enemyY,geo.enemyHeight,geo,c,now,scale))
+ end
+ -- Appends one panel at (x0,y0) to the batch; returns when its draw list changes next.
+ function O:BuildSide(batch,rows,x0,y0,height,geo,c,now,scale)
+  if #rows==0 then return math.huge end
   local nextAt=math.huge
   local iconKeys=self.panelIconKeys;if not iconKeys then iconKeys={};self.panelIconKeys=iconKeys end
-  emit(batch,BATCH_RECT,geo.x,geo.y,geo.width,geo.height,c.bg)
-  local y=geo.y+geo.pad
+  emit(batch,BATCH_RECT,x0,y0,geo.panelWidth,height,c.bg)
+  local y=y0+geo.pad
   -- Column letters once for the panel instead of one per cell (live 2026-10-11:
   -- every native primitive costs render time, about 45 us each).
-  local hx=geo.x+geo.pad+geo.portrait+geo.gap*3
+  local hx=x0+geo.pad+geo.portrait+geo.gap*3
   for _,letter in ipairs(LETTERS)do
    local tw=self:PanelText(letter,geo.letter)
    emit(batch,BATCH_TEXT,letter,geo.letter,hx+(geo.cw-tw)/2,y-scale,c.letter)
@@ -16838,8 +18220,8 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
   y=y+geo.header
   for _,row in ipairs(rows)do
    local alpha=row.dead and 110 or row.visible and 240 or 170
-   emit(batch,BATCH_BADGE,row.name,geo.x+geo.pad,y,geo.portrait,alpha,nil)
-   local x=geo.x+geo.pad+geo.portrait+geo.gap*3
+   emit(batch,BATCH_BADGE,row.name,x0+geo.pad,y,geo.portrait,alpha,nil)
+   local x=x0+geo.pad+geo.portrait+geo.gap*3
    local top=y+math.floor((geo.portrait-geo.ch)/2)
    for _,v in ipairs(row.cells)do
     local summoner=v.slot>=4;local w=summoner and geo.ch or geo.cw
@@ -16883,12 +18265,49 @@ return function(g,sdk,menu,migration,display,calibration,minimapFactory,damageDr
    end
    y=y+geo.row
   end
-  batch.nextAt=nextAt
+  return nextAt
  end
- function O:Label(r,x,y,text,size,d)
+ function O:Label(r,x,y,text,size,d,color)
   if text==''then return end
   local w,h=self:Measure(text,size);local px,py=self:Place(r.id,x,y,w,h,r.priority,r.anchor=='minimap')
-  if px then d.Text(text,size,px,py,r.color or d.Color(225,180,200,210))end
+  if px then d.Text(text,size,px,py,color or r.color or d.Color(225,180,200,210))end
+ end
+ -- Ward glyph in the team colour (enemy red, ally blue). World: a ward totem, an
+ -- octagonal eye on a short post standing on the ward's ground point (x,y), with
+ -- a pupil whose colour tells the type (gold: control ward, light blue: Farsight).
+ -- Minimap: the octagon centred on the point. Returns the eye's centre height.
+ function O:WardGlyph(r,x,y,extent,minimap,d)
+  local fill=r.enemy and d.Color(240,225,40,45)or d.Color(240,55,150,255)
+  local thin=math.max(2,math.floor(extent*.6+.5));local e=math.max(3,math.floor(extent+.5))
+  if not minimap then
+   local post=math.max(2,math.floor(extent*.25+.5));local height=math.floor(extent*.6+.5)
+   d.Rect(x-post/2,y-height,post,height,fill);y=y-height-e/2
+  end
+  d.Rect(x-e/2,y-thin/2,e,thin,fill);d.Rect(x-thin/2,y-e/2,thin,e,fill)
+  if minimap then return y end
+  local pupil=math.max(2,math.floor(extent*.34+.5))
+  local color=r.wardKind=='VisionWard'and d.Color(255,255,215,70)or r.wardKind=='Farsight'and d.Color(255,170,225,255)or d.Color(255,20,12,16)
+  d.Rect(x-pupil/2,y-pupil/2,pupil,pupil,color)
+  return y
+ end
+ -- Native movement path: a polyline from the champion (r.unit) or the first
+ -- point through the waypoints r.points[r.from..] (world), with the label at the
+ -- destination. The publisher revalidates the path; this only projects and draws.
+ function O:Path(r,d,scale,size)
+  local points=r.points;local first=r.from or 1
+  if type(points)~='table'or not points[first]then return end
+  local minimap=r.anchor=='minimap';local where=minimap and 'minimap'or 'world'
+  local start=r.unit and r.unit.pos or points[first]
+  local from=self:Project(start,where);if not from then return end
+  local color=r.enemy and d.Color(215,235,70,70)or d.Color(190,90,225,130)
+  local width=minimap and 1 or math.max(1,math.floor(2*scale+.5))
+  local last=from
+  for i=r.unit and first or first+1,math.min(#points,first+15)do
+   local p=self:Project(points[i],where)
+   if not p then return end
+   d.Line(last.x,last.y,p.x,p.y,width,color);last=p
+  end
+  if not minimap and r.text and r.text~=''then self:Label(r,last.x+4*scale,last.y-size/2,r.text,size,d,color)end
  end
  -- Status chips. A chip's text and width are rebuilt only when its label, binds
  -- or reason change. One background strip per line and one indicator per chip

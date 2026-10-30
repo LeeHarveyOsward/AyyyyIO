@@ -31,7 +31,18 @@ function M.Prepare(g,prediction,scope,unit,spell,spec,anchor)
  if not finite(body)or body<0 or body>300 then return nil,'recall_target_radius_unknown'end
  local velocity=spell.Motion and spell.Motion.maxSpeed or spell.Speed
  if not(spec.selfCast and velocity==math.huge)and(not finite(velocity)or velocity<=0)then return nil,'recall_projectile_speed_unknown'end
- local contactMargin=spec.selfCast and 0 or ((spell.Radius or 0)+body+(spell.AimErrorWorld or 0))/velocity
+ local footprint=(spell.Radius or 0)+body+(spell.AimErrorWorld or 0)
+ local contactMargin=spec.selfCast and 0 or footprint/velocity
+ if spell.Motion and not spec.selfCast then
+  -- Contact can straddle a speed transition. Integrate the leading edge with
+  -- the same flight clock as the centre, rather than using maximum speed.
+  local origin=g.myHero.pos;local span=distance(origin,base.pos)
+  local fraction=span>0 and math.max(0,span-footprint)/span or 0
+  local edge={x=origin.x+(base.pos.x-origin.x)*fraction,y=origin.y or 0,z=origin.z+(base.pos.z-origin.z)*fraction}
+  local edgeFlight=prediction:GetImpactTime(spell,edge,origin)
+  if not finite(edgeFlight)or edgeFlight<0 or edgeFlight>flight then return nil,'recall_contact_time_unknown'end
+  contactMargin=flight-edgeFlight
+ end
  local arrival=now+flight
  local earliest=recall.ends+.06+contactMargin
  local latest=earliest+.10

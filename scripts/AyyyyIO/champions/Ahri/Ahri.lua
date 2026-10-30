@@ -21,19 +21,19 @@ modules.ahriProfile=(function(require) return _G.OrbamaFamily:Factory("30d95faa8
 modules.kogmawProfile=(function(require) return _G.OrbamaFamily:Factory("309e64d13d66b4a917814dd40e811f4f7a34102f488bc17c6f0c58e6b83cb99a")(require) end)(require)
 modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end)(require)
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
-modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
-modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
+modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("3da377a20f2c2a192efc8343b23fb571f5cda62e822551b4678aab011deb2b69")(require) end)(require)
+modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("3c7cec6192229bd783dbb481829105edbbe5cfcc52fbeae7408eed05670af826")(require) end)(require)
 modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
 modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")
-modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")
+modules["gameplay"]=_G.OrbamaFamily:Require("150735cd6058eefcd206afc8513dde960e1a1f0823bdfd223db9491c39a2f4d8")
 modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("f7d98e88d54ea77cb1c1c4aa026b699688271ff1aa4f6e769036de5dccf63c4f")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -310,18 +310,7 @@ function IsPoison(unit)
 end
 
 function Recalling(unit)
-	local as = unit.activeSpell
-	if as and as.valid and type(as.name)=='string' and as.name:lower():find("recall") then
-		return true
-	end
-	local buffs = GetBuffs(unit)
-	for i = 1, #buffs do
-		local buff = buffs[i]
-		if type(buff.name)=='string' and buff.name:lower():find("recall") then
-			return true
-		end
-	end
-	return false
+    return _G.SDK.IsRecalling(unit,Core.validating==true)
 end
 
 function HasInvalidDashBuff(unit)
@@ -1148,11 +1137,11 @@ function AhriChampion:CanRescue(target,point,preparedDamage)
 	if hp<=0 or hp>damage then return false end
 	local aaRange=myHero.range+myHero.boundingRadius+target.boundingRadius
 	if GetDistance(target.pos,myHero.pos)<=aaRange and sdk.Orbwalker:CanAttack()then
-		local speed=sdk.Attack:GetProjectileSpeed()
-		if type(speed)~='number'or speed<=0 then return false end
-		local aaTime=sdk.Attack:GetWindup()+math.max(0,GetDistance(target.pos,myHero.pos)-myHero.boundingRadius-target.boundingRadius)/speed
-		local aaHP=sdk.HealthPrediction:GetPrediction(target,aaTime)
-		if aaHP>0 and aaHP<=sdk.Damage:GetAutoAttackDamage(myHero,target,true)then return false end
+		local aaTime=Core:AttackImpact(target)
+		if aaTime then
+			local aaHP=sdk.HealthPrediction:GetPrediction(target,aaTime)
+			if aaHP>0 and aaHP<=sdk.Damage:GetAutoAttackDamage(myHero,target,true)then return false end
+		end
 	end
 	return true
 end

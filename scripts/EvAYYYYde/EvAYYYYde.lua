@@ -18,12 +18,12 @@ modules["evade.defense_adapter"] = function(require) return _G.OrbamaFamily:Fact
 modules["evade.defensedata"] = function(require) return _G.OrbamaFamily:Factory("3a68f9351fa9867a7d7971c39c1b51bf9854441600240e71728c433d872b04fc")(require) end
 modules["evade.defenses"] = function(require) return _G.OrbamaFamily:Factory("c3687cc6de9d7f5acae5e3e0a62674b011017f4f8332e9aeedad1f776d21d6d0")(require) end
 modules["evade.diagnostics"] = function(require) return _G.OrbamaFamily:Factory("5121376b92b4403b88aae018da0d094848d1c7c2f3761851c4a5cd79304a7e2b")(require) end
-modules["evade.drawing"] = function(require) return _G.OrbamaFamily:Factory("fa01b612f30950afe47a5713f48dad1785400ed8a2fed32a598aa261bcd6ef7e")(require) end
+modules["evade.drawing"] = function(require) return _G.OrbamaFamily:Factory("77bba880b533c07848d1ee0a6a29a3ec14a498f9181b241552d9dc6521e5fc76")(require) end
 modules["evade.extents"] = function(require) return _G.OrbamaFamily:Factory("110ff465e7cb0846e4724a9c23c58789b630b96868029c5280c464a9d0c90adf")(require) end
 modules["evade.extras"] = function(require) return _G.OrbamaFamily:Factory("2b00007c79080cd2bc8327c0f39f7fe950d8b588a0879d40b0718a01b114e1d3")(require) end
 modules["evade.flash_adapter"] = function(require) return _G.OrbamaFamily:Factory("dc42f826e02797df9cc731f694bb736a6a0e83b1bc69f92cd488f9a1816828c5")(require) end
 modules["evade.flightlog"] = function(require) return _G.OrbamaFamily:Factory("ce65c966c5125173054278175843ddfb6b5a88b3c088ad04f1904b174e18bfb4")(require) end
-modules["evade.geometry"] = function(require) return _G.OrbamaFamily:Factory("5c50d1956477ea4fd6212037e2626b364b0ec77feea3b41bf0a41cdfb3e5eab8")(require) end
+modules["evade.geometry"] = function(require) return _G.OrbamaFamily:Factory("3e037d2ec70b18f74fcbf3b3a1dba4b849374ea9990cb4736e36c951067dfde7")(require) end
 modules["evade.hazards"] = function(require) return _G.OrbamaFamily:Factory("13c43397897a96cc3728524a6ec23663afefbf2a726277506197571000bcfb79")(require) end
 modules["evade.identities"] = function(require) return _G.OrbamaFamily:Factory("8c2da045e1d42134eee456c1f1d99946598da3168270423629e791933452b4ee")(require) end
 modules["evade.impacts"] = function(require) return _G.OrbamaFamily:Factory("6ba7497cffeef1dab310952ce85b8af6d0001746622600a77affba43eb6e8318")(require) end
@@ -50,11 +50,11 @@ modules["evade.untargetable_adapter"] = function(require) return _G.OrbamaFamily
 modules.ActionClient=function(require) return _G.OrbamaFamily:Factory("e80d2d89d6979a56680ad4df176d2d31edbb448d5b2d34c591286a9ce0f7d93f")(require) end
 modules["CombatProfiles.control_window"]=function(require) return _G.OrbamaFamily:Factory("d42fe401457668562d806fcc0b9d7098264e8bdb117a673b06410528d8a56bdf")(require) end
 modules["CombatProfiles.champion_motion"]=function(require) return _G.OrbamaFamily:Factory("a1065fd9c06af1a474441a702bd65f660b7f9d53a9aa919016e0bb00158fafa9")(require) end
-modules["CombatProfiles.projectile_motion"]=function()return _G.OrbamaFamily:Require("2d5cfc805e63c733edec2d00ddd809a46bb9e5db0284653b6674ff4af9615f10")end
+modules["CombatProfiles.projectile_motion"]=function()return _G.OrbamaFamily:Require("06fbdc8a07528935e1404d6223757f86c9a4a58b716fb3fde4e1084e2cd806c2")end
 modules["CombatProfiles.abilities"]=function()return _G.OrbamaFamily:Require("87fc978fa73e523712f1ec719253e8493c20f284d3949f8cbbfb4c93b2998870")end
 modules["CombatProfiles.flash"]=function(require) return _G.OrbamaFamily:Factory("f4b5e27faa780bcc038c7c2f186bcdd6e68f3269056e09bd4c3bea8b38c32151")(require) end
 modules["CombatProfiles.cc_attacks"]=function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end
-modules["CombatProfiles.champion_mechanics"]=function(require) return _G.OrbamaFamily:Factory("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")(require) end
+modules["CombatProfiles.champion_mechanics"]=function(require) return _G.OrbamaFamily:Factory("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")(require) end
 local function load(name) if cache[name]~=nil then return cache[name]end; local f=modules[name]; if not f then return externalRequire(name)end; local v=f(load);cache[name]=v;return v end
 return load("evade.app").boot(_G)
 

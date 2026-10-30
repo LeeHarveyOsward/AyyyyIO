@@ -29,20 +29,9 @@ end
 local function stepTime(s)local step=s.speedStep;return step and step.at/s.speed end
 G.stepTime=stepTime
 function G.travel(s,dt)
-    local step=s.speedStep
-    if step then
-        dt=max(0,dt);local first=step.at/s.speed
-        if dt<=first then return s.speed*dt end
-        return step.at+step.speed*(dt-first)
-    end
     return ProjectileMotion.Travel(s,dt)
 end
 function G.travelTime(s,distance)
-    local step=s.speedStep
-    if step then
-        if distance<=step.at then return max(0,distance)/s.speed end
-        return step.at/s.speed+(distance-step.at)/step.speed
-    end
     return ProjectileMotion.Time(s,distance)
 end
 function G.travelBounds(s,dt)

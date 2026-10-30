@@ -77,7 +77,7 @@ function App:item(slot)
 end
 function App:blocked()return not self:active()or not self.config:get('enabled')or self.g.myHero.dead
     or self.g.Game.IsChatOpen()or not self.g.Game.IsOnTop()end
-function App:recalling()return U.buff(self.g.myHero,{recall=true,recallimproved=true},self:now())~=nil end
+function App:recalling()return self.sdk.IsRecalling(self.g.myHero,true)end
 function App:threats(pos,range)
     local n=0;for _,h in ipairs(self.observations.heroes)do
         if h.team~=self.g.myHero.team and U.valid(h)and U.dist(pos,h.pos)<=range then n=n+1 end

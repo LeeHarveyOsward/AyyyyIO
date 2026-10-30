@@ -6,7 +6,7 @@ if not SDK.Actions or not SDK.Actions.GetCapabilities or not SDK.Actions:GetCapa
  or not SDK.SharedData or not SDK.OnUrgent or not SDK.Attack or not SDK.Damage or not SDK.Damage.GetTwistedFateAttack then
  print("[CardMarx] Required Orbama capabilities unavailable."); return end
 if _G.AyyyyIO and _G.AyyyyIO.active and not _G.AyyyyIO.loading then return _G.AyyyyIO.controller end
-local fingerprint="7a8a33dc261c6d1d7c602d07f5cb0eca386bf028050569f50f2a180738c561ee"
+local fingerprint="c7e1ce93b1b8b846c4d007feb25713bdc4a4fc83aed1f2b561440d71a54015b2"
 local previous=_G.OrbamaTwistedFate
 if previous then
  if previous.active and previous.fingerprint==fingerprint then return previous end
@@ -18,10 +18,10 @@ local externalRequire=require
 modules["tf.actions"] = function(require) return _G.OrbamaFamily:Factory("3fb69422c806610600130c2b6bc9391bb1edfd279ba0d49f1f83fd59d6e173ab")(require) end
 modules["tf.app"] = function(require) return _G.OrbamaFamily:Factory("173b34b19ffb2e1002c4fc75979e8b23761c43a39bbe724f28d5b750d087a1f6")(require) end
 modules["tf.cards"] = function(require) return _G.OrbamaFamily:Factory("2c9fc08c6cc4e20cca4894ce8555a237598d5c139aa717f3070be0ed50bce516")(require) end
-modules["tf.combat"] = function(require) return _G.OrbamaFamily:Factory("9239716bc8ca9516c4dc51f38f93fef482e7e4a31ad2cfcb6aa1f978f0cf0d11")(require) end
+modules["tf.combat"] = function(require) return _G.OrbamaFamily:Factory("e52bb885bb2d0a36d76c0dbfb085da532c33d6567da29a931707e2b83b5ec54a")(require) end
 modules["tf.config"] = function(require) return _G.OrbamaFamily:Factory("5b5dcbe707403243ebd1d1b3a9bcabc6bada36c3ec010b020a512cc43210fbd9")(require) end
 modules["tf.effects"] = function(require) return _G.OrbamaFamily:Factory("bb84bf2c0786a5e946cf90e2a65fe1bafa74ad2f0023a1b1ccb9c186b75db662")(require) end
-modules["tf.farm"] = function(require) return _G.OrbamaFamily:Factory("aff30f31a05e30a7a5569c89893f7edb29f99f391221c21cfcd796c8acce91bc")(require) end
+modules["tf.farm"] = function(require) return _G.OrbamaFamily:Factory("9a8396abe854b3c43eca3ebe64c72d77cd98a2b7426c8a9d47f83e5bd091cf53")(require) end
 modules["tf.init"] = function(require) return _G.OrbamaFamily:Factory("df2ecbbbd39564ca8a50da4c91fba6dde4b904a4e4631e70db68ee2e1ced5f46")(require) end
 modules["tf.itemstats"] = function(require) return _G.OrbamaFamily:Factory("c183b1bc1af7d6a47ee2420d6384750821dd7211dfd8b948919623aa1a70153b")(require) end
 modules["tf.level"] = function(require) return _G.OrbamaFamily:Factory("c2416a93a2ad07c95447eda77fb38cddedc087a203c88491d13e6f1b6a3a252f")(require) end

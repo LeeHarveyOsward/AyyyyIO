@@ -84,9 +84,15 @@ function C:model(target,mode)
     local approach,closing=0,0;if dist>range then approach,closing=self:approach(target)end
     local reach=range+approach
     local inRangeAt=dist>range and (closing>0 and (dist-range)/closing or math.huge) or 0
+    local origin=h.pos
+    if dist>range then
+        origin=U.point(target.pos.x+(h.pos.x-target.pos.x)*range/dist,h.pos.y,
+            target.pos.z+(h.pos.z-target.pos.z)*range/dist)
+    end
+    local impact,windup=c.sdk.Attack:GetImpactTime(target,origin)
     local p={hp=target.health,shield=target.allShield,physicalShield=target.shieldAD,magicalShield=target.shieldAP,
-        regen=target.hpRegen or 0,mana=h.mana,maxMana=h.maxMana,windup=c.sdk.Attack:GetWindup(),
-        period=c.sdk.Attack:GetAnimation(),flight=math.min(dist,range)/math.max(1,c.sdk.Attack:GetProjectileSpeed()),inRangeAt=inRangeAt,
+        regen=target.hpRegen or 0,mana=h.mana,maxMana=h.maxMana,windup=windup,
+        period=c.sdk.Attack:GetAnimation(),flight=impact and impact-windup,inRangeAt=inRangeAt,
         nextAA=math.max(0,(c.sdk.Attack.ServerStart or -10)+c.sdk.Attack:GetAnimation()-Game.Timer()),
         qCost=s:cost(0),wCost=s.stage=='selecting' and 0 or s:cost(1),reserveQ=s:reserve(0),reserveW=s:reserve(1),
         qCast=c.profile.q.delay,stun=protection.immune and 0 or math.max(0,P.Stun(s.spells[1].level)-protection.cc),
@@ -95,7 +101,7 @@ function C:model(target,mode)
         -- Repeated reach uses base observed range, excluding SDK's one-use extension.
         repeatReachable=dist<=(h.range or 0)+(h.boundingRadius or 0)+(target.boundingRadius or 0)-40}
     p.controlValue=0
-    if dist<=reach and not protection.dodge and not(p.card and protection.spellShield) then
+    if impact and dist<=reach and not protection.dodge and not(p.card and protection.spellShield) then
         local cache={};local healthDependent=false
         for _,item in pairs(s.inventory.slots)do
             local rule=P.itemRules[c.profile.id][item.itemID]
@@ -325,8 +331,9 @@ function C:secure()
                     local function lethal()
                         local fresh=s:identity(id)
                         if not fresh or c.state.stage~='held'or c.state.color~=color then return false end
+                        local impact=c.sdk.Attack:GetImpactTime(fresh)
+                        if not impact then return false end
                         local packet=self:packet(fresh,color,c.state.eReady)
-                        local impact=c.sdk.Attack:GetWindup()+U.dist(h,fresh)/math.max(1,c.sdk.Attack:GetProjectileSpeed())
                         return c.config:get('secure')and packet.physical+packet.magical>=needed(fresh,impact)
                     end
                     if lethal()and self:attack(u,nil,'card_secure',lethal)then

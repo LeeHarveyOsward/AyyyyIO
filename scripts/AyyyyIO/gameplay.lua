@@ -336,14 +336,7 @@ return function(g,C,P)
   local key=tostring(plan.target)..':'..tostring(plan.reason)..':'..tostring(state)
   if key~=self.strikeKey then self.strikeKey=key;self:TraceStrike(plan,state,was)end
  end
- function F:TraceStrike(plan,state,was)
-  if not C.logger or not plan then return end
-  local parts=plan.parts or {}
-  C:Trace('strike_decision',{profile=self.profile.id,target=plan.target,steer=plan.steer,reason=plan.reason,state=state,wasSteering=was==true,
-   angle=plan.angle,straightAngle=plan.straightAngle,score=plan.score,straight=plan.straight,gain=plan.gain,candidates=plan.candidates,refused=plan.refused,
-   ally=parts.ally,turret=parts.turret,wall=parts.wall,team=parts.team,enemyTurret=parts.enemyTurret,travel=parts.travel,exposure=parts.exposure,hit=parts.hit,
-   x=plan.point and plan.point.x,z=plan.point and plan.point.z,landingX=plan.landing and plan.landing.x,landingZ=plan.landing and plan.landing.z})
- end
+ function F:TraceStrike()end
  function F:PreparePreview()
   -- Kept for a second: a late preparation must not blink the drawing; Draw checks
   -- what each element needs (ready ability, living visible unit) on its own.

@@ -3,7 +3,7 @@ local U=require('utils.util')
 local World=require('CombatProfiles.world')
 local Locations=require('utils.locations')
 local Casts=require('utils.casts')
-local RECALL_BUFFS={recall=true,recallimproved=true}
+local RECALL_BUFFS=World.recallNames
 local function recallKind(name)return not name or name==''or RECALL_BUFFS[U.name(name)]==true end
 local O={};O.__index=O
 -- Shared read-only slot lists. Per-hero rows are refreshed in place.
@@ -98,24 +98,48 @@ local function recallTimes(buff,now)
     end
     return started,nil
 end
+-- The visible recall channel carries its own game-time interval. Live rows
+-- (Normal recall, Classic Recall) show a valid startTime, endTime 9.0 s later,
+-- and the channel clearing and the teleport landing at startTime+animation
+-- (8.5 s). The buff's expireTime and duration are foreign values there.
+local function channelTimes(unit,now)
+    local a=unit.activeSpell
+    if not a or a.valid~=true or not RECALL_BUFFS[U.name(a.name)]then return end
+    local started,length=a.startTime,a.animation
+    if not U.finite(started)or started<0 or started>now or now-started>30 then return end
+    if U.finite(length)and length>0 and length<=30 and started+length>now then return started,started+length end
+    return started,nil
+end
 function O:ObserveRecall(unit,now)
     local id=U.id(unit);local row=self.recalls[id]
     if unit.dead then if row and row.status=='started'then self:EndRecall(row,'cancelled',now)end;return end
-    if not unit.visible or unit.valid==false or not unit.GetBuff then return end
+    if not unit.visible or unit.valid==false then return end
     if unit.isChanneling==false and(not row or row.status~='started')then
-        local a=unit.activeSpell;if not a or a.valid==false or not RECALL_BUFFS[U.name(a.name)]then return end
+        local a=unit.activeSpell;if not a or a.valid~=true or not RECALL_BUFFS[U.name(a.name)]then return end
     end
-    local ok,buff=pcall(U.buff,unit,RECALL_BUFFS,now);if not ok then return end
-    if buff then
-        local started,ends=recallTimes(buff,now)
-        if not row or row.status~='started'or row.handle~=unit.handle or row.name~=unit.charName then
+    local channel,channelEnds=channelTimes(unit,now)
+    local ok,buff=false,nil
+    if unit.GetBuff then ok,buff=pcall(U.buff,unit,RECALL_BUFFS,now);if not ok then buff=nil end end
+    local native=unit.activeSpell
+    local nativeEnded=native and(native.valid==false or native.valid==true and not RECALL_BUFFS[U.name(native.name)])
+    if buff or channelEnds then
+        -- A complete native interval is sufficient even without a buff reader.
+        -- Channel timing outranks the buff's, which outranks the first observation.
+        local started,ends
+        if buff then started,ends=recallTimes(buff,now)end
+        if channelEnds then started,ends=channel,channelEnds
+        elseif channel and not ends then started=channel end
+        -- Another channel start under a live row is a new recall (cancelled and restarted between scans).
+        local restarted=channel and row and row.channelStart and math.abs(channel-row.channelStart)>.05
+        if restarted or not row or row.status~='started'or row.handle~=unit.handle or row.name~=unit.charName then
             local pos,known,uncertainty=self:RecallPosition(unit,now)
             row={id=id,name=unit.charName,team=unit.team,handle=unit.handle,unit=unit,pos=U.copy(unit.pos),started=started,
-                ends=ends,status='started',kind=buff.name,unknownAt=ends and ends+1 or now+30,
+                ends=ends,status='started',kind=buff and buff.name or native.name,unknownAt=ends and ends+1 or now+30,channelStart=channel,
                  positionKnown=known,positionUncertainty=uncertainty,map=self.map,profile=self.c.profile.id};row.pos=pos;self.recalls[id]=row
-        elseif ends then row.ends=ends;row.unknownAt=ends+1 end
-        row.sawBuff=true
-    elseif row and row.sawBuff and row.status=='started'then
+        -- A running row adopts its first deadline with the matching start; a known deadline never moves.
+        elseif ends and not row.ends then row.started=started;row.ends=ends;row.unknownAt=ends+1;row.channelStart=channel end
+        row.sawBuff=row.sawBuff or buff~=nil;row.sawChannel=row.sawChannel or channelEnds~=nil
+    elseif row and row.status=='started'and(row.sawBuff and ok or row.sawChannel and nativeEnded)then
         local base=self.locations:Base(unit.team)
         if row.ends and now>=row.ends-.25 and base and U.dist(unit.pos,base)<=800 then self:EndRecall(row,'finished',now)
         elseif row.ends and now<row.ends-.25 then self:EndRecall(row,'cancelled',now)
@@ -197,8 +221,10 @@ function O:Tick()
     end
     -- Every tick: casts are short; an error disables only this tracker.
     if cfg:get('cooldowns')and myTeam~=nil and not self.castError then
-        local ok,why=pcall(self.casts.Tick,self.casts,self.heroes,myTeam,now)
-        if not ok then self.castError=tostring(why);self.cooldowns={};print('[OrbamaUtils] Enemy cooldown tracking stopped: '..self.castError)end
+        -- Allied states only feed the overlay's ally panel.
+        local allies=c.overlayScope~=nil and cfg:get('draw')and cfg:visible('cooldowns','Screen')and cfg:includes('cooldowns',myTeam)
+        local ok,why=pcall(self.casts.Tick,self.casts,self.heroes,myTeam,now,allies)
+        if not ok then self.castError=tostring(why);self.cooldowns={};print('[OrbamaUtils] Cooldown tracking stopped: '..self.castError)end
     end
     -- Consumers are asked once per Tick; every phase below shares the answer.
     local demand

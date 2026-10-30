@@ -2,6 +2,7 @@ return function(require)
 -- Detached gameplay observations from the existing Utils tracker.
 -- These are estimates and event facts; they cannot authorize input.
 local U=require('utils.util')
+local World=require('CombatProfiles.world')
 local K={version=1};K.__index=K
 local S={};S.__index=S
 local function point(p)return p and U.finite(p.x)and U.finite(p.z)and U.copy(p)or nil end
@@ -63,7 +64,7 @@ function S:Recall(unit)
  if not self:Alive()or not self.recalls then return nil,'knowledge_scope_inactive'end
  local c=self.service.c;local row=c.observations.recalls[U.id(unit)]
   if not current(unit,row)or row.map~=c.g.Game.mapID or row.profile~=c.profile.id or row.status~='started'or not U.finite(row.ends)
-  or not({recall=true,recallimproved=true})[U.name(row.kind)]then return nil,'recall_unconfirmed'end
+  or not World.recallNames[U.name(row.kind)]then return nil,'recall_unconfirmed'end
  local now=c:now();if now<row.started or now>=row.ends then return nil,'recall_window_ended'end
  local result=clone(row);result.remaining=row.ends-now;result.profile=c.profile.id;result.map=c.g.Game.mapID
  result.revision=c.observations.revision;result.observed=true;return result

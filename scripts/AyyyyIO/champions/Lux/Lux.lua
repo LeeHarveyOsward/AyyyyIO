@@ -22,19 +22,19 @@ modules.ahriProfile=(function(require) return _G.OrbamaFamily:Factory("30d95faa8
 modules.kogmawProfile=(function(require) return _G.OrbamaFamily:Factory("309e64d13d66b4a917814dd40e811f4f7a34102f488bc17c6f0c58e6b83cb99a")(require) end)(require)
 modules.ccAttacks=(function(require) return _G.OrbamaFamily:Factory("8910c29691574e4993f030cf5eb46f90374ff156e8845186f008907f8858108b")(require) end)(require)
 modules.ccImmunity=(function(require) return _G.OrbamaFamily:Factory("9b57e44e8a476ae172372ff41d7e51c9693d85a2fe0cd18047c4febb66abafd8")(require) end)(require)
-modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("0eb86cbf6312e1011d3b480290252f3b442a81d9d38e790d4fb95e6947c5bf14")(require) end)(require)
-modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("7dbacbbf6e267f3a5936a395354a7637172ae253a18a1dae30d7bbe860f10aa1")(require) end)(require)
+modules.observeAttack=(function(require) return _G.OrbamaFamily:Factory("3da377a20f2c2a192efc8343b23fb571f5cda62e822551b4678aab011deb2b69")(require) end)(require)
+modules.recallCast=(function(require) return _G.OrbamaFamily:Factory("3c7cec6192229bd783dbb481829105edbbe5cfcc52fbeae7408eed05670af826")(require) end)(require)
 modules.skillOrders=(function(require) return _G.OrbamaFamily:Factory("c960de90c594e7c207e7efeaca5198f2250fe65b01459ca5f3ac5dfb7747935f")(require) end)(require)
 modules.healthWindow=(function(require) return _G.OrbamaFamily:Factory("d533b0ef74c68b495c1d2541cc3e687ebd5a9d43ecc9bd9706750c9b1a16fec9")(require) end)(require)
 modules.yunaraProfile=(function(require) return _G.OrbamaFamily:Factory("d0f8a7ede995c1c4ae39ff50186c21819723104154d9a4a209da8a785993462e")(require) end)(require)
 modules.nautilusProfile=(function(require) return _G.OrbamaFamily:Factory("f730083274ce090a6b9cdaf348846a2fa53f89ad6c57c53a6c09767f82770c84")(require) end)(require)
 modules["autojungle"]=_G.OrbamaFamily:Require("8ef13010a581d447046b67d863880d3e389ac7fec6a8557c660db9c87981114d")
-modules["combatMechanics"]=_G.OrbamaFamily:Require("fa55d9e58476517c728e6c357b2aca50c3ab206fe6ee2f8725de485a40598eff")
-modules["gameplay"]=_G.OrbamaFamily:Require("2e02eb4c9186ef962f8b5745627b3e1021e5d1f383b1a9ee1b51337498643e80")
+modules["combatMechanics"]=_G.OrbamaFamily:Require("ba52643cc532b91600830ad315958c7c83c7fb8f12edb7d0a0462abb16309ea7")
+modules["gameplay"]=_G.OrbamaFamily:Require("150735cd6058eefcd206afc8513dde960e1a1f0823bdfd223db9491c39a2f4d8")
 modules["strike"]=_G.OrbamaFamily:Require("38babe42b81881ea627d41ae65e32a203fdca56374f733a79b4c7f0c9465a693")
 modules["prediction"]=(function(require) return _G.OrbamaFamily:Factory("223a065ecf7929552d5f8dafcf2453fd9147cd6e9940ce97dc80add73aa9913b")(require) end)(require)
 modules["policies"]=(function(require) return _G.OrbamaFamily:Factory("e26056d70e5dac93ebb21f4ae4fe96863a06915a942bb75b795567a932448a23")(require) end)(require)
-modules["core"]=(function(require) return _G.OrbamaFamily:Factory("9baafe297f9228d60e519127c820be79602687ef0fc3afd68e9c25369b71a1c5")(require) end)(require)
+modules["core"]=(function(require) return _G.OrbamaFamily:Factory("f7d98e88d54ea77cb1c1c4aa026b699688271ff1aa4f6e769036de5dccf63c4f")(require) end)(require)
 modules.runtime=function(env,champion)
 local _G,Core,SDK,Draw,Control,Callback,DelayAction,MenuElement,OrbamaPrediction,require,os,class=env,env.Core,env.SDK,env.Draw,env.Control,env.Callback,env.DelayAction,env.MenuElement,env.OrbamaPrediction,env.require,env.os,env.class
 local Menu,lastQ,lastW,lastE,lastR,CoreRefreshClaims
@@ -311,18 +311,7 @@ function IsPoison(unit)
 end
 
 function Recalling(unit)
-	local as = unit.activeSpell
-	if as and as.valid and type(as.name)=='string' and as.name:lower():find("recall") then
-		return true
-	end
-	local buffs = GetBuffs(unit)
-	for i = 1, #buffs do
-		local buff = buffs[i]
-		if type(buff.name)=='string' and buff.name:lower():find("recall") then
-			return true
-		end
-	end
-	return false
+    return _G.SDK.IsRecalling(unit,Core.validating==true)
 end
 
 function HasInvalidDashBuff(unit)
@@ -1626,14 +1615,14 @@ function LuxChampion:LastHitAllowed()
 end
 
 -- Q only rescues a minion it kills on its own that a ready attack cannot secure.
-function LuxChampion:CanRescue(target,predicted)
+function LuxChampion:CanRescue(target,predicted,damage)
 	if not self:LastHitAllowed()then return false end
 	if not IsValid(target)or target.team==300 or target.type~=Obj_AI_Minion or not IsReady(_Q)then return false end
 	local reach=GetDistance(predicted or target.pos,myHero.pos)
 	if reach>self.QSpell.Range then return false end
 	-- The shared LastHit rule. 'ready' is the variant this champion's regressions pin: only an
 	-- attack that is ready and in range right now keeps the spell.
-	return Core:Rescue(target,self.QSpell.Delay+reach/self.QSpell.Speed,function()return self:QDamage(target)end,readyAttack)
+	return Core:Rescue(target,self.QSpell.Delay+reach/self.QSpell.Speed,damage or function()return self:QDamage(target)end,readyAttack)
 end
 
 -- E rescue: the zone lands, then the recast pops it .25 s later.
@@ -1652,6 +1641,46 @@ local function behind(a,b,width)
 	return rayDistance(a,origin,dx,dz,distance)<=width
 end
 
+-- Both members belong to the resolved ray, not merely the original pair search.
+-- GetCollision returns actual unit objects from its complete native snapshot.
+-- Keep the pair search bounded; the shared service supplies all other blockers.
+function LuxChampion:QFarmPair(pair,data)
+	local near,far=pair.near,pair.far
+	if self.profile.qSecond<1 or not IsValid(near)or not IsValid(far)
+		or near.handle~=pair.nearHandle or near.networkID~=pair.nearNet
+		or far.handle~=pair.farHandle or far.networkID~=pair.farNet then return false,'pair_changed'end
+	local predicted=data and data.predicted
+	if not point(predicted)then return false,'pair_aim_missing'end
+	local nearAim=self:LineAim(self.QPassSpell,near,2)
+	if not nearAim then return false,'pair_near_prediction'end
+	local farAim=self:LineAim(self.QPassSpell,far,2)
+	if not farAim then return false,'pair_far_prediction'end
+	local origin=myHero.pos;local distance=flat(predicted,origin)
+	if distance<1 or distance>self.QSpell.Range then return false,'pair_range'end
+	local dx,dz=(predicted.x-origin.x)/distance,(predicted.z-origin.z)/distance
+	local nearPoint,farPoint=nearAim.predicted,farAim.predicted
+	local farAlong=(farPoint.x-origin.x)*dx+(farPoint.z-origin.z)*dz
+	local nearAlong=(nearPoint.x-origin.x)*dx+(nearPoint.z-origin.z)*dz
+	if farAlong<=0 or farAlong>self.QSpell.Range or nearAlong<=0 or nearAlong>=farAlong
+		or rayDistance(farPoint,origin,dx,dz,self.QSpell.Range)>self.QSpell.Radius+(far.boundingRadius or 0)
+		or rayDistance(nearPoint,origin,dx,dz,farAlong)>self.QSpell.Radius+(near.boundingRadius or 0)then return false,'pair_ray'end
+	-- The resolved cursor direction is fixed. Far's fresh position may advance
+	-- along it, but must not bend that ray when checking intervening blockers.
+	local endPoint=Vector(origin.x+dx*farAlong,origin.y or 0,origin.z+dz*farAlong)
+	local wall,objects,n,_,reason=OrbamaPrediction:GetCollision(origin,endPoint,self.QSpell.Speed,self.QSpell.Delay,
+		self.QSpell.Radius,self.QSpell.CollisionTypes,pair.farNet,{padding=0,trim=0,observedClearance=false,scope={}})
+	if wall or reason or n~=1 or type(objects)~='table'or #objects~=1 or objects[1]~=near
+		or objects[1].handle~=pair.nearHandle or objects[1].networkID~=pair.nearNet then return false,'pair_collision'end
+	local nearDamage,farDamage=self:QDamage(near),self:QDamage(far,true)
+	if not self:CanRescue(near,nearPoint,nearDamage)or not self:CanRescue(far,farPoint,farDamage)then return false,'rescue_ended'end
+	-- This must be last: only complete final geometry and per-unit permission
+	-- may copy a set proof. An unknown schedule preserves the old ready-AA rule.
+	return Core:FarmKillSet({
+		{unit=near,handle=pair.nearHandle,net=pair.nearNet,impact=self:QImpact(nearPoint),damage=nearDamage},
+		{unit=far,handle=pair.farHandle,net=pair.farNet,impact=self:QImpact(farPoint),damage=farDamage},
+	},{policy='preserve',allowUnknown=true,castLock=self.profile.qDelay})
+end
+
 function LuxChampion:LastHit()
 	if not Menu.LastHit.Q:Value()then return end
 	local minions=Core:DecisionUnits('GetEnemyMinions');local rescues={}
@@ -1666,7 +1695,8 @@ function LuxChampion:LastHit()
 		for i=1,math.min(#rescues,6)do for j=1,math.min(#rescues,6)do
 			local near,far=rescues[i],rescues[j]
 			if near~=far and behind(near.pos,far.pos,self.QSpell.Radius+(near.boundingRadius or 0))then
-				if self:CastQ(far,2,true,function(data)return self:CanRescue(far,data.predicted)and self:CanRescue(near),'rescue_ended'end)then return end
+				local pair={near=near,nearHandle=near.handle,nearNet=near.networkID,far=far,farHandle=far.handle,farNet=far.networkID}
+				if self:CastQ(far,2,true,function(data)return self:QFarmPair(pair,data)end)then return end
 			end
 		end end
 	end

@@ -23,8 +23,7 @@ function R:blocked()
         or (Game.IsOnTop and not Game.IsOnTop())
 end
 function R:recalling()
-    if self.sdk.IsRecalling then return self.sdk.IsRecalling(myHero) end
-    return U.buff(myHero,{recall=true,recallimproved=true},self:now())~=nil
+    return self.sdk.IsRecalling(myHero)
 end
 function R:refresh()
     local now=self:now()

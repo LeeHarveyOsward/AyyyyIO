@@ -1,8 +1,50 @@
 return function(require)
 local U=require('utils.util')
 local Cooldowns=require('CombatProfiles.cooldowns')
+local Experience=require('CombatProfiles.experience')
 local D={};D.__index=D
+-- Control wards and Farsight wards stay until destroyed: no lifetime to show.
+local PERMANENT_WARDS={VisionWard=true,Farsight=true}
 function D.new(c)return setmetatable({c=c,rows={}},D)end
+-- Native movement path of a visible moving unit: the remaining waypoints
+-- pathIndex..pathCount (GetPath), ending at pathing.endPos; a dash goes straight
+-- to its native end. Nothing is drawn for a path the host does not fully report.
+-- Each node keeps its native index, so a drawn path drops the nodes already passed.
+local MAX_PATH_NODES=16
+local function point(p)return(type(p)=='table'or type(p)=='userdata')and U.finite(p.x)and U.finite(p.z)end
+function D.ReadPath(unit)
+    local p=unit.pathing
+    if not p or p.hasMovePath~=true or not U.finite(unit.ms)or unit.ms<=0 or not point(unit.pos)then return end
+    local finish=p.endPos;if not point(finish)then return end
+    local nodes,first,last={},p.pathIndex,p.pathCount
+    if p.isDashing==true then nodes[1]={x=finish.x,y=finish.y or 0,z=finish.z,i=last or 0}
+    else
+        if not U.finite(first)or not U.finite(last)or first%1~=0 or last%1~=0 or first<0 or last<first
+            or last-first>=MAX_PATH_NODES or type(unit.GetPath)~='function'then return end
+        local previous=unit.pos
+        for i=first,last do
+            local ok,q=pcall(unit.GetPath,unit,i)
+            if not ok or not point(q)then return end
+            if U.dist(previous,q)>1 then nodes[#nodes+1]={x=q.x,y=q.y or 0,z=q.z,i=i};previous=q end
+        end
+        if U.dist(previous,finish)>50 and #nodes<MAX_PATH_NODES then nodes[#nodes+1]={x=finish.x,y=finish.y or 0,z=finish.z,i=last}end
+    end
+    if #nodes==0 then return end
+    local length,from=0,unit.pos
+    for _,q in ipairs(nodes)do length=length+U.dist(from,q);from=q end
+    return {points=nodes,length=length,first=first,last=last,endX=finish.x,endZ=finish.z,dashing=p.isDashing==true}
+end
+-- The same path the host still reports: same destination and segment count, and
+-- the next waypoint index within the read range. Returns the first node still ahead.
+function D.PathCurrent(data,unit)
+    local p=unit.pathing
+    if not p or p.hasMovePath~=true or(p.isDashing==true)~=data.dashing then return end
+    local finish=p.endPos
+    if not point(finish)or math.abs(finish.x-data.endX)>1 or math.abs(finish.z-data.endZ)>1 or p.pathCount~=data.last then return end
+    if data.dashing then return 1 end
+    local index=p.pathIndex;if not U.finite(index)or index<data.first or index>data.last then return end
+    for k,q in ipairs(data.points)do if q.i>=index then return k end end
+end
 function D:Build(observations,preparedConfig,kind)
     if not kind then self.sourceObservations=observations end
     local c=self.c;local cfg=preparedConfig or c.config;local rows={};local now=c:now();local h=c.g.myHero
@@ -30,18 +72,22 @@ function D:Build(observations,preparedConfig,kind)
     if not kind or kind=='heroes'then for _,unit in ipairs(observations.heroes)do
             local id=U.id(unit)
             if unit.visible and not unit.dead then
-                if cfg:get('waypoints')and unit.pathing and unit.pathing.hasMovePath and unit.pathing.endPos and(unit.ms or 0)>0 then
+                local path=cfg:get('waypoints')and cfg:includes('waypoints',unit.team,unit.pos)and D.ReadPath(unit)
+                if path then
                     local options=cfg.drawOptions and cfg.drawOptions.waypoints
                     local name,time
                     if preparedConfig then
                         local content=preparedConfig.content.waypoints
                         name=not content or content.Name;time=not content or content.Time
                     else name=not options or options.Name:Value();time=not options or options.Time:Value()end
-                    if name or time then add(unit.pathing.endPos,(name and unit.charName or '')..(time and ' ~'..string.format('%.1fs',U.dist(unit.pos,unit.pathing.endPos)/unit.ms)or ''),'unknown',nil,'waypoints',unit.team,nil,{id=id,unit=unit,handle=unit.handle,anchor='pathend'})end
+                    local text=(name and unit.charName:gsub('^Jade_','')or '')..(time and string.format(name and ' ~%.1fs'or '~%.1fs',path.length/unit.ms)or '')
+                    path.id=id;path.unit=unit;path.handle=unit.handle;path.name=unit.charName;path.anchor='path'
+                    add(unit.pos,text,'unknown',nil,'waypoints',unit.team,nil,path)
                 end
-                local level=unit.levelData
-                if cfg:get('experience')and level and U.finite(level.exp)then
-                    add(unit.pos,'Level '..tostring(level.lvl)..' | XP '..math.floor(level.exp),'cooldown',nil,'experience',unit.team,nil,{id=id,unit=unit,handle=unit.handle})
+                -- Level and progress are read from the live unit at every draw.
+                local level=cfg:get('experience')and unit.levelData
+                if level and U.finite(level.lvl)and level.lvl>=1 then
+                    add(unit.pos,'','cooldown',nil,'experience',unit.team,nil,{id=id,unit=unit,handle=unit.handle,name=unit.charName,anchor='level'})
                 end
             end
             -- With an overlay the enemy panel draws from live state (PublishPanel).
@@ -338,7 +384,13 @@ function D:Draw(draw)
    if stable then fresh=fresh and c.config:includes(row.kind,row.team,row.pos)end
   if unit then fresh=fresh and U.id(unit)==data.id and unit.handle==data.handle and(not data.name or unit.charName==data.name)and not unit.dead and(row.kind=='awareness'or unit.valid~=false)
    and(row.kind=='awareness'and not unit.visible or row.kind~='awareness'and unit.visible)end
-   if data.anchor=='pathend'then fresh=fresh and unit.pathing and unit.pathing.hasMovePath and unit.pathing.endPos~=nil end
+   local from,lvl,progress
+   if data.anchor=='path'then from=fresh and D.PathCurrent(data,unit)or nil;fresh=from~=nil
+   elseif data.anchor=='level'and fresh then
+    local level=unit.levelData;lvl=level and level.lvl
+    fresh=U.finite(lvl)and lvl>=1 and lvl%1==0
+    if fresh then progress=Experience.progress(c.profile and c.profile.id,g.Game.mapID,lvl,level.exp)end
+   end
   -- With an overlay, strips are published every frame by PublishStrips.
   if scope and row.kind=='cooldowns'then fresh=false end
   if fresh then
@@ -356,15 +408,18 @@ function D:Draw(draw)
       record.priority=row.color=='turret'and 90 or 10;record.expires=((stable or row.kind=='cooldowns')and now or row.preparedAt or self.preparedAt or now)+.5
       if row.kind=='awareness'then record.kind='portrait';record.name=data.name;record.at=data.at;record.estimated=data.estimated;record.projection=where=='Minimap'and data or nil;record.minimapSeconds=c.config:get('minimapSeconds')~=false
       elseif row.kind=='wards'then record.kind='ward';record.radius=row.radius;record.timer=data.timer;record.expiresAt=(c.observations or self.sourceObservations).wardHistory[data.key or data.id].expires
+       record.enemy=row.team~=g.myHero.team;record.wardKind=row.wardKind;record.permanent=PERMANENT_WARDS[row.wardKind]==true
+      elseif data.anchor=='path'then record.kind='path';record.points=data.points;record.from=from;record.unit=unit;record.pos=unit.pos;record.enemy=row.team~=g.myHero.team
+      elseif data.anchor=='level'then record.kind='level';record.unit=unit;record.pos=unit.pos;record.level=lvl;record.progress=progress;record.enemy=row.team~=g.myHero.team
       else record.kind='label';record.radius=row.radius;record.cooldowns=where=='Screen'and data.cooldowns or nil;record.unit=unit
-       if unit then record.pos=unit.pos;if data.anchor=='pathend'then record.pos=unit.pathing and unit.pathing.endPos;record.unit=nil end end
+       if unit then record.pos=unit.pos end
       end
       publish(record.recordId,record)
      end
     end
    else
-     local point=data.anchor=='pathend'and unit.pathing.endPos or unit and row.kind~='awareness'and unit.pos or row.pos
-     local p=g.Vector(point);local s=p:To2D();local text=self:DisplayText(row,now)
+     local point=data.anchor=='path'and data.points[#data.points]or unit and row.kind~='awareness'and unit.pos or row.pos
+     local p=g.Vector(point);local s=p:To2D();local text=data.anchor=='level'and 'Lv '..lvl or self:DisplayText(row,now)
     if s and s.onScreen~=false and c.config:visible(row.kind,'Screen')then
      local x,y=s.x,s.y-35*scale
      if row.radius then d.Circle(p,row.radius,1,d.Color(100,100,225,205))end
@@ -408,85 +463,110 @@ function D:Draw(draw)
  end
  self:ReportStrips(now)
 end
--- Enemy cooldown panel (bottom left, beside the game HUD): one row per enemy,
--- refreshed every frame from live tracker state, including enemies in fog or
--- dead. Slot names and ranks come from the cast observer (readable in fog); a
--- positive host value wins. One persistent record; row and cell tables are
--- reused, so a frame allocates nothing once the roster is known.
+-- Cooldown panels (bottom left, beside the game HUD): one row per enemy and,
+-- when shown, per ally, refreshed every frame from live tracker state, including
+-- heroes in fog or dead. Slot names and ranks come from the cast observer
+-- (readable in fog). One persistent record; row and cell tables are reused, so
+-- a frame allocates nothing once the roster is known.
 local LABELS={[0]='Q','W','E','R','D','F'}
 -- Frames between changes only extend the record. Cells are rebuilt when the
 -- cast observer's revision moves (casts, slots, visibility) or the overlay
 -- dropped the record. On each hero refresh (10 Hz) only the roster, death and
 -- visibility of the listed rows are compared; record.version moves only when
 -- something shown changed, so the overlay recomputes its draw list only then.
+-- Panel members per team, at most five each, in roster order; the player leads
+-- the ally panel. Allied states exist only while that panel is shown.
+local PANEL_ROWS=5
+function D:PanelMembers(observations,casts,team)
+ local cfg=self.c.config;local me=self.c.g.myHero
+ local enemies=wipe(self.panelEnemies or {});local allies=wipe(self.panelAllies or {})
+ self.panelEnemies,self.panelAllies=enemies,allies
+ local function add(list,unit)
+  local id=U.id(unit);local state=id and casts.states[id]
+  if state and state.name==unit.charName and #list<PANEL_ROWS and cfg:includes('cooldowns',unit.team,nil)then list[#list+1]=unit end
+ end
+ local heroes=observations.heroes
+ for i=1,math.min(32,#heroes)do local unit=heroes[i];if unit.team~=team then add(enemies,unit)elseif unit==me then add(allies,unit)end end
+ for i=1,math.min(32,#heroes)do local unit=heroes[i];if unit.team==team and unit~=me then add(allies,unit)end end
+ return enemies,allies
+end
+local function sameRows(rows,units)
+ if #rows~=#units then return false end
+ for i,unit in ipairs(units)do local row=rows[i]
+  if row.id~=U.id(unit)or row.handle~=unit.handle or row.visible~=(unit.visible==true)or row.dead~=(unit.dead==true)then return false end
+ end
+ return true
+end
 function D:PanelCurrent(panel,observations,casts,team)
- local rows=panel.rows;local index=0
- for i=1,math.min(32,#observations.heroes)do
-  local unit=observations.heroes[i];local id=U.id(unit)
-  if id and unit.team~=team and casts.states[id]then
-   if index==0 and not self.c.config:includes('cooldowns',unit.team,nil)then return false end
-   index=index+1;local row=rows[index]
-   if not row or row.id~=id or row.handle~=unit.handle or row.visible~=(unit.visible==true)or row.dead~=(unit.dead==true)then return false end
+ local enemies,allies=self:PanelMembers(observations,casts,team)
+ return sameRows(panel.rows,enemies)and sameRows(panel.allyRows,allies)
+end
+-- One cell per known slot. Readiness, strongest evidence first: a positive host
+-- value; a fresh native value of a hero whose host reports cooldowns (allies,
+-- the player: 0 is ready, the length is the native one); else the observed casts.
+function D:PanelRow(panel,unit,state,observed,now,overlay)
+ local id=U.id(unit);local row=panel.byId[id]
+ if not row or row.handle~=unit.handle or row.name~=unit.charName then
+  row={id=id,handle=unit.handle,name=unit.charName,cells={}};panel.byId[id]=row
+  if overlay and overlay.PreparePortrait then overlay:PreparePortrait(unit.charName)end
+ end
+ row.visible=unit.visible==true;row.dead=unit.dead==true
+ local cells=row.cells;local n=0
+ for slot=0,5 do
+  local sl=state.slots[slot]
+  if sl and type(sl.name)=='string'then
+   local d=observed and observed[slot]
+   n=n+1;local cell=cells[n];if not cell then cell={};cells[n]=cell end
+   cell.slot=slot;cell.label=LABELS[slot]
+   -- Summoner ranks are not meaningful; a known spell there is always usable.
+   cell.learned=slot>=4 or(sl.level or 0)>0
+   local native=state.nativeAt and not sl.nativeLost and sl.hostAt and now-sl.hostAt<=1
+   if sl.hostReady and sl.hostReady>now then
+    -- A retained deadline is estimated until a fresh native sample arrives.
+    cell.readyAt=sl.hostReady;cell.readyMin=sl.hostReady;cell.estimate=not(sl.hostAt and now-sl.hostAt<=1);cell.total=sl.hostTotal
+   elseif native then cell.readyAt=0;cell.readyMin=nil;cell.estimate=false;cell.total=nil
+   else
+    cell.readyAt=d and d.readyAt or 0;cell.readyMin=d and d.readyMin;cell.estimate=d and(d.estimate or state.nativeAt and sl.nativeLost)
+    cell.total=d and(d.total or(U.finite(d.castAt)and d.readyAt-d.castAt or nil))
+   end
+   if cell.name~=sl.name then
+    cell.name=sl.name;cell.icon=slot>=4 and Cooldowns.icon(sl.name)or nil
+    if cell.icon and overlay and overlay.PreparePortrait then overlay:PreparePortrait(cell.icon,'summoner')end
+   end
   end
  end
- return index==#rows
+ for k=#cells,n+1,-1 do cells[k]=nil end
+ return n>0 and row or nil
 end
 function D:PublishPanel(now,publish,published)
  local c=self.c;local cfg=c.config
  if not cfg:get('cooldowns')or not cfg:visible('cooldowns','Screen')then return end
  local observations=c.observations;local casts=observations.casts
  local team=c.g.myHero and c.g.myHero.team;if team==nil or not casts then return end
- local panel=self.panel or {rows={},byId={},version=0};self.panel=panel
+ local panel=self.panel or {rows={},allyRows={},byId={},version=0};self.panel=panel
  local record=panel.record;local stamp=observations.nextAt.heroes
  if record and panel.revision==casts.revision and panel.castError==observations.castError
-  and c.overlayScope.records['cooldowns:panel']==record and #panel.rows>0
+  and c.overlayScope.records['cooldowns:panel']==record and #panel.rows+#panel.allyRows>0
   and(panel.stamp==stamp or self:PanelCurrent(panel,observations,casts,team))then
   panel.stamp=stamp;record.expires=now+.5;published['cooldowns:panel']=true;return
  end
  panel.revision=casts.revision;panel.stamp=stamp;panel.castError=observations.castError;panel.version=panel.version+1
- local rows=panel.rows;local count=0
  local overlay=c.sdk and c.sdk.Overlay
- for i=1,math.min(32,#observations.heroes)do
-  local unit=observations.heroes[i];local id=U.id(unit)
-  local state=id and unit.team~=team and casts.states[id]
-  if state and state.name==unit.charName and count<6 and cfg:includes('cooldowns',unit.team,nil)then
-   local row=panel.byId[id]
-   if not row or row.handle~=unit.handle or row.name~=unit.charName then
-    row={id=id,handle=unit.handle,name=unit.charName,cells={}};panel.byId[id]=row
-    if overlay and overlay.PreparePortrait then overlay:PreparePortrait(unit.charName)end
-   end
-   row.visible=unit.visible==true;row.dead=unit.dead==true
-   local observed=not observations.castError and casts.rows[id]
-   local cells=row.cells;local n=0
-   for slot=0,5 do
-    local sl=state.slots[slot]
-    if sl and type(sl.name)=='string'then
-     local d=observed and observed[slot]
-     n=n+1;local cell=cells[n];if not cell then cell={};cells[n]=cell end
-     cell.slot=slot;cell.label=LABELS[slot]
-     -- Summoner ranks are not meaningful; a known spell there is always usable.
-     cell.learned=slot>=4 or(sl.level or 0)>0
-     if sl.hostReady and sl.hostReady>now then
-      -- A positive host value wins (exact, no estimate; its length is unknown).
-      cell.readyAt=sl.hostReady;cell.readyMin=sl.hostReady;cell.estimate=false;cell.total=nil
-     else
-      cell.readyAt=d and d.readyAt or 0;cell.readyMin=d and d.readyMin;cell.estimate=d and d.estimate
-      cell.total=d and(d.total or(U.finite(d.castAt)and d.readyAt-d.castAt or nil))
-     end
-     if cell.name~=sl.name then
-      cell.name=sl.name;cell.icon=slot>=4 and Cooldowns.icon(sl.name)or nil
-      if cell.icon and overlay and overlay.PreparePortrait then overlay:PreparePortrait(cell.icon,'summoner')end
-     end
-    end
-   end
-   for k=#cells,n+1,-1 do cells[k]=nil end
-   if n>0 then count=count+1;rows[count]=row end
+ local enemies,allies=self:PanelMembers(observations,casts,team)
+ local function fill(list,units)
+  local count=0
+  for _,unit in ipairs(units)do
+   local id=U.id(unit)
+   local row=self:PanelRow(panel,unit,casts.states[id],not observations.castError and casts.rows[id],now,overlay)
+   if row then count=count+1;list[count]=row end
   end
+  for k=#list,count+1,-1 do list[k]=nil end
+  return count
  end
- for k=#rows,count+1,-1 do rows[k]=nil end
- if count==0 then return end
- record=record or {feature='tracking',kind='cooldowns',anchor='hud',priority=60,rows=rows};panel.record=record
- record.version=panel.version;record.expires=now+.5;self.stripsPublished=(self.stripsPublished or 0)+count
+ local total=fill(panel.rows,enemies)+fill(panel.allyRows,allies)
+ if total==0 then return end
+ record=record or {feature='tracking',kind='cooldowns',anchor='hud',priority=60,rows=panel.rows,allyRows=panel.allyRows};panel.record=record
+ record.version=panel.version;record.expires=now+.5;self.stripsPublished=(self.stripsPublished or 0)+total
  publish('cooldowns:panel',record)
 end
 -- Development telemetry: cooldown rows prepared and strip records published, every 10 s.
