@@ -6,6 +6,16 @@ Entries for v3 through v8 were reconstructed from published commits. Dates below
 
 The one-line installer follows `main`. GitHub Releases retain the historical snapshots. Offline checks establish implementation behavior, not live game outcomes.
 
+## [v13](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v13) - 2026-10-31
+
+- Normal Fiora Q separates legal dash endpoints from automatic stab reach and refreshes interception against moving targets.
+- Ignore irrelevant distant minions with missing movement data. Keep local uncertain or higher-priority stab competitors as refusals.
+- Prefer accessible confirmed vitals, with ordinary Q available when vital routing cannot connect safely.
+- Reconsider melee Q on Tick after native readiness returns and let a pending E reset settle first. Preserve attack windup and defensive W priority.
+- Refresh target identity, consent, health, landing safety and recipient before dispatch through the existing input provider.
+- Keep Classic targeted Q/Q2 and minion chains separate from Normal timing. Classic Evade Q remains disabled pending native evidence.
+- Live acceptance remains pending. Offline casts do not prove hits, vital procs or successful parries.
+
 ## [v12](https://github.com/LeeHarveyOsward/AyyyyIO/releases/tag/v12) - 2026-10-30
 
 - Fix Normal Lux E and Gragas Q retaining their areas after an observed early detonation. Keep each profile's own geometry and timing.

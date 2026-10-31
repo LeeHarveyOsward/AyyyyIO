@@ -530,6 +530,7 @@ end
 local function clearOwned(self)
  self.incomingAttacks={};self.attackWitness=nil;self.eAttackObservation=nil;self.rObservation=nil;self.rTarget=nil;self.preview=nil
  self.qLock=nil;self.rSeenAt=nil;self.wq=nil;self.wallPreview=nil
+ self.qDecisionReason=nil
 end
 
 if not profiles[myHero.charName] then return end
@@ -726,6 +727,133 @@ function FioraChampion:SafePoint(point,safe)
  return point and type(Game.isWall)=='function'and Game.isWall(point)==false and self:TurretSafe(point,safe)
 end
 
+function FioraChampion:QAcquireRange()
+ return self.classic and self.QRange or self.QRange+self.profile.stabRadius
+end
+
+function FioraChampion:QSelectionAllowed(target)
+ local mode=GetMode();local selected=_G.SDK.TargetSelector.Selected
+ return(mode~='Combo'and mode~='Harass')or not selected or not IsValid(selected)or selected.networkID==target.networkID
+end
+
+local function sameQEndpoint(prepared,fresh)
+ local a,b=prepared and prepared.position,fresh and fresh.position
+ return a and b and a.x==b.x and a.y==b.y and a.z==b.z
+  and prepared.data and fresh.data and prepared.data.health==fresh.data.health
+  and prepared.data.targetID==fresh.data.targetID and prepared.data.handle==fresh.data.handle
+end
+
+function FioraChampion:NativeQTarget(target)
+ local count,unit=Game[target.type==Obj_AI_Hero and 'HeroCount'or 'MinionCount'],Game[target.type==Obj_AI_Hero and 'Hero'or 'Minion']
+ if not count or not unit then return nil end
+ local n=count();if not finite(n)or n<0 or n%1~=0 or n>(target.type==Obj_AI_Hero and 16 or 512)then return nil end
+ for i=1,n do local u=unit(i);if u and u.networkID==target.networkID and u.handle==target.handle then return u end end
+end
+
+function FioraChampion:QPathClear(point)
+ if type(Game.isWall)~='function'then return false end
+ local distance=GetDistance(myHero.pos,point)
+ for step=1,math.ceil(distance/25)do
+  if Game.isWall(myHero.pos:Extended(point,math.min(distance,step*25)))~=false then return false end
+ end
+ return true
+end
+
+-- One native roster read per preparation, shared by all endpoint candidates.
+-- Extra motion fields matter only inside the conservative local travel envelope.
+function FioraChampion:StabUnits()
+ local out={}
+ for _,kind in ipairs({'Hero','Minion'})do
+  local countFn,unitFn=Game[kind..'Count'],Game[kind]
+  if not countFn or not unitFn then return nil end
+  local n=countFn();if not finite(n)or n<0 or n%1~=0 or n>(kind=='Hero'and 16 or 512)then return nil end
+  for i=1,n do local u=unitFn(i)
+   if u and u.team~=myHero.team and not u.dead and(u.health or 0)>0 then out[#out+1]=u end
+  end
+ end
+ return out
+end
+
+-- Normal dash plus automatic stab. Prediction advances the unit to candidate
+-- arrival, rather than treating the victim's centre as the cast destination.
+function FioraChampion:PrepareQ(target,safe,vitalOnly)
+ local function decision(reason,plan)
+  if self.qDecisionReason~=reason then
+   self.qDecisionReason=reason
+   if Core.logger then Core:Trace('fiora_q_decision',{profile='normal',mode=GetMode(),reason=reason,target=target and target.networkID,
+    ready=self:Ready(_Q),windup=Core:AttackWindupRemaining(),safe=safe,plan=plan and plan.data,endpoint=plan and plan.position,hit='unknown'})end
+  end
+  return plan
+ end
+ if not target or self.classic or not self:Ready(_Q)or self:ActiveBuff(myHero,'FioraW')then return decision('target_or_readiness')end
+ target=self:NativeQTarget(target);if not target then return decision('target_gone')end
+ if self.classic or not self:Ready(_Q)or not self:CanTarget(target,self:QAcquireRange(),false)then return decision('target_or_readiness')end
+ local units=self:StabUnits();if not units then return nil end
+ local origin=myHero.pos;local speeds=self.profile.qDash.speeds;local predictions={}
+ local function predict(delay)
+  if predictions[delay]~=nil then return predictions[delay]or nil end
+  local settings={Type=OrbamaPrediction.SPELLTYPE_CIRCLE,Delay=delay,Radius=80,Range=self:QAcquireRange()+500,Speed=math.huge,Collision=false}
+  local p=Core:Prediction(settings);p:GetPrediction(target,myHero)
+  if not p:CanHit(2)or not p.UnitPosition then predictions[delay]=false;return nil end
+  local position=Vector(p.UnitPosition.x,p.UnitPosition.y or 0,p.UnitPosition.z)
+  predictions[delay]=position;return position
+ end
+ local entries={};local now=Game.Timer()
+ for _,row in pairs(self.vitals or {})do
+  if row.identity==target.networkID and row.handle==target.handle and self:VitalBasis(row)
+   and now-row.firstSeen>=(row.ult and self.profile.vitals.rReveal or self.profile.vitals.reveal)then
+   entries[#entries+1]=row;if #entries==4 then break end
+  end
+ end
+ table.sort(entries,function(a,b)return tostring(a.side)<tostring(b.side)end)
+ local best
+ -- Vital, direct and two flank alternatives. Short approach preserves follow-up
+ -- attack reach where possible; full travel retains the extended chase envelope.
+ for candidate=1,11 do
+  local entry=entries[candidate]
+  local point,base,arrival;local delay=0
+  for iteration=1,3 do
+   base=predict(delay);if not base then break end
+   local d=GetDistance(origin,base)
+   if candidate<=4 then point=entry and self:VitalPoint(target,entry,base)
+   elseif candidate==5 then point=origin:Extended(base,math.min(self.QRange,math.max(50,d-100)))
+   elseif candidate==6 then point=origin:Extended(base,math.min(self.QRange,d))
+   else
+    local dx,dz=base.x-origin.x,base.z-origin.z;local length=math.max(1,d)
+    local side=candidate%2==0 and 1 or -1;local offset=({60,100,160})[math.floor((candidate-7)/2)+1]
+    local aim=Vector(base.x-dz/length*offset*side,base.y,base.z+dx/length*offset*side)
+    point=origin:Extended(aim,math.min(self.QRange,GetDistance(origin,aim)))
+   end
+   if not point then break end
+   delay=GetDistance(origin,point)/speeds[1]
+  end
+  if point and base then
+   local distance=GetDistance(origin,point)
+   arrival=OrbamaPrediction:GetLaunchDelay({Delay=distance/speeds[1]})
+   local early=OrbamaPrediction:GetLaunchDelay({Delay=distance/speeds[#speeds]})
+   local earlyBase=predict(distance/speeds[#speeds])
+   local vital=candidate<=4
+   if distance<=self.QRange and self:SafePoint(point,safe)and self:QPathClear(point)
+    and earlyBase and GetDistance(point,base)<=self.profile.stabRadius and GetDistance(point,earlyBase)<=self.profile.stabRadius
+    and self:SingleStab(target,point,base,arrival,units)
+    and self:SingleStab(target,point,earlyBase,arrival,units)
+    and(not vitalOnly or vital)then
+    local result={position=point,base=base,row=vital and entry or nil,
+     data={profile='normal',purpose=vitalOnly and 'vital'or 'combat',targetID=target.networkID,handle=target.handle,
+      source=Vector(origin.x,origin.y,origin.z),unitPosition=base,health=target.health,arrival=arrival,earliest=early,recipient=target.networkID,candidates=11}}
+    -- Lexicographic: safety/recipient above, then confirmed vital, attack reach,
+    -- progress and shortest travel. Never exchange safety for damage.
+    local attack=GetDistance(point,base)<=myHero.range+(myHero.boundingRadius or 0)+(target.boundingRadius or 0)
+    if not best or vital or not best.row and(attack and not best.attack or attack==best.attack and distance<best.distance)then
+     result.attack=attack;result.distance=distance;best=result
+    end
+    if vital then break end
+   end
+  end
+ end
+ return decision(best and 'prepared'or 'no_certified_endpoint',best)
+end
+
 -- The stab hits one unit near the endpoint, chosen natively by priority
 -- (Template:Data_Fiora/Lunge, 2026-10-10): champions with a vital, champions
 -- below 20% health, units Q kills within 252, the nearest champion, then
@@ -735,52 +863,69 @@ end
 -- target needs no hard crowd control (the manual side bind still does). A
 -- predicted unit position, when given, anchors the endpoint instead of the
 -- current one: a chased target is ahead of where it stands now.
-function FioraChampion:SingleStab(target,point,predicted)
+function FioraChampion:SingleStab(target,point,predicted,arrival,units)
  local anchor=type(predicted)=='table'and predicted.x and predicted.z and predicted or target.pos
- if not point or GetDistance(anchor,point)>150 then return false end
+ if not point or GetDistance(anchor,point)>self.profile.stabRadius then return false end
  local targetPath=target.pathing
  if not predicted and not(targetPath and targetPath.hasMovePath==false and targetPath.isDashing==false)and GetHardCCDuration(target)<.55 then return false end
  local level=myHero:GetSpellData(_Q).level;local raw=(self.profile.qBase[level]or 0)+(self.profile.qAD[level]or 0)*(finite(myHero.bonusDamage)and myHero.bonusDamage or 0)
  local hero=target.type==Obj_AI_Hero;local reach,near=self.profile.stabRadius or 420,self.profile.stabPriority or 252
  local function low(u)return finite(u.health)and finite(u.maxHealth)and u.maxHealth>0 and u.health/u.maxHealth<.2 end
- local targetVital,targetLow,targetDistance=hero and self:HasVital(target),hero and low(target),GetDistance(target.pos,point)
- for _,kind in ipairs({'Hero','Minion'})do
-  local countFn,unitFn=Game[kind..'Count'],Game[kind]
-  if not countFn or not unitFn then return false end
-  local count=countFn();local limit=kind=='Hero'and 16 or 512
-  if type(count)~='number'or count<0 or count>limit or count~=math.floor(count)then return false end
-  for i=1,count do local u=unitFn(i)
+ local function facing(u,base)
+  local row=self:Vital(u);local p=row and self:VitalPoint(u,row,base)
+  if not p then return false end
+  local dx,dz=p.x-base.x,p.z-base.z;local px,pz=point.x-base.x,point.z-base.z
+  return dx*px+dz*pz>0
+ end
+ local targetVital,targetLow,targetDistance=hero and facing(target,anchor),hero and low(target),GetDistance(anchor,point)
+ arrival=arrival or .55;units=units or self:StabUnits();if not units then return false end
+ for _,u in ipairs(units)do local kind=u.type==Obj_AI_Hero and 'Hero'or 'Minion'
    if u and u.networkID~=target.networkID and u.team~=myHero.team and not u.dead and (u.health or 0)>0 then
+    if not u.pos then return false end
+    local distance=GetDistance(u.pos,point)
+    -- Engineering locality bound, not a claimed native speed. A known faster
+    -- unit expands its own envelope; unknown local motion refuses certification.
+    local envelope=math.max(2500,finite(u.ms)and u.ms or 0,u.pathing and u.pathing.dashSpeed or 0)*arrival
+    if distance<=reach+(u.boundingRadius or 80)+envelope then
     local path=u.pathing
     local stationary=path and path.hasMovePath==false and path.isDashing==false
-    if not stationary and type(u.ms)~='number'then return false end
-    local motion=stationary and 0 or math.max(u.ms or 0,path and path.dashSpeed or 0)*.55
+    if not stationary and(not finite(u.ms)or u.ms<0)then return false end
+    local motion=stationary and 0 or math.max(u.ms or 0,path and path.dashSpeed or 0)*arrival
     local d=math.max(0,GetDistance(u.pos,point)-motion)
     if d<=reach+(u.boundingRadius or 80)then
      if kind=='Hero'then
       if not hero then return false end
       if self:HasVital(u)and not targetVital then return false end
       if low(u)and not targetVital and not targetLow then return false end
-      if d<targetDistance and not targetVital and not targetLow then return false end
+      if d<=near+(u.boundingRadius or 80)and(u.health or 0)<raw and not targetVital and not targetLow then return false end
+      if d<=targetDistance and (not targetVital and not targetLow or targetVital and self:HasVital(u)or targetLow and low(u))then return false end
      elseif d<=near+(u.boundingRadius or 80)and(u.health or 0)<raw then
       if not hero and d<targetDistance or hero and not targetVital and not targetLow then return false end
      end
+     if not hero and kind=='Minion'and d<=targetDistance and not(targetDistance<=near and target.health<raw)then return false end
+    end
     end
    end
   end
- end
  return true
 end
 
 function FioraChampion:CastQ(target,safe,validate,extra)
- if not self:Ready(_Q)or not self:CanTarget(target,self.QRange,safe)then return false end
+ if not self:Ready(_Q)then return false end
+ if not self.classic and target then target=self:NativeQTarget(target)end
+ if not self:Ready(_Q)or not self:CanTarget(target,self:QAcquireRange(),self.classic and safe)then return false end
  local targetID,targetHandle=target.networkID,target.handle
+ local waiting=Core.pending[HK_Q]
+ if waiting and waiting.object and waiting.object.networkID==targetID and waiting.object.handle==targetHandle
+  and waiting.expires>Core.adapter:Now()and not waiting.cancelled and waiting.continue()then return true end
  local recast=self:QRecast()
  local function valid(q,r)
-  if target.networkID~=targetID or target.handle~=targetHandle or not self:CanTarget(target,self.QRange,safe)or self:QRecast()~=recast then return false end
+  if target.networkID~=targetID or target.handle~=targetHandle or self:QRecast()~=recast then return false end
+  if self.classic and not self:CanTarget(target,self.QRange,safe)then return false end
+  if not self:QSelectionAllowed(target)then return false end
   if not self.classic then
-   local point=r and r.position
-   if not self:SafePoint(point,safe)or not self:SingleStab(target,point,r.data and r.data.unitPosition or true)then return false end
+   local fresh=self:PrepareQ(target,safe)
+   if not sameQEndpoint(r,fresh)then return false end
   end
   return not validate or validate(q,r)
  end
@@ -789,13 +934,16 @@ function FioraChampion:CastQ(target,safe,validate,extra)
  -- which only crowd control or a long-still target earns, left Combo Q unsent
  -- on champions standing or walking just out of attack range). The stab check
  -- below still refuses an endpoint another unit would take.
- local pred=Core:Prediction(self.QSpell);pred:GetPrediction(target,myHero)
- if not pred:CanHit(2)or not self:SafePoint(pred.CastPosition,safe)
-  or not self:SingleStab(target,pred.CastPosition,pred.UnitPosition or true)then return false end
- local options={intentTarget=target,range=self.QRange,prevalidateWorldCast=true,validate=valid}
+ local function resolve()
+  if target.networkID~=targetID or target.handle~=targetHandle then return nil end
+  return self:PrepareQ(target,safe)
+ end
+ local plan=resolve();if not plan then return false end
+ local options={intentTarget=target,range=self.QRange,objectRange=self:QAcquireRange(),resolve=resolve,prevalidateWorldCast=true,
+  commitGuard=function()return self:QSelectionAllowed(target)end,validate=valid}
  for k,v in pairs(extra or {})do options[k]=v end
- local ok=self:Cast(_Q,HK_Q,pred.CastPosition,options)
- if ok then self.lastQEnd={position=pred.CastPosition,expires=Game.Timer()+.6}end
+ local ok=self:Cast(_Q,HK_Q,plan.position,options)
+ if ok then self.lastQEnd={position=plan.position,expires=Game.Timer()+.6}end
  return ok
 end
 -- Own vitals (Normal). Bounded particle scan: names Fiora_Base_Passive_<side>
@@ -908,17 +1056,14 @@ function FioraChampion:VitalPoint(target,row,base)
 end
 -- The Q endpoint onto the vital, from the predicted unit position; nil when unreachable or unsafe.
 function FioraChampion:VitalAim(target,safe)
- local entry=self:Vital(target);if not entry or not self:CanTarget(target,self.QRange+300,safe)then return nil end
- local pred=Core:Prediction(self.QSpell);pred:GetPrediction(target,myHero);if not pred:CanHit(2)then return nil end
- local base=pred.UnitPosition and Vector(pred.UnitPosition.x,0,pred.UnitPosition.z)
- local p=base and self:VitalPoint(target,entry,base)
- if not p or GetDistance(p,myHero.pos)>self.QRange or not self:SafePoint(p,safe)then return nil end
- return {position=p,base=base,row=entry}
+ return self:PrepareQ(target,safe,true)
 end
 -- The vital's true damage (3% + 4% per 100 bonus AD of maximum health), only for
 -- the vital a Q endpoint `aim` (from VitalAim) actually reaches; otherwise 0.
 function FioraChampion:VitalDamage(target,aim)
- if self.classic or not self.profile.vitals or not aim or not aim.row or self:Vital(target)~=aim.row then return 0 end
+ if self.classic or not self.profile.vitals or not aim or not aim.row then return 0 end
+ local current=false;for _,row in pairs(self.vitals or {})do if row==aim.row then current=true;break end end
+ if not current or aim.row.identity~=target.networkID or aim.row.handle~=target.handle or not self:VitalBasis(aim.row)then return 0 end
  local point=self:VitalPoint(target,aim.row,aim.base)
  if not point or GetDistance(aim.position,myHero.pos)>self.QRange or GetDistance(aim.position,point)>self.profile.vitals.reach then return 0 end
  return(self.profile.vitalBase+self.profile.vitalAD*(finite(myHero.bonusDamage)and myHero.bonusDamage or 0))*target.maxHealth
@@ -926,17 +1071,19 @@ end
 -- `permission(aim)` re-reads consent (and, for a finisher, lethality) on every check.
 function FioraChampion:VitalQ(target,safe,permission,owner)
  if self.classic or not self.profile.vitals then return false,'no_vitals'end
- if not self:Ready(_Q)or not self:CanTarget(target,self.QRange+300,safe)then return false end
+ if not self:Ready(_Q)or not self:CanTarget(target,self:QAcquireRange(),false)then return false end
  local entry=self:Vital(target);if not entry then return false,self:HasVital(target)and 'vital_direction_unknown'or nil end
+ local function selected()return owner~=nil or self:QSelectionAllowed(target)end
  local function resolve()
-  local aim=self:VitalAim(target,safe);if not aim or aim.row~=entry then return nil end
+  if not selected()then return nil end
+  local aim=self:VitalAim(target,safe);if not aim then return nil end
   return aim
  end
  local r=resolve();if not r then return false end
  if permission and not permission(r)then return false end
- local ok=self:Cast(_Q,HK_Q,r.position,{owner=owner or 'VitalQ',intentTarget=target,range=self.QRange,prevalidateWorldCast=true,resolve=resolve,
-  commitGuard=function()return Core:Current()and(not permission or permission())end,
-  validate=function(_,fresh)local now=resolve();return now~=nil and fresh~=nil and GetDistance(now.position,fresh.position)<=30 and(not permission or permission(now))end})
+ local ok=self:Cast(_Q,HK_Q,r.position,{owner=owner or 'VitalQ',intentTarget=target,range=self.QRange,objectRange=self:QAcquireRange(),prevalidateWorldCast=true,resolve=resolve,
+  commitGuard=function()return Core:Current()and selected()and(not permission or permission())end,
+  validate=function(_,fresh)local now=resolve();return sameQEndpoint(fresh,now)and(not permission or permission(now))end})
  if ok then self.lastQEnd={position=r.position,expires=Game.Timer()+.6}end
  return ok
 end
@@ -1033,7 +1180,7 @@ function FioraChampion:LockedTarget()
  return t
 end
 function FioraChampion:GetComboTarget()
- return self.classic and self:LockedTarget()or GetTarget(math.max(self.QRange,self.RRange))
+ return self.classic and self:LockedTarget()or GetTarget(math.max(self:QAcquireRange(),self.RRange))
 end
 -- Lunge as a dodge for Evade. Numbers and their limits: ChampionProfiles/Fiora.lua qDash.
 function FioraChampion:EvadeQAllowed(u)
@@ -1208,6 +1355,7 @@ function FioraChampion:RFight(target)
 end
 
 function FioraChampion:Combo()
+ if not self.classic and Core.pending[HK_E]then return end
  local target=self:GetComboTarget()
  if not IsValid(target)and self.classic then target=GetTarget(1000)end
  if not IsValid(target)then return end
@@ -1215,16 +1363,17 @@ function FioraChampion:Combo()
  local safe=Menu.Combo.SafeQ:Value()and 'held'
  -- A vital Q also goes out inside attack range (only once vitals are established).
  if Menu.Combo.Q:Value()and self:VitalQ(target,safe,function()return Menu.Combo.Q:Value()end)then return end
- if Menu.Combo.Q:Value()and(not _G.SDK.Data:IsInAutoAttackRange(myHero,target)or self:QExpiring())then
+ if Menu.Combo.Q:Value()and(not self.classic or not _G.SDK.Data:IsInAutoAttackRange(myHero,target)or self:QExpiring())then
   if not self:CastQ(target,safe)and self.classic and GetDistance(myHero.pos,target.pos)>self.QRange then self:CastQMinion(target)end
  end
 end
 
 function FioraChampion:Harass()
+ if not self.classic and Core.pending[HK_E]then return end
 	if not manaAbove(Menu.Harass.Mana:Value()) or not Menu.Harass.Q:Value() then return end
 	local target = self:GetComboTarget()
 	if IsValid(target) and self:VitalQ(target,true,function()return Menu.Harass.Q:Value()end) then return end
-	if IsValid(target) and (not _G.SDK.Data:IsInAutoAttackRange(myHero, target) or self:QExpiring()) then self:CastQ(target, true) end
+ if IsValid(target) and (not self.classic or not _G.SDK.Data:IsInAutoAttackRange(myHero, target) or self:QExpiring()) then self:CastQ(target, true) end
 end
 
 function FioraChampion:ListedAttack(source)
@@ -1457,7 +1606,7 @@ function FioraChampion:KillSteal()
 		if Menu.KillSteal.Q:Value() and self:Ready(_Q) and IsValid(target) and not self.classic and self:Vital(target)
 			and self:VitalQ(target,true,function(aim)return Menu.KillSteal.Q:Value()and(aim==nil or kills(.55,function()
 				local vital=self:VitalDamage(target,aim);return vital>0 and self:GetQDmg(target)+vital or 0 end))end,'KillVitalQ') then return true end
-		if Menu.KillSteal.Q:Value() and self:Ready(_Q) and IsValid(target) and GetDistance(myHero.pos,target.pos)<=self.QRange
+		if Menu.KillSteal.Q:Value() and self:Ready(_Q) and IsValid(target) and GetDistance(myHero.pos,target.pos)<=self:QAcquireRange()
 			and kills(self.classic and .15+GetDistance(myHero.pos,target.pos)/1200 or .55,function()return self:GetQDmg(target)end) and self:CastQ(target, true) then return true end
 		if not self.classic and Menu.KillSteal.W:Value() and self:KillW(target) then return true end
 		if not self.classic and Menu.KillSteal.W:Value() and Menu.KillSteal.Q:Value() and self:StartKillWQ(target) then return true end
